@@ -1,0 +1,138 @@
+export interface PracticeAreaSourceCategory {
+  category: string;
+  description: string;
+  items: string[];
+}
+
+export const PRACTICE_AREAS_SOURCE: PracticeAreaSourceCategory[] = [
+  {
+    category: 'Corporate, Commercial and Startups',
+    description:
+      'Requirements: “Transactional Lawyers” who are good at drafting, not just arguing in court',
+    items: [
+      'Contracts and agreements drafting and vetting',
+      'Influencer/creator agreements',
+      'Brand deals',
+      'Exclusivity clauses',
+      'IP ownership',
+      'Contract Vetting: Reviewing Brand Collab agreements for exclusivity/perpetuity trap',
+      'DMCA Takedown Service: Removing stolen content/fake profiles.',
+      'Payment Recovery: Drafting formal Legal Notices for unpaid invoices',
+      'Co-Founder Agreements',
+      'Equity spits',
+      'Vesting periods',
+      'Exit clauses',
+      'Service Legal Agreements (SLA) for vendors and IT service Providers',
+      'Non-Disclosure Agreements (NDA) protecting trade secrets',
+      'Franchise Agreements for businesses expanding via franchises',
+      'Foreign Companies Market entry',
+      'Incorporation and Registration',
+      'FDI compliance',
+      'Intellectual property (IPR)',
+      'Trademark Registration for protecting brand names and logos',
+      'Trademark Objection/Opposition reply',
+      'Copyright Infringement: people stealing content/software',
+    ],
+  },
+  {
+    category: 'Family and Matrimonial',
+    description:
+      'High emotional intelligence (EQ) and patience, not just aggressive arguing skills',
+    items: [
+      'Divorce proceedings',
+      'Mutual consent divorces',
+      'Contested divorce',
+      'Criminal complaints in marriage',
+      'Child custody and visitation',
+      'Permanent custody',
+      'Visitation rights',
+      'Hague Convention cases (inter-country child abduction)',
+      'Maintenance and Alimony',
+      'RCR',
+      'Nullity of marriage',
+    ],
+  },
+  {
+    category: 'Property and Real Estate',
+    description:
+      "The 'High Value' Vertical - requires lawyers with strong local knowledge of land records and RERA expertise",
+    items: [
+      'RERA & Builder Disputes',
+      'Delay in Possession: Compensation for late delivery of flats.',
+      'Refund with Interest: Seeking full refund from builders for stalled projects.',
+      'Execution of Order: Forcing the builder to pay after a court order is passed.',
+      'Landlord & Tenant Disputes',
+      'Eviction Suits: Removing illegal occupants or tenants who stop paying rent.',
+      'Mesne Profits: Claiming market rent from a tenant staying illegally.',
+      'Ancestral Property',
+      'Partition Suits: Dividing joint family property among siblings/heirs.',
+      'Declaration of Title: Fixing errors in title deeds or asserting ownership.',
+      'Succession & Inheritance',
+      'Probate of Will: Validating a will in court.',
+      'Succession Certificate: For claiming movable assets of a deceased person.',
+      'Letter of Administration: When no will exists.',
+    ],
+  },
+  {
+    category: 'Criminal Matters',
+    description:
+      "The 'Urgent' Vertical - requires 'street-smart' lawyers with good networks in police stations and lower courts",
+    items: [
+      'Bail Matters',
+      'Anticipatory Bail: Pre-arrest bail (Section 438 CrPC).',
+      'Regular Bail: Getting someone out of custody (Section 437/439 CrPC).',
+      'Default Bail: If the police fail to file a chargesheet in 60/90 days.',
+      'White Collar Crimes',
+      'Cheque Bounce: Section 138 NI Act (Negotiable Instruments).',
+      'Financial Fraud/EOW: Economic Offenses Wing cases (scams, embezzlement).',
+      'Money Laundering (PMLA): ED (Enforcement Directorate) cases.',
+      'Cyber Crime',
+      'Online Harassment/Stalking: Filing complaints with Cyber Cell.',
+      'Financial Cyber Fraud: Bank phishing, UPI scams.',
+      'Data Theft: Employees stealing company data.',
+      'Quashing Petitions',
+      'Bail Cancellation',
+      'FIR quashing',
+      'FIR',
+      'Trail Matter',
+      'Fair Investigation',
+      'Protection Petition',
+      'Corruption Cases',
+      'Motor Vehicle Act and Accident cases',
+    ],
+  },
+  {
+    category: 'NRI Specific Services',
+    description: "The 'Remote' Vertical - clients need 'facilitation' more than anyone else",
+    items: [
+      'Power of Attorney (PoA) Management: Drafting and adjudicating PoAs',
+      'Property Management/Monitoring: Search Reports to ensure no encroachment',
+      'Immigration/Blacklisting: Challenging Look Out Circulars',
+      'Remote Divorce Management: Mutual consent divorce without travel.',
+      'Property Protection: Periodically checking land records',
+    ],
+  },
+  {
+    category: 'Civil & Consumer Disputes',
+    description: "The 'Remedial' Vertical",
+    items: [
+      'Consumer Court',
+      'Medical Negligence: Suing hospitals/doctors for botching treatment.',
+      'Insurance Claims: Suing insurance companies for wrongfully rejecting claims.',
+      'Defective Goods',
+      'Money Recovery Suits: Fast-track recovery for written debt/invoices.',
+      'Defamation',
+      'Civil Defamation: Asking for damages for loss of reputation.',
+      'Criminal Defamation: Asking for jail time for the offender.',
+    ],
+  },
+  {
+    category: 'Employment & Labor',
+    description: "The 'Workplace' Vertical",
+    items: [
+      'Wrongful Termination: Challenging illegal firing of employees.',
+      'Internal Complaints Committees (ICC) setting up or victims under POSH',
+      'Gratuity & PF Disputes: Claiming unpaid post-retirement benefits',
+    ],
+  },
+];

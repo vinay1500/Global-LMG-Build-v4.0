@@ -1,0 +1,295 @@
+export type UserLifecycle =
+  | 'lead'
+  | 'registered'
+  | 'consultation-scheduled'
+  | 'consultation-completed'
+  | 'fee-pending'
+  | 'client';
+
+export type ConsultationMode = 'video' | 'phone' | 'in-person';
+export type LifecycleStage =
+  | 'request-received'
+  | 'verification-call'
+  | 'consultation'
+  | 'action-plan'
+  | 'resolution';
+export type OperationalStatus =
+  | 'new-lead'
+  | 'awaiting-verification'
+  | 'verification-scheduled'
+  | 'consultation-completed'
+  | 'fee-pending'
+  | 'work-in-progress'
+  | 'immediate'
+  | 'completed'
+  | 'archived';
+export type PriorityBadge = 'awaiting-client' | 'in-progress' | 'immediate-6h' | 'completed';
+export type InvoiceStatus = 'draft' | 'sent' | 'pending' | 'paid' | 'overdue';
+export type EventType = 'consultation' | 'hearing' | 'verification-call';
+export type DocReviewState = 'unreviewed' | 'reviewed' | 'needs-client-action';
+export type AdminRole = 'case-manager' | 'billing-admin' | 'ops-admin';
+export type UrgencyLevel = 'standard' | 'within-6hrs' | 'within-2hrs';
+
+export interface StageItem {
+  completed: boolean;
+  id: LifecycleStage;
+  label: string;
+}
+
+export interface PlatformUser {
+  avatar: string;
+  email: string;
+  id: string;
+  joinedAt: string;
+  lastActiveAt: string;
+  lifecycle: UserLifecycle;
+  name: string;
+  owner?: string;
+  phone: string;
+  region?: string;
+}
+
+export interface Lead {
+  assignedOwner: string;
+  consultationMode: ConsultationMode;
+  consultationStatus: 'not-scheduled' | 'scheduled' | 'completed' | 'cancelled';
+  createdAt: string;
+  expertiseArea: string;
+  id: string;
+  issueSummary: string;
+  notes: string;
+  paymentStatus: 'none' | 'invoice-sent' | 'paid' | 'overdue';
+  preferredSlot: string;
+  selectedServices: string[];
+  status:
+    | 'new-lead'
+    | 'awaiting-verification'
+    | 'consultation-scheduled'
+    | 'consultation-completed'
+    | 'fee-pending'
+    | 'converted'
+    | 'lost-closed';
+  urgency: UrgencyLevel;
+  userId: string;
+}
+
+export interface Matter {
+  assignedCounsel?: string;
+  assignedStaff?: string;
+  clientId: string;
+  clientName: string;
+  clientVisibleNotes: string[];
+  consultationMode: ConsultationMode;
+  createdAt: string;
+  dueAmount: number;
+  expertiseArea: string;
+  id: string;
+  internalNotes: string[];
+  issueSummary: string;
+  lastUpdated: string;
+  lifecycleStage: LifecycleStage;
+  meetingLink?: string;
+  operationalStatus: OperationalStatus;
+  packageId?: string;
+  paidAmount: number;
+  priority: PriorityBadge;
+  referenceCode: string;
+  selectedServices: string[];
+  stages: StageItem[];
+  title: string;
+  totalFee: number;
+  urgency: UrgencyLevel;
+}
+
+export interface MatterPackage {
+  createdAt: string;
+  createdBy: string;
+  description: string;
+  id: string;
+  matterId: string;
+  name: string;
+  price: number;
+  services: string[];
+}
+
+export interface InvoiceItem {
+  amount: number;
+  description: string;
+  quantity: number;
+  rate: number;
+}
+
+export interface Invoice {
+  amount: number;
+  clientId: string;
+  clientName: string;
+  discount: number;
+  dueDate: string;
+  id: string;
+  issueDate: string;
+  items: InvoiceItem[];
+  matterId: string;
+  matterRef: string;
+  matterTitle: string;
+  paidDate?: string;
+  status: InvoiceStatus;
+  tax: number;
+  totalAmount: number;
+}
+
+export interface Payment {
+  amount: number;
+  clientId: string;
+  clientName: string;
+  id: string;
+  invoiceId: string;
+  matterId: string;
+  method: 'online' | 'bank-transfer' | 'cash' | 'cheque';
+  recordedBy: string;
+  reference: string;
+  status: 'success' | 'failed' | 'refunded';
+  timestamp: string;
+}
+
+export interface PlatformEvent {
+  actionCTA: string;
+  clientId: string;
+  clientName: string;
+  date: string;
+  duration: number;
+  id: string;
+  location?: string;
+  matterId: string;
+  matterTitle: string;
+  meetLink?: string;
+  mode: ConsultationMode | 'court' | 'office';
+  notes: string;
+  status: 'upcoming' | 'completed' | 'cancelled' | 'rescheduled';
+  time: string;
+  title: string;
+  type: EventType;
+  visibleToClient: boolean;
+}
+
+export interface PlatformDocument {
+  clientId: string;
+  clientName: string;
+  docCategory: string;
+  id: string;
+  matterId: string;
+  matterTitle: string;
+  name: string;
+  reviewState: DocReviewState;
+  size: number;
+  type: string;
+  uploadedAt: string;
+  uploadedBy: string;
+  visibility: 'client' | 'internal';
+}
+
+export interface MessageThread {
+  assignedTo: string;
+  clientId: string;
+  clientName: string;
+  id: string;
+  lastMessage: string;
+  lastMessageAt: string;
+  matterId: string;
+  matterRef: string;
+  matterTitle: string;
+  stage: LifecycleStage;
+  status: 'active' | 'waiting' | 'resolved';
+  unreadCount: number;
+  urgency: UrgencyLevel;
+}
+
+export interface ChatMessage {
+  attachments?: string[];
+  content: string;
+  id: string;
+  read: boolean;
+  senderId: string;
+  senderName: string;
+  senderRole: 'client' | 'admin' | 'system';
+  threadId: string;
+  timestamp: string;
+}
+
+export interface Advocate {
+  activeAssignments: number;
+  availability: 'available' | 'busy' | 'unavailable';
+  avatar: string;
+  expertise: string[];
+  feeAgreed: number;
+  feePaid: number;
+  feePending: number;
+  id: string;
+  location: string;
+  name: string;
+  workload: 'light' | 'moderate' | 'heavy';
+  yearsExperience: number;
+}
+
+export interface StaffMember {
+  assignedMatters: number;
+  avatar: string;
+  id: string;
+  name: string;
+  role: string;
+  status: 'active' | 'on-leave' | 'inactive';
+  teamLead: string;
+  workload: 'light' | 'moderate' | 'heavy';
+}
+
+export interface AuditEntry {
+  action: string;
+  actor: string;
+  actorRole: AdminRole | 'client' | 'system';
+  entityId: string;
+  entityType: 'matter' | 'invoice' | 'payment' | 'document' | 'event' | 'user' | 'lead' | 'message';
+  id: string;
+  newValue?: string;
+  oldValue?: string;
+  sourceModule: string;
+  timestamp: string;
+}
+
+export interface DashboardDocumentInput {
+  name: string;
+  size: number;
+  type: string;
+}
+
+export interface DashboardRequestInput {
+  caseDetails: string;
+  consultationMode: ConsultationMode;
+  documentUploadIds: string[];
+  documents: DashboardDocumentInput[];
+  email: string;
+  fullName: string;
+  legalDomain: string;
+  mobile: string;
+  pastLegalAction: boolean;
+  preferredDate: string;
+  preferredTime: string;
+  services: string[];
+  urgency: UrgencyLevel;
+  whatsappSame: boolean;
+}
+
+export interface DashboardSnapshot {
+  advocates: Advocate[];
+  auditEntries: AuditEntry[];
+  currentClient: PlatformUser;
+  documents: PlatformDocument[];
+  events: PlatformEvent[];
+  invoices: Invoice[];
+  leads: Lead[];
+  matters: Matter[];
+  messages: ChatMessage[];
+  packages: MatterPackage[];
+  payments: Payment[];
+  staff: StaffMember[];
+  threads: MessageThread[];
+  users: PlatformUser[];
+}

@@ -1,0 +1,36 @@
+import { Router } from 'express';
+import { healthRouter } from './health.js';
+import { authRouter } from './auth.js';
+import { dashboardRouter } from './dashboard.js';
+import { clientsRouter } from './clients.js';
+import { mattersRouter } from './matters.js';
+import { eventsRouter } from './events.js';
+import { messagesRouter } from './messages.js';
+import { documentsRouter } from './documents.js';
+import { billingRouter } from './billing.js';
+import { tasksRouter } from './tasks.js';
+import { rbacRouter } from './rbac.js';
+import { auditRouter } from './audit.js';
+import { reportsRouter } from './reports.js';
+import { uploadsRouter } from './uploads.js';
+import { requestsRouter } from './requests.js';
+import { notificationsRouter } from './notifications.js';
+
+export const apiRouter = Router();
+
+apiRouter.use('/v1/admin', healthRouter);
+apiRouter.use('/v1/admin', authRouter);
+apiRouter.use('/v1/admin', dashboardRouter);
+apiRouter.use('/v1/admin', clientsRouter);
+apiRouter.use('/v1/admin', requestsRouter);
+apiRouter.use('/v1/admin', mattersRouter);
+apiRouter.use('/v1/admin', eventsRouter);
+apiRouter.use('/v1/admin', messagesRouter);
+apiRouter.use('/v1/admin', notificationsRouter);
+apiRouter.use('/v1/admin', documentsRouter);
+apiRouter.use('/v1/admin', billingRouter);
+apiRouter.use('/v1/admin', tasksRouter);
+apiRouter.use('/v1/admin', rbacRouter);
+apiRouter.use('/v1/admin', auditRouter);
+apiRouter.use('/v1/admin', reportsRouter);
+apiRouter.use('/v1/admin', uploadsRouter);
