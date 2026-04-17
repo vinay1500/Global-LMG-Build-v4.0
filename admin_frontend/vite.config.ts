@@ -1,7 +1,7 @@
-import { defineConfig } from 'vite';
 import path from 'path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { defineConfig } from 'vite';
 
 const SECURITY_HEADERS = {
   'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
@@ -23,10 +23,11 @@ export default defineConfig({
   },
   server: {
     headers: SECURITY_HEADERS,
+    port: 5174,
     proxy: {
       '/api': {
-        changeOrigin: true,
         target: 'http://localhost:3005',
+        changeOrigin: true,
       },
     },
   },

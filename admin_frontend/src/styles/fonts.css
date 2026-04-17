@@ -1,6 +1,23 @@
 
+
+@font-face {
+  font-family: 'Inter';
+  src: url('/fonts/inter-variable.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Playfair Display';
+  src: url('/fonts/playfair-display-variable.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+}
+
 :root {
-  --font-display-stack: Iowan Old Style, Palatino Linotype, Book Antiqua, Georgia, serif;
+  --font-display-stack: 'Playfair Display', Georgia, 'Times New Roman', serif;
   --font-body-stack:
-    Avenir Next, Segoe UI, -apple-system, BlinkMacSystemFont, Helvetica Neue, sans-serif;
+    'Inter', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
 }

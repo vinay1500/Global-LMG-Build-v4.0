@@ -1,45 +1,36 @@
 import type { Response } from 'express';
 
-export interface CookieOptions {
+type CookieOptions = {
   httpOnly?: boolean;
   maxAge?: number;
   path?: string;
   sameSite?: 'lax' | 'strict' | 'none';
   secure?: boolean;
-}
-
-const encode = (value: string) => encodeURIComponent(value);
+};
 
 export const parseCookies = (cookieHeader: string | undefined) => {
   if (!cookieHeader) {
     return {} as Record<string, string>;
   }
 
-  return cookieHeader
-    .split(';')
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .reduce<Record<string, string>>((cookies, entry) => {
-      const separatorIndex = entry.indexOf('=');
-      if (separatorIndex === -1) {
-        return cookies;
-      }
+  return cookieHeader.split(';').reduce<Record<string, string>>((accumulator, chunk) => {
+    const [rawName, ...rest] = chunk.trim().split('=');
+    if (!rawName) {
+      return accumulator;
+    }
 
-      const name = entry.slice(0, separatorIndex).trim();
-      const value = entry.slice(separatorIndex + 1).trim();
-      cookies[name] = decodeURIComponent(value);
-      return cookies;
-    }, {});
+    accumulator[rawName] = decodeURIComponent(rest.join('='));
+    return accumulator;
+  }, {});
 };
 
-export const serializeCookie = (name: string, value: string, options: CookieOptions = {}) => {
-  const parts = [`${name}=${encode(value)}`];
+const serializeCookie = (name: string, value: string, options: CookieOptions = {}) => {
+  const parts = [`${name}=${encodeURIComponent(value)}`];
+  parts.push(`Path=${options.path || '/'}`);
 
   if (options.maxAge !== undefined) {
-    parts.push(`Max-Age=${Math.max(0, Math.floor(options.maxAge))}`);
+    parts.push(`Max-Age=${options.maxAge}`);
   }
-
-  parts.push(`Path=${options.path || '/'}`);
 
   if (options.httpOnly) {
     parts.push('HttpOnly');
@@ -62,20 +53,25 @@ export const appendCookie = (
   value: string,
   options: CookieOptions = {}
 ) => {
-  response.append('Set-Cookie', serializeCookie(name, value, options));
+  const existing = response.getHeader('Set-Cookie');
+  const nextCookie = serializeCookie(name, value, options);
+
+  if (!existing) {
+    response.setHeader('Set-Cookie', nextCookie);
+    return;
+  }
+
+  if (Array.isArray(existing)) {
+    response.setHeader('Set-Cookie', [...existing, nextCookie]);
+    return;
+  }
+
+  response.setHeader('Set-Cookie', [String(existing), nextCookie]);
 };
 
-export const clearCookie = (
-  response: Response,
-  name: string,
-  options: Pick<CookieOptions, 'path' | 'sameSite' | 'secure'> = {}
-) => {
-  response.append(
-    'Set-Cookie',
-    serializeCookie(name, '', {
-      ...options,
-      maxAge: 0,
-      path: options.path || '/',
-    })
-  );
+export const clearCookie = (response: Response, name: string, options: CookieOptions = {}) => {
+  appendCookie(response, name, '', {
+    ...options,
+    maxAge: 0,
+  });
 };

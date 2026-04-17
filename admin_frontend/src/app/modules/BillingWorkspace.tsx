@@ -1,0 +1,449 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { 
+  CreditCard, FileText, Download, Mail, DollarSign, 
+  Search, Filter, Plus, ChevronRight, CheckCircle, 
+  Clock, AlertCircle, RefreshCcw, MoreVertical, 
+  ArrowUpRight, FileCheck, Landmark, Copy, Printer
+} from 'lucide-react';
+import { INVOICES, PAYMENTS, formatCurrency, formatDate, Invoice, Payment } from '../data/seedData';
+import { StatusBadge } from '../components/dashboard/StatusBadge';
+
+type FilterStatus = 'all' | 'paid' | 'pending' | 'overdue' | 'draft';
+
+export const BillingWorkspace: React.FC<{
+  invoices?: Invoice[];
+  payments?: Payment[];
+}> = ({
+  invoices = INVOICES,
+  payments = PAYMENTS,
+}) => {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<FilterStatus>('all');
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(invoices[0]?.id || null);
+
+  useEffect(() => {
+    if (!invoices.some((invoice) => invoice.id === selectedInvoiceId)) {
+      setSelectedInvoiceId(invoices[0]?.id || null);
+    }
+  }, [invoices, selectedInvoiceId]);
+
+  const activeInvoice = useMemo(
+    () => invoices.find(i => i.id === selectedInvoiceId) || null,
+    [invoices, selectedInvoiceId]
+  );
+  
+  const activePayments = useMemo(() => {
+    if (!activeInvoice) return [];
+    return payments.filter(p => p.invoiceId === activeInvoice.id).sort((a, b) => 
+      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+  }, [activeInvoice, payments]);
+
+  const filteredInvoices = useMemo(() => {
+    return invoices.filter(inv => {
+      const matchesSearch = 
+        inv.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
+        inv.clientName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        inv.matterTitle.toLowerCase().includes(searchQuery.toLowerCase());
+      
+      const matchesStatus = statusFilter === 'all' || inv.status === statusFilter || (statusFilter === 'pending' && inv.status === 'sent');
+      
+      return matchesSearch && matchesStatus;
+    }).sort((a, b) => new Date(b.issueDate).getTime() - new Date(a.issueDate).getTime());
+  }, [invoices, searchQuery, statusFilter]);
+
+  // Metrics
+  const metrics = useMemo(() => {
+    const totalCollected = invoices.filter(i => i.status === 'paid').reduce((sum, i) => sum + i.totalAmount, 0);
+    const outstanding = invoices.filter(i => i.status === 'pending' || i.status === 'sent').reduce((sum, i) => sum + i.totalAmount, 0);
+    const overdueAmount = invoices.filter(i => i.status === 'overdue').reduce((sum, i) => sum + i.totalAmount, 0);
+    const draftAmount = invoices.filter(i => i.status === 'draft').reduce((sum, i) => sum + i.totalAmount, 0);
+    
+    return { totalCollected, outstanding, overdueAmount, draftAmount };
+  }, [invoices]);
+
+  const getStatusColor = (status: string) => {
+    switch(status) {
+      case 'paid': return 'text-emerald-700 bg-emerald-50 border-emerald-100';
+      case 'pending': 
+      case 'sent': return 'text-blue-700 bg-blue-50 border-blue-100';
+      case 'overdue': return 'text-red-700 bg-red-50 border-red-100';
+      case 'draft': return 'text-gray-700 bg-gray-50 border-gray-200';
+      default: return 'text-gray-700 bg-gray-50 border-gray-100';
+    }
+  };
+
+  return (
+    <div className="h-[calc(100vh-80px)] flex flex-col -m-6 p-6 space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 flex-shrink-0">
+        <div>
+          <h1 className="text-2xl font-medium text-gray-900" style={{ fontFamily: "'Playfair Display', serif" }}>Billing & Ledger</h1>
+          <p className="text-sm text-gray-500 mt-1">Finance operations, invoice tracking, and revenue management.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <button className="px-4 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition flex items-center gap-2">
+            <Download className="w-4 h-4" /> Export CSV
+          </button>
+          <button className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition flex items-center gap-2">
+            <Plus className="w-4 h-4" /> New Invoice
+          </button>
+        </div>
+      </div>
+
+      {/* KPI Metrics */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 flex-shrink-0">
+        <div className="bg-white border border-gray-200 p-5 rounded-xl shadow-sm">
+          <div className="flex items-center gap-2 text-gray-500 mb-2">
+            <AlertCircle className="w-4 h-4 text-red-500" />
+            <h3 className="text-xs font-semibold uppercase tracking-wider">Overdue Aging</h3>
+          </div>
+          <p className="text-2xl font-bold text-gray-900">{formatCurrency(metrics.overdueAmount)}</p>
+          <p className="text-xs text-red-600 mt-1 font-medium">Requires immediate action</p>
+        </div>
+        
+        <div className="bg-white border border-gray-200 p-5 rounded-xl shadow-sm">
+          <div className="flex items-center gap-2 text-gray-500 mb-2">
+            <Clock className="w-4 h-4 text-amber-500" />
+            <h3 className="text-xs font-semibold uppercase tracking-wider">Outstanding Balance</h3>
+          </div>
+          <p className="text-2xl font-bold text-gray-900">{formatCurrency(metrics.outstanding)}</p>
+          <p className="text-xs text-gray-500 mt-1">Pending client payments</p>
+        </div>
+        
+        <div className="bg-white border border-gray-200 p-5 rounded-xl shadow-sm">
+          <div className="flex items-center gap-2 text-gray-500 mb-2">
+            <CheckCircle className="w-4 h-4 text-emerald-500" />
+            <h3 className="text-xs font-semibold uppercase tracking-wider">Total Collected</h3>
+          </div>
+          <p className="text-2xl font-bold text-gray-900">{formatCurrency(metrics.totalCollected)}</p>
+          <p className="text-xs text-emerald-600 mt-1 font-medium">+12% from last month</p>
+        </div>
+
+        <div className="bg-white border border-gray-200 p-5 rounded-xl shadow-sm">
+          <div className="flex items-center gap-2 text-gray-500 mb-2">
+            <FileText className="w-4 h-4 text-gray-400" />
+            <h3 className="text-xs font-semibold uppercase tracking-wider">Unbilled / Drafts</h3>
+          </div>
+          <p className="text-2xl font-bold text-gray-900">{formatCurrency(metrics.draftAmount)}</p>
+          <p className="text-xs text-gray-500 mt-1">Ready for review</p>
+        </div>
+      </div>
+
+      <div className="flex-1 min-h-0 grid lg:grid-cols-[320px_1fr_300px] xl:grid-cols-[360px_1fr_340px] gap-6">
+        
+        {/* Left: Invoice Queue */}
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col overflow-hidden">
+          <div className="p-4 border-b border-gray-100 bg-gray-50/50 space-y-3">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input 
+                type="text"
+                placeholder="Search invoices..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:border-gray-400 bg-white"
+              />
+            </div>
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+              {['all', 'overdue', 'pending', 'paid', 'draft'].map((status) => (
+                <button 
+                  key={status}
+                  onClick={() => setStatusFilter(status as FilterStatus)}
+                  className={`whitespace-nowrap px-3 py-1.5 text-xs font-medium rounded-full border transition capitalize
+                    ${statusFilter === status 
+                      ? 'bg-gray-900 text-white border-gray-900' 
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'}`}
+                >
+                  {status === 'pending' ? 'Unpaid' : status}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto">
+            {filteredInvoices.map(inv => (
+              <div 
+                key={inv.id} 
+                onClick={() => setSelectedInvoiceId(inv.id)}
+                className={`p-4 border-b border-gray-50 cursor-pointer transition relative group ${selectedInvoiceId === inv.id ? 'bg-blue-50/50' : 'hover:bg-gray-50'}`}
+              >
+                {selectedInvoiceId === inv.id && (
+                  <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-600" />
+                )}
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <h3 className="text-sm font-bold text-gray-900">{inv.id}</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">{inv.clientName}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-bold text-gray-900">{formatCurrency(inv.totalAmount)}</p>
+                    <span className={`inline-block mt-1 text-[10px] font-semibold px-2 py-0.5 rounded border uppercase tracking-wider ${getStatusColor(inv.status)}`}>
+                      {inv.status}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between text-xs text-gray-500">
+                  <span>Due: {formatDate(inv.dueDate)}</span>
+                  {inv.status === 'overdue' && (
+                    <span className="text-red-500 font-medium flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" /> Late
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Middle: PDF Preview Document */}
+        <div className="bg-gray-100/50 border border-gray-200 rounded-xl shadow-inner flex flex-col overflow-y-auto relative">
+          {activeInvoice ? (
+            <div className="p-8 mx-auto w-full max-w-2xl min-h-full flex items-center justify-center">
+              {/* Paper Document */}
+              <div className="bg-white w-full shadow-md rounded-sm overflow-hidden border border-gray-200">
+                {/* Ribbon Top */}
+                <div className={`h-2 w-full ${activeInvoice.status === 'paid' ? 'bg-emerald-500' : activeInvoice.status === 'overdue' ? 'bg-red-500' : activeInvoice.status === 'draft' ? 'bg-gray-400' : 'bg-blue-600'}`} />
+                
+                <div className="p-10">
+                  {/* Header */}
+                  <div className="flex justify-between items-start mb-12">
+                    <div>
+                      <h1 className="text-3xl font-medium text-gray-900 mb-1" style={{ fontFamily: "'Playfair Display', serif" }}>INVOICE</h1>
+                      <p className="text-sm font-medium text-gray-500">{activeInvoice.id}</p>
+                      
+                      <div className="mt-6 space-y-1">
+                        <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Billed To</p>
+                        <p className="text-sm font-medium text-gray-900">{activeInvoice.clientName}</p>
+                        <p className="text-sm text-gray-500">Matter: {activeInvoice.matterTitle}</p>
+                        <p className="text-xs text-gray-400">Ref: {activeInvoice.matterRef}</p>
+                      </div>
+                    </div>
+                    
+                    <div className="text-right">
+                      <div className="mb-6">
+                        <h2 className="text-xl font-bold text-gray-900" style={{ fontFamily: "'Playfair Display', serif" }}>LegalConnect</h2>
+                        <p className="text-xs text-gray-500 mt-1">101 Heritage Building, Fort<br/>Mumbai, MH 400001</p>
+                      </div>
+                      
+                      <table className="text-sm ml-auto">
+                        <tbody>
+                          <tr>
+                            <td className="text-gray-500 pr-4 pb-1 text-right">Issue Date:</td>
+                            <td className="font-medium text-gray-900 pb-1">{formatDate(activeInvoice.issueDate)}</td>
+                          </tr>
+                          <tr>
+                            <td className="text-gray-500 pr-4 pb-1 text-right">Due Date:</td>
+                            <td className="font-medium text-gray-900 pb-1">{formatDate(activeInvoice.dueDate)}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Status Stamp */}
+                  {activeInvoice.status === 'paid' && (
+                    <div className="absolute top-32 right-12 opacity-10 rotate-[-15deg] pointer-events-none">
+                      <span className="text-6xl font-bold border-4 border-emerald-900 text-emerald-900 px-6 py-2 rounded-lg uppercase tracking-widest">PAID</span>
+                    </div>
+                  )}
+                  {activeInvoice.status === 'overdue' && (
+                    <div className="absolute top-32 right-12 opacity-10 rotate-[-15deg] pointer-events-none">
+                      <span className="text-6xl font-bold border-4 border-red-900 text-red-900 px-6 py-2 rounded-lg uppercase tracking-widest">OVERDUE</span>
+                    </div>
+                  )}
+
+                  {/* Line Items */}
+                  <table className="w-full mb-8">
+                    <thead>
+                      <tr className="border-b-2 border-gray-900 text-xs font-bold text-gray-500 uppercase tracking-wider">
+                        <th className="text-left py-3">Description</th>
+                        <th className="text-center py-3 w-20">Qty</th>
+                        <th className="text-right py-3 w-32">Rate</th>
+                        <th className="text-right py-3 w-32">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 text-sm">
+                      {activeInvoice.items.map((item, idx) => (
+                        <tr key={idx}>
+                          <td className="py-4 text-gray-900">{item.description}</td>
+                          <td className="py-4 text-center text-gray-600">{item.quantity}</td>
+                          <td className="py-4 text-right text-gray-600">{formatCurrency(item.rate)}</td>
+                          <td className="py-4 text-right font-medium text-gray-900">{formatCurrency(item.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {/* Totals */}
+                  <div className="flex justify-end">
+                    <div className="w-64 space-y-3 text-sm">
+                      <div className="flex justify-between text-gray-600">
+                        <span>Subtotal</span>
+                        <span>{formatCurrency(activeInvoice.amount)}</span>
+                      </div>
+                      {activeInvoice.discount > 0 && (
+                        <div className="flex justify-between text-emerald-600">
+                          <span>Discount</span>
+                          <span>-{formatCurrency(activeInvoice.discount)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between text-gray-600 border-b border-gray-200 pb-3">
+                        <span>GST (18%)</span>
+                        <span>{formatCurrency(activeInvoice.tax)}</span>
+                      </div>
+                      <div className="flex justify-between font-bold text-lg text-gray-900 pt-1">
+                        <span>Total</span>
+                        <span>{formatCurrency(activeInvoice.totalAmount)}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Notes Footer */}
+                  {activeInvoice.clientNote && (
+                    <div className="mt-16 pt-6 border-t border-gray-100 text-sm">
+                      <p className="font-bold text-gray-900 mb-1">Note to Client</p>
+                      <p className="text-gray-600">{activeInvoice.clientNote}</p>
+                    </div>
+                  )}
+
+                  <div className="mt-8 text-center text-xs text-gray-400">
+                    Thank you for your business. Please make payment by the due date to avoid late fees.
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center h-full text-center p-8">
+              <FileText className="w-12 h-12 text-gray-300 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900">No Invoice Selected</h3>
+              <p className="text-sm text-gray-500 mt-1 max-w-sm">Select an invoice from the queue to view details and manage payments.</p>
+            </div>
+          )}
+        </div>
+
+        {/* Right: Context & Actions */}
+        {activeInvoice && (
+          <div className="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col overflow-hidden">
+            <div className="p-5 border-b border-gray-100 bg-gray-50/50">
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Quick Actions</h3>
+              <div className="grid grid-cols-2 gap-2">
+                <button className="flex flex-col items-center justify-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition text-gray-700">
+                  <Mail className="w-4 h-4 mb-1.5" />
+                  <span className="text-[10px] font-medium uppercase tracking-wide">Email</span>
+                </button>
+                <button className="flex flex-col items-center justify-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition text-gray-700">
+                  <Download className="w-4 h-4 mb-1.5" />
+                  <span className="text-[10px] font-medium uppercase tracking-wide">Download</span>
+                </button>
+                <button className="flex flex-col items-center justify-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition text-gray-700">
+                  <Printer className="w-4 h-4 mb-1.5" />
+                  <span className="text-[10px] font-medium uppercase tracking-wide">Print</span>
+                </button>
+                <button className="flex flex-col items-center justify-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition text-gray-700">
+                  <Copy className="w-4 h-4 mb-1.5" />
+                  <span className="text-[10px] font-medium uppercase tracking-wide">Copy Link</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-6">
+              {/* Payment Status Summary */}
+              <div>
+                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Financial Status</h3>
+                
+                {activeInvoice.status === 'paid' ? (
+                  <div className="bg-emerald-50 border border-emerald-100 rounded-lg p-4 flex items-start gap-3">
+                    <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" />
+                    <div>
+                      <p className="text-sm font-bold text-emerald-900">Fully Paid</p>
+                      <p className="text-xs text-emerald-700 mt-0.5">Received on {activeInvoice.paidDate ? formatDate(activeInvoice.paidDate) : 'N/A'}</p>
+                      <button className="mt-3 text-xs font-medium text-emerald-700 hover:text-emerald-900 bg-white/60 px-3 py-1.5 rounded border border-emerald-200 transition">
+                        Issue Refund
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
+                    <div className="flex justify-between items-end mb-3">
+                      <div>
+                        <p className="text-xs text-blue-600 font-medium mb-1">Amount Due</p>
+                        <p className="text-lg font-bold text-blue-900">{formatCurrency(activeInvoice.totalAmount)}</p>
+                      </div>
+                      <AlertCircle className={`w-5 h-5 ${activeInvoice.status === 'overdue' ? 'text-red-500' : 'text-blue-400'}`} />
+                    </div>
+                    
+                    <div className="space-y-2 mt-4">
+                      <button className="w-full py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-2 shadow-sm">
+                        <DollarSign className="w-4 h-4" /> Record Payment
+                      </button>
+                      <button className="w-full py-2 bg-white text-gray-700 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 transition flex items-center justify-center gap-2">
+                        <Mail className="w-4 h-4" /> Send Reminder
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Internal Notes */}
+              {activeInvoice.internalNote && (
+                <div>
+                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Internal Note</h3>
+                  <div className="bg-amber-50 border border-amber-100 p-3 rounded-lg text-sm text-gray-800">
+                    {activeInvoice.internalNote}
+                  </div>
+                </div>
+              )}
+
+              {/* Payment & Action History */}
+              <div>
+                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Activity Ledger</h3>
+                
+                <div className="space-y-4 relative before:absolute before:inset-0 before:ml-2 before:-translate-x-px md:before:mx-auto md:before:translate-x-0 before:h-full before:w-0.5 before:bg-gray-100">
+                  
+                  {/* Show active payments if any */}
+                  {activePayments.map(payment => (
+                    <div key={payment.id} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
+                      <div className="flex items-center justify-center w-4 h-4 rounded-full border-2 border-white bg-emerald-500 text-white shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 z-10" />
+                      <div className="w-[calc(100%-2rem)] md:w-[calc(50%-1.5rem)] bg-white border border-gray-100 p-3 rounded-lg shadow-sm">
+                        <div className="flex justify-between items-start mb-1">
+                          <span className="font-bold text-gray-900 text-xs">Payment Received</span>
+                          <span className="font-bold text-emerald-600 text-xs">{formatCurrency(payment.amount)}</span>
+                        </div>
+                        <p className="text-[10px] text-gray-500">via {payment.method} • Ref: {payment.reference}</p>
+                        <p className="text-[10px] text-gray-400 mt-1">{formatDate(payment.timestamp.split('T')[0])} by {payment.recordedBy}</p>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Invoice Sent/Draft state */}
+                  {activeInvoice.status !== 'draft' && (
+                    <div className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
+                      <div className="flex items-center justify-center w-4 h-4 rounded-full border-2 border-white bg-blue-400 shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 z-10" />
+                      <div className="w-[calc(100%-2rem)] md:w-[calc(50%-1.5rem)] bg-white border border-gray-100 p-3 rounded-lg shadow-sm">
+                        <span className="font-bold text-gray-900 text-xs block mb-0.5">Invoice Issued</span>
+                        <p className="text-[10px] text-gray-500">Sent to {activeInvoice.clientName}</p>
+                        <p className="text-[10px] text-gray-400 mt-1">{formatDate(activeInvoice.issueDate)}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Creation */}
+                  <div className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
+                    <div className="flex items-center justify-center w-4 h-4 rounded-full border-2 border-white bg-gray-300 shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 z-10" />
+                    <div className="w-[calc(100%-2rem)] md:w-[calc(50%-1.5rem)] bg-white border border-gray-100 p-3 rounded-lg shadow-sm">
+                      <span className="font-bold text-gray-900 text-xs block mb-0.5">Draft Created</span>
+                      <p className="text-[10px] text-gray-500">System generation</p>
+                      <p className="text-[10px] text-gray-400 mt-1">{formatDate(new Date(new Date(activeInvoice.issueDate).getTime() - 2*24*60*60*1000).toISOString().split('T')[0])}</p>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};

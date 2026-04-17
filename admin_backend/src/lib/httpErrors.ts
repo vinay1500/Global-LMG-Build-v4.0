@@ -1,149 +1,54 @@
 import type { NextFunction, Request, Response } from 'express';
-import { ZodError } from 'zod';
-import { getRequestId, logEvent } from './observability.js';
 
-export class ApiError extends Error {
+export class AppError extends Error {
   public readonly code: string;
   public readonly issues?: unknown;
-  public readonly retryAfterSeconds?: number;
   public readonly statusCode: number;
 
-  constructor(
-    statusCode: number,
-    code: string,
-    message: string,
-    options: {
-      issues?: unknown;
-      retryAfterSeconds?: number;
-    } = {}
-  ) {
+  constructor(statusCode: number, code: string, message: string, issues?: unknown) {
     super(message);
-    this.code = code;
-    this.issues = options.issues;
-    this.retryAfterSeconds = options.retryAfterSeconds;
     this.statusCode = statusCode;
+    this.code = code;
+    this.issues = issues;
   }
 }
 
 export const badRequest = (code: string, message: string, issues?: unknown) =>
-  new ApiError(400, code, message, { issues });
+  new AppError(400, code, message, issues);
 
 export const unauthorized = (code: string, message: string) =>
-  new ApiError(401, code, message);
+  new AppError(401, code, message);
 
-export const forbidden = (code: string, message: string) =>
-  new ApiError(403, code, message);
+export const forbidden = (code: string, message: string) => new AppError(403, code, message);
 
-export const notFound = (code: string, message: string) =>
-  new ApiError(404, code, message);
-
-export const conflict = (code: string, message: string) =>
-  new ApiError(409, code, message);
-
-export const tooManyRequests = (code: string, message: string, retryAfterSeconds: number) =>
-  new ApiError(429, code, message, { retryAfterSeconds });
-
-export const internalServerError = (message = 'Unexpected server error.') =>
-  new ApiError(500, 'internal_server_error', message);
-
-export const serviceUnavailable = (code: string, message: string) =>
-  new ApiError(503, code, message);
+export const notFound = (code: string, message: string) => new AppError(404, code, message);
 
 export const asyncHandler =
   (
-    handler: (request: Request, response: Response, next: NextFunction) => Promise<void> | void
+    handler: (request: Request, response: Response, next: NextFunction) => Promise<unknown> | unknown
   ) =>
   (request: Request, response: Response, next: NextFunction) => {
     Promise.resolve(handler(request, response, next)).catch(next);
   };
 
-export const errorHandler = (
+export const errorMiddleware = (
   error: unknown,
-  request: Request,
+  _request: Request,
   response: Response,
   _next: NextFunction
 ) => {
-  const requestId = getRequestId(response);
-
-  if (error instanceof ZodError) {
-    logEvent('warn', 'request.validation_failed', {
-      issues: error.flatten(),
-      method: request.method,
-      path: request.originalUrl,
-      requestId,
-      statusCode: 400,
-    });
-    response.status(400).json({
-      error: 'invalid_request_payload',
-      message: 'Request payload validation failed.',
-      issues: error.flatten(),
-      requestId,
-    });
-    return;
-  }
-
-  if (
-    error instanceof SyntaxError &&
-    'status' in error &&
-    Number((error as { status?: unknown }).status) === 400 &&
-    'body' in error
-  ) {
-    logEvent('warn', 'request.invalid_json', {
-      method: request.method,
-      path: request.originalUrl,
-      requestId,
-      statusCode: 400,
-    });
-    response.status(400).json({
-      error: 'invalid_json_body',
-      message: 'Request body contains invalid JSON.',
-      requestId,
-    });
-    return;
-  }
-
-  if (error instanceof ApiError) {
-    logEvent(error.statusCode >= 500 ? 'error' : 'warn', 'request.api_error', {
-      code: error.code,
-      issues: error.issues,
-      method: request.method,
-      path: request.originalUrl,
-      requestId,
-      retryAfterSeconds: error.retryAfterSeconds,
-      statusCode: error.statusCode,
-    });
-
-    if (error.retryAfterSeconds) {
-      response.setHeader('Retry-After', String(error.retryAfterSeconds));
-    }
-
+  if (error instanceof AppError) {
     response.status(error.statusCode).json({
       error: error.code,
-      message: error.message,
       issues: error.issues,
-      requestId,
-      retryAfterSeconds: error.retryAfterSeconds,
+      message: error.message,
     });
     return;
   }
 
-  logEvent('error', 'request.unhandled_error', {
-    error:
-      error instanceof Error
-        ? {
-            message: error.message,
-            name: error.name,
-            stack: error.stack,
-          }
-        : error,
-    method: request.method,
-    path: request.originalUrl,
-    requestId,
-    statusCode: 500,
-  });
+  const message = error instanceof Error ? error.message : 'Unexpected server error.';
   response.status(500).json({
     error: 'internal_server_error',
-    message: 'Unexpected server error.',
-    requestId,
+    message,
   });
 };
