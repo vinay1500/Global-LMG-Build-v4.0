@@ -1,7 +1,14 @@
-import mysql, { type Pool, type RowDataPacket } from 'mysql2/promise';
+import mysql, {
+  type Pool,
+  type PoolConnection,
+  type ResultSetHeader,
+  type RowDataPacket,
+} from 'mysql2/promise';
 import { env } from '../config/env.js';
 
 let pool: Pool | null = null;
+
+export type QueryExecutor = Pick<Pool | PoolConnection, 'execute' | 'query'>;
 
 export const getMysqlPool = () => {
   if (!env.MYSQL_HOST || !env.MYSQL_DATABASE || !env.MYSQL_USER || !env.MYSQL_PASSWORD) {
@@ -28,10 +35,38 @@ export const getMysqlPool = () => {
 
 export const queryRows = async <TRow extends RowDataPacket>(
   sql: string,
-  params: unknown[] = []
+  params: unknown[] = [],
+  executor: QueryExecutor = getMysqlPool()
 ): Promise<TRow[]> => {
-  const [rows] = await getMysqlPool().query<TRow[]>(sql, params);
+  const [rows] = await executor.query<TRow[]>(sql, params);
   return rows;
+};
+
+export const executeStatement = async <TResult extends ResultSetHeader = ResultSetHeader>(
+  sql: string,
+  params: unknown[] = [],
+  executor: QueryExecutor = getMysqlPool()
+): Promise<TResult> => {
+  const [result] = await executor.execute<TResult>(sql, params as never[]);
+  return result;
+};
+
+export const withTransaction = async <TResult>(
+  callback: (connection: PoolConnection) => Promise<TResult>
+): Promise<TResult> => {
+  const connection = await getMysqlPool().getConnection();
+
+  try {
+    await connection.beginTransaction();
+    const result = await callback(connection);
+    await connection.commit();
+    return result;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 };
 
 export const closeMysqlPool = async () => {

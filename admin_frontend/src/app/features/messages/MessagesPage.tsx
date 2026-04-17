@@ -37,6 +37,10 @@ export const MessagesPage = () => {
       invoices={data?.invoices}
       matters={data?.matters}
       messages={data?.messages}
+      onSendReply={async (threadId, content) => {
+        await adminApi.replyToThread(threadId, { content, visibleToClient: true });
+        await refresh();
+      }}
       searchQuery=""
       threads={data?.threads}
     />

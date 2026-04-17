@@ -30,5 +30,14 @@ export const DocumentsPage = () => {
     );
   }
 
-  return <DocumentsCenterAdmin documents={data?.documents || []} searchQuery="" />;
+  return (
+    <DocumentsCenterAdmin
+      documents={data?.documents || []}
+      onUpdateDocument={async (documentId, payload) => {
+        await adminApi.updateDocumentControls(documentId, payload);
+        await refresh();
+      }}
+      searchQuery=""
+    />
+  );
 };

@@ -29,13 +29,13 @@ const ENTITY_ICONS: Record<string, React.ElementType> = {
   message: MessageSquare,
 };
 
-export const AuditExplorer: React.FC = () => {
+export const AuditExplorer: React.FC<{ entries?: AuditEntry[] }> = ({ entries = AUDIT_ENTRIES }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedEntity, setSelectedEntity] = useState<string | 'all'>('all');
   const [selectedEntry, setSelectedEntry] = useState<AuditEntry | null>(null);
 
   const filteredEntries = useMemo(() => {
-    return AUDIT_ENTRIES.filter(entry => {
+    return entries.filter(entry => {
       const matchesSearch = 
         entry.action.toLowerCase().includes(searchQuery.toLowerCase()) ||
         entry.actor.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -47,7 +47,7 @@ export const AuditExplorer: React.FC = () => {
       
       return matchesSearch && matchesEntity;
     }).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-  }, [searchQuery, selectedEntity]);
+  }, [entries, searchQuery, selectedEntity]);
 
   const renderTimeline = () => {
     if (filteredEntries.length === 0) {

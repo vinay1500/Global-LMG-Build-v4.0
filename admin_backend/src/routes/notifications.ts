@@ -1,0 +1,34 @@
+import { Router } from 'express';
+import { asyncHandler } from '../lib/httpErrors.js';
+import { dismiss, listNotifications, markRead } from '../modules/notifications/service.js';
+import { requireMutationPermission, requireReadPermission } from './shared.js';
+
+export const notificationsRouter = Router();
+
+notificationsRouter.get(
+  '/notifications',
+  asyncHandler(async (request, response) => {
+    await requireReadPermission(request, 'matter.view');
+    response.json(
+      await listNotifications({
+        limit: Number(request.query.limit || 100),
+      })
+    );
+  })
+);
+
+notificationsRouter.post(
+  '/notifications/:notificationId/read',
+  asyncHandler(async (request, response) => {
+    await requireMutationPermission(request, 'matter.view');
+    response.json(await markRead(String(request.params.notificationId || '')));
+  })
+);
+
+notificationsRouter.post(
+  '/notifications/:notificationId/dismiss',
+  asyncHandler(async (request, response) => {
+    await requireMutationPermission(request, 'matter.view');
+    response.json(await dismiss(String(request.params.notificationId || '')));
+  })
+);

@@ -10,8 +10,17 @@ import { EmptyState } from './EmptyState';
 type FilterType = 'all' | 'billing' | 'document' | 'event' | 'matter' | 'message' | 'system' | 'proposal';
 type FilterStatus = 'all' | 'unread' | 'read' | 'dismissed';
 
-export const NotificationsCenter: React.FC = () => {
-  const [notifications, setNotifications] = useState<SystemNotification[]>(NOTIFICATIONS);
+export const NotificationsCenter: React.FC<{
+  notifications?: SystemNotification[];
+  onDismiss?: (notificationId: string) => Promise<void>;
+  onMarkAllRead?: (notificationIds: string[]) => Promise<void>;
+  onMarkAsRead?: (notificationId: string) => Promise<void>;
+}> = ({
+  notifications = NOTIFICATIONS,
+  onDismiss,
+  onMarkAllRead,
+  onMarkAsRead,
+}) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<FilterType>('all');
   const [statusFilter, setStatusFilter] = useState<FilterStatus>('unread');
@@ -35,18 +44,6 @@ export const NotificationsCenter: React.FC = () => {
       return matchesSearch && matchesType && matchesStatus;
     }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [notifications, searchQuery, typeFilter, statusFilter]);
-
-  const handleMarkAsRead = (id: string) => {
-    setNotifications(notifications.map(n => n.id === id ? { ...n, read: true } : n));
-  };
-
-  const handleDismiss = (id: string) => {
-    setNotifications(notifications.map(n => n.id === id ? { ...n, dismissed: true } : n));
-  };
-
-  const handleMarkAllRead = () => {
-    setNotifications(notifications.map(n => ({ ...n, read: true })));
-  };
 
   const getIconForType = (type: string) => {
     switch (type) {
@@ -90,7 +87,15 @@ export const NotificationsCenter: React.FC = () => {
         </div>
         <div className="flex items-center gap-3">
           <button 
-            onClick={handleMarkAllRead}
+            onClick={() => {
+              if (!onMarkAllRead) {
+                return;
+              }
+
+              void onMarkAllRead(
+                notifications.filter((notification) => !notification.read && !notification.dismissed).map((notification) => notification.id)
+              );
+            }}
             disabled={unreadCount === 0}
             className="px-4 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
@@ -242,12 +247,30 @@ export const NotificationsCenter: React.FC = () => {
 
                             <div className={`flex items-center gap-3 mt-4 pt-3 border-t border-gray-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity ${notif.read && notif.dismissed ? 'hidden' : ''}`}>
                               {!notif.read && (
-                                <button onClick={() => handleMarkAsRead(notif.id)} className="text-xs font-medium text-blue-600 hover:text-blue-800 flex items-center gap-1">
+                                <button
+                                  onClick={() => {
+                                    if (!onMarkAsRead) {
+                                      return;
+                                    }
+
+                                    void onMarkAsRead(notif.id);
+                                  }}
+                                  className="text-xs font-medium text-blue-600 hover:text-blue-800 flex items-center gap-1"
+                                >
                                   <CheckCircle className="w-3.5 h-3.5" /> Mark Read
                                 </button>
                               )}
                               {!notif.dismissed && (
-                                <button onClick={() => handleDismiss(notif.id)} className="text-xs font-medium text-gray-500 hover:text-red-600 flex items-center gap-1">
+                                <button
+                                  onClick={() => {
+                                    if (!onDismiss) {
+                                      return;
+                                    }
+
+                                    void onDismiss(notif.id);
+                                  }}
+                                  className="text-xs font-medium text-gray-500 hover:text-red-600 flex items-center gap-1"
+                                >
                                   <X className="w-3.5 h-3.5" /> Dismiss
                                 </button>
                               )}

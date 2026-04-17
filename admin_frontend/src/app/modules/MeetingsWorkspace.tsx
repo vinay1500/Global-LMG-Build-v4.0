@@ -1,31 +1,79 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { 
   Calendar as CalendarIcon, Clock, Video, Phone, User, 
   MapPin, CheckCircle, XCircle, AlertCircle, ChevronLeft, 
   ChevronRight, MoreVertical, Plus, List, LayoutGrid, Eye, EyeOff
 } from 'lucide-react';
-import { EVENTS, formatDate, PlatformEvent } from '../data/seedData';
+import { EVENTS, formatDate, Matter, PlatformEvent, PlatformUser } from '../data/seedData';
 import { StatusBadge } from '../components/dashboard/StatusBadge';
 
 interface MeetingsWorkspaceProps {
-  //
+  clients?: PlatformUser[];
+  events?: PlatformEvent[];
+  matters?: Matter[];
+  onCreateEvent?: (payload: {
+    clientAccountId?: string;
+    date: string;
+    durationMinutes?: number;
+    matterId?: string;
+    meetLink?: string;
+    mode: string;
+    notes?: string;
+    time: string;
+    title: string;
+    type: string;
+    visibleToClient?: boolean;
+  }) => Promise<void>;
 }
 
 type ViewMode = 'calendar' | 'agenda';
 type FilterStatus = 'all' | 'upcoming' | 'completed' | 'cancelled';
 type FilterType = 'all' | 'consultation' | 'hearing' | 'field-visit' | 'deadline';
 
-export const MeetingsWorkspace: React.FC<MeetingsWorkspaceProps> = () => {
+export const MeetingsWorkspace: React.FC<MeetingsWorkspaceProps> = ({
+  clients = [],
+  events = EVENTS,
+  matters = [],
+  onCreateEvent,
+}) => {
   const [viewMode, setViewMode] = useState<ViewMode>('agenda');
   const [statusFilter, setStatusFilter] = useState<FilterStatus>('upcoming');
   const [typeFilter, setTypeFilter] = useState<FilterType>('all');
-  const [selectedEventId, setSelectedEventId] = useState<string | null>(EVENTS[0]?.id || null);
-  const [currentDate, setCurrentDate] = useState<Date>(new Date('2026-03-24')); // Mocking today to seed data range
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(events[0]?.id || null);
+  const [currentDate, setCurrentDate] = useState<Date>(new Date());
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [draftEvent, setDraftEvent] = useState({
+    clientAccountId: clients[0]?.id || '',
+    date: '',
+    durationMinutes: 60,
+    matterId: '',
+    meetLink: '',
+    mode: 'video',
+    notes: '',
+    time: '',
+    title: '',
+    type: 'consultation',
+    visibleToClient: true,
+  });
 
-  const activeEvent = useMemo(() => EVENTS.find(e => e.id === selectedEventId) || null, [selectedEventId]);
+  useEffect(() => {
+    if (!events.some((event) => event.id === selectedEventId)) {
+      setSelectedEventId(events[0]?.id || null);
+    }
+  }, [events, selectedEventId]);
+
+  useEffect(() => {
+    setDraftEvent((current) => ({
+      ...current,
+      clientAccountId: current.clientAccountId || clients[0]?.id || '',
+    }));
+  }, [clients]);
+
+  const activeEvent = useMemo(() => events.find(e => e.id === selectedEventId) || null, [events, selectedEventId]);
 
   const filteredEvents = useMemo(() => {
-    return EVENTS.filter(e => {
+    return events.filter(e => {
       if (statusFilter !== 'all' && e.status !== statusFilter) return false;
       if (typeFilter !== 'all') {
         if (typeFilter === 'consultation' && e.type !== 'consultation') return false;
@@ -35,7 +83,7 @@ export const MeetingsWorkspace: React.FC<MeetingsWorkspaceProps> = () => {
       }
       return true;
     }).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [statusFilter, typeFilter]);
+  }, [events, statusFilter, typeFilter]);
 
   // Group events by date for agenda view
   const groupedEvents = useMemo(() => {
@@ -46,6 +94,11 @@ export const MeetingsWorkspace: React.FC<MeetingsWorkspaceProps> = () => {
     });
     return groups;
   }, [filteredEvents]);
+
+  const mattersForDraftClient = useMemo(
+    () => matters.filter((matter) => matter.clientId === draftEvent.clientAccountId),
+    [draftEvent.clientAccountId, matters]
+  );
 
   const getModeIcon = (mode: string, className = "w-4 h-4") => {
     switch (mode) {
@@ -103,11 +156,206 @@ export const MeetingsWorkspace: React.FC<MeetingsWorkspaceProps> = () => {
               <LayoutGrid className="w-4 h-4" />
             </button>
           </div>
-          <button className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition flex items-center gap-2">
+          <button
+            className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition flex items-center gap-2"
+            onClick={() => setShowCreateForm((current) => !current)}
+            type="button"
+          >
             <Plus className="w-4 h-4" /> Schedule Event
           </button>
         </div>
       </div>
+
+      {showCreateForm ? (
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4">
+          <h3 className="text-lg font-medium text-gray-900" style={{ fontFamily: "'Playfair Display', serif" }}>
+            Schedule Event
+          </h3>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Client</label>
+              <select
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                onChange={(event) =>
+                  setDraftEvent((current) => ({
+                    ...current,
+                    clientAccountId: event.target.value,
+                    matterId: '',
+                  }))
+                }
+                value={draftEvent.clientAccountId}
+              >
+                <option value="">Select client</option>
+                {clients.map((client) => (
+                  <option key={client.id} value={client.id}>
+                    {client.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Matter</label>
+              <select
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                onChange={(event) =>
+                  setDraftEvent((current) => ({
+                    ...current,
+                    matterId: event.target.value,
+                  }))
+                }
+                value={draftEvent.matterId}
+              >
+                <option value="">General / no matter</option>
+                {mattersForDraftClient.map((matter) => (
+                  <option key={matter.id} value={matter.id}>
+                    {matter.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Title</label>
+              <input
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                onChange={(event) => setDraftEvent((current) => ({ ...current, title: event.target.value }))}
+                value={draftEvent.title}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Type</label>
+              <select
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                onChange={(event) => setDraftEvent((current) => ({ ...current, type: event.target.value as FilterType }))}
+                value={draftEvent.type}
+              >
+                <option value="consultation">Consultation</option>
+                <option value="hearing">Hearing</option>
+                <option value="field-visit">Field Visit</option>
+                <option value="deadline">Deadline</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Date</label>
+              <input
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                onChange={(event) => setDraftEvent((current) => ({ ...current, date: event.target.value }))}
+                type="date"
+                value={draftEvent.date}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Time</label>
+              <input
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                onChange={(event) => setDraftEvent((current) => ({ ...current, time: event.target.value }))}
+                type="time"
+                value={draftEvent.time}
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Mode</label>
+              <select
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                onChange={(event) => setDraftEvent((current) => ({ ...current, mode: event.target.value }))}
+                value={draftEvent.mode}
+              >
+                <option value="video">Video</option>
+                <option value="phone">Phone</option>
+                <option value="office">Office</option>
+                <option value="court">Court</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Duration (minutes)</label>
+              <input
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                min={15}
+                onChange={(event) =>
+                  setDraftEvent((current) => ({
+                    ...current,
+                    durationMinutes: Number(event.target.value || 60),
+                  }))
+                }
+                type="number"
+                value={draftEvent.durationMinutes}
+              />
+            </div>
+            {draftEvent.mode === 'video' ? (
+              <div className="md:col-span-2">
+                <label className="block text-xs text-gray-500 mb-1">Meeting Link</label>
+                <input
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  onChange={(event) => setDraftEvent((current) => ({ ...current, meetLink: event.target.value }))}
+                  placeholder="https://meet.google.com/..."
+                  value={draftEvent.meetLink}
+                />
+              </div>
+            ) : null}
+            <div className="md:col-span-2">
+              <label className="block text-xs text-gray-500 mb-1">Notes</label>
+              <textarea
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                onChange={(event) => setDraftEvent((current) => ({ ...current, notes: event.target.value }))}
+                rows={3}
+                value={draftEvent.notes}
+              />
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+              <input
+                checked={draftEvent.visibleToClient}
+                className="rounded border-gray-300"
+                onChange={(event) =>
+                  setDraftEvent((current) => ({ ...current, visibleToClient: event.target.checked }))
+                }
+                type="checkbox"
+              />
+              Visible to client portal
+            </label>
+            <div className="flex gap-2">
+              <button
+                className="px-4 py-2 text-sm border border-gray-200 rounded-lg text-gray-600"
+                onClick={() => setShowCreateForm(false)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg disabled:opacity-50"
+                disabled={!draftEvent.clientAccountId || !draftEvent.title || !draftEvent.date || !draftEvent.time || !onCreateEvent || isSubmitting}
+                onClick={() => {
+                  if (!onCreateEvent) {
+                    return;
+                  }
+
+                  setIsSubmitting(true);
+                  void onCreateEvent(draftEvent)
+                    .then(() => {
+                      setShowCreateForm(false);
+                      setDraftEvent((current) => ({
+                        ...current,
+                        date: '',
+                        durationMinutes: 60,
+                        matterId: '',
+                        meetLink: '',
+                        notes: '',
+                        time: '',
+                        title: '',
+                        type: 'consultation',
+                        visibleToClient: true,
+                      }));
+                    })
+                    .finally(() => setIsSubmitting(false));
+                }}
+                type="button"
+              >
+                Create Event
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="flex-1 min-h-0 grid lg:grid-cols-[1fr_360px] xl:grid-cols-[1fr_400px] gap-6">
         

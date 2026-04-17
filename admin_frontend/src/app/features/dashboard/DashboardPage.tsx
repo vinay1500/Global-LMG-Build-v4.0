@@ -1,54 +1,71 @@
 import React from 'react';
-import { AlertCircle, Calendar, Download, FileText, MessageSquare, Users } from 'lucide-react';
-import { AUDIT_ENTRIES, DOCUMENTS, INVOICES, MATTERS, MESSAGE_THREADS, formatCurrency } from '../../data/seedData';
+import {
+  AlertCircle,
+  Calendar,
+  Download,
+  FileText,
+  MessageSquare,
+  Shield,
+  Users,
+} from 'lucide-react';
+import { WorkspaceState } from '../../components/shared/WorkspaceState';
+import { useAsyncResource } from '../../hooks/useAsyncResource';
+import { adminApi } from '../../lib/api/admin';
+import { formatCurrency } from '../../data/seedData';
 
 export const DashboardPage = () => {
-  const stageData = [
-    { name: 'Intake', value: 12 },
-    { name: 'Review', value: 19 },
-    { name: 'Drafting', value: 8 },
-    { name: 'Filing', value: 4 },
-    { name: 'Closing', value: 2 },
-  ];
+  const { data, errorMessage, isLoading, refresh } = useAsyncResource(
+    () => adminApi.getDashboardWorkspace(),
+    []
+  );
 
-  const revenueTrend = [
-    { month: 'Jan', revenue: 12400 },
-    { month: 'Feb', revenue: 14500 },
-    { month: 'Mar', revenue: 11200 },
-    { month: 'Apr', revenue: 18900 },
-    { month: 'May', revenue: 22100 },
-    { month: 'Jun', revenue: 19800 },
-  ];
+  if (isLoading && !data) {
+    return (
+      <WorkspaceState
+        description="Loading live metrics, aging buckets, recent audit events, notifications, and RBAC snapshots."
+        title="Loading Control Tower"
+      />
+    );
+  }
 
-  const agingData = [
-    { bucket: '1-15 Days', amount: 4500 },
-    { bucket: '16-30 Days', amount: 2100 },
-    { bucket: '31-60 Days', amount: 850 },
-    { bucket: '60+ Days', amount: 1200 },
-  ];
+  if (errorMessage && !data) {
+    return (
+      <WorkspaceState
+        actionLabel="Try Again"
+        description={errorMessage}
+        onAction={() => void refresh().catch(() => undefined)}
+        title="Control Tower Unavailable"
+      />
+    );
+  }
 
   const cards = [
-    { label: 'Open Matters', value: MATTERS.filter((matter) => matter.operationalStatus !== 'completed').length, icon: Users },
-    { label: 'Pending Invoices', value: INVOICES.filter((invoice) => invoice.status !== 'paid').length, icon: FileText },
-    { label: 'Unread Threads', value: MESSAGE_THREADS.filter((thread) => thread.unreadCount > 0).length, icon: MessageSquare },
-    { label: 'Doc Backlog', value: DOCUMENTS.filter((doc) => doc.reviewState === 'unreviewed').length, icon: AlertCircle },
+    { label: 'Open Matters', value: data?.metrics.openMatters || 0, icon: Users },
+    { label: 'Pending Invoices', value: data?.metrics.pendingInvoices || 0, icon: FileText },
+    { label: 'Unread Threads', value: data?.metrics.unreadThreads || 0, icon: MessageSquare },
+    { label: 'Doc Backlog', value: data?.metrics.docBacklog || 0, icon: AlertCircle },
   ];
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-medium text-[#2C2B29]" style={{ fontFamily: "'Playfair Display', serif" }}>
+          <h2
+            className="text-2xl font-medium text-[#2C2B29]"
+            style={{ fontFamily: "'Playfair Display', serif" }}
+          >
             Control Tower
           </h2>
-          <p className="text-sm text-[#8C8981] mt-1">Operational overview and actionable queues.</p>
+          <p className="text-sm text-[#8C8981] mt-1">
+            Operational overview and actionable queues from the shared MySQL system.
+          </p>
         </div>
         <div className="flex gap-2">
-          <button className="px-3 py-1.5 text-sm bg-white border border-[#E6E4DD] text-[#2C2B29] rounded-md shadow-sm hover:bg-[#FCFBF8] transition flex items-center gap-2">
-            <Calendar className="w-4 h-4 text-[#8C8981]" /> Last 30 Days
+          <button className="px-3 py-1.5 text-sm bg-white border border-[#E6E4DD] text-[#2C2B29] rounded-md shadow-sm flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-[#8C8981]" /> Last 6 Months
           </button>
-          <button className="px-3 py-1.5 text-sm bg-[#2C2B29] text-[#F4F1EA] rounded-md shadow-sm hover:bg-[#4A4946] transition flex items-center gap-2">
-            <Download className="w-4 h-4" /> Export Report
+          <button className="px-3 py-1.5 text-sm bg-[#2C2B29] text-[#F4F1EA] rounded-md shadow-sm flex items-center gap-2">
+            <Download className="w-4 h-4" /> Export Later
           </button>
         </div>
       </div>
@@ -57,14 +74,17 @@ export const DashboardPage = () => {
         <div className="bg-[#FDE8EC] border border-[#F5C2C7] p-4 rounded-xl flex items-start gap-3 lg:col-span-1">
           <AlertCircle className="w-5 h-5 text-[#d4183d] flex-shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-medium text-[#d4183d]">3 Matters Stale (14+ Days)</p>
-            <p className="text-xs text-[#d4183d]/80 mt-1">Awaiting internal review or client signatures.</p>
+            <p className="text-sm font-medium text-[#d4183d]">
+              {data?.alertBanner.staleMatters || 0} Matters Stale (14+ Days)
+            </p>
+            <p className="text-xs text-[#d4183d]/80 mt-1">{data?.alertBanner.summary}</p>
           </div>
         </div>
         <div className="bg-[#FDF8EF] border border-[#EAD2A8] p-4 rounded-xl lg:col-span-2">
-          <p className="text-sm font-medium text-[#2C2B29]">Phase 1 Note</p>
+          <p className="text-sm font-medium text-[#2C2B29]">Phase 2 Live Status</p>
           <p className="text-xs text-[#8C8981] mt-1">
-            This dashboard is still seed-backed for now, but the shell is now standalone and ready for real admin data wiring.
+            Dashboard cards, stage mix, revenue trend, receivables aging, recent audit, recent
+            notifications, and access-control snapshots are now live from `admin_backend`.
           </p>
         </div>
       </div>
@@ -80,7 +100,10 @@ export const DashboardPage = () => {
                   <Icon className="w-4 h-4 text-[#5A7C96]" />
                 </div>
               </div>
-              <p className="text-3xl mt-4 text-[#2C2B29]" style={{ fontFamily: "'Playfair Display', serif" }}>
+              <p
+                className="text-3xl mt-4 text-[#2C2B29]"
+                style={{ fontFamily: "'Playfair Display', serif" }}
+              >
                 {card.value}
               </p>
             </div>
@@ -92,11 +115,12 @@ export const DashboardPage = () => {
         <div className="xl:col-span-2 bg-white border border-[#E6E4DD] rounded-xl p-5 shadow-sm">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-medium text-[#2C2B29]">Revenue Trend</h3>
-            <p className="text-xs text-[#8C8981]">Seed-backed through Phase 1</p>
+            <p className="text-xs text-[#8C8981]">Captured payment volume</p>
           </div>
           <div className="h-72 rounded-xl bg-[#FCFBF8] border border-[#E6E4DD] p-4 flex items-end gap-3">
-            {revenueTrend.map((point) => {
-              const height = Math.max(16, Math.round((point.revenue / 22100) * 220));
+            {(data?.revenueTrend || []).map((point) => {
+              const maxRevenue = Math.max(...(data?.revenueTrend || []).map((entry) => entry.revenue), 1);
+              const height = Math.max(16, Math.round((point.revenue / maxRevenue) * 220));
               return (
                 <div className="flex-1 flex flex-col justify-end items-center gap-2" key={point.month}>
                   <span className="text-[11px] text-[#8C8981]">{formatCurrency(point.revenue)}</span>
@@ -114,7 +138,7 @@ export const DashboardPage = () => {
         <div className="bg-white border border-[#E6E4DD] rounded-xl p-5 shadow-sm">
           <h3 className="text-sm font-medium text-[#2C2B29] mb-4">Stage Mix</h3>
           <div className="space-y-4">
-            {stageData.map((point) => (
+            {(data?.stageMix || []).map((point) => (
               <div key={point.name}>
                 <div className="flex items-center justify-between text-xs text-[#8C8981] mb-1">
                   <span>{point.name}</span>
@@ -123,7 +147,16 @@ export const DashboardPage = () => {
                 <div className="h-3 rounded-full bg-[#F4F1EA] overflow-hidden">
                   <div
                     className="h-full rounded-full bg-[#5A7C96]"
-                    style={{ width: `${Math.min(100, point.value * 5)}%` }}
+                    style={{
+                      width: `${Math.min(
+                        100,
+                        point.value *
+                          (100 /
+                            Math.max(
+                              ...(data?.stageMix || [{ name: '', value: 1 }]).map((entry) => entry.value)
+                            ))
+                      )}%`,
+                    }}
                   />
                 </div>
               </div>
@@ -136,10 +169,13 @@ export const DashboardPage = () => {
         <div className="bg-white border border-[#E6E4DD] rounded-xl p-5 shadow-sm xl:col-span-2">
           <h3 className="text-sm font-medium text-[#2C2B29] mb-4">Receivables Aging</h3>
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {agingData.map((point) => (
+            {(data?.aging || []).map((point) => (
               <div className="rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4" key={point.bucket}>
                 <p className="text-xs font-semibold uppercase tracking-wider text-[#A8A69F]">{point.bucket}</p>
-                <p className="text-xl mt-2 text-[#2C2B29]" style={{ fontFamily: "'Playfair Display', serif" }}>
+                <p
+                  className="text-xl mt-2 text-[#2C2B29]"
+                  style={{ fontFamily: "'Playfair Display', serif" }}
+                >
                   {formatCurrency(point.amount)}
                 </p>
               </div>
@@ -150,10 +186,61 @@ export const DashboardPage = () => {
         <div className="bg-white border border-[#E6E4DD] rounded-xl p-5 shadow-sm">
           <h3 className="text-sm font-medium text-[#2C2B29] mb-4">Recent Audit</h3>
           <div className="space-y-3">
-            {AUDIT_ENTRIES.slice(0, 5).map((entry) => (
+            {(data?.recentAudit || []).map((entry) => (
               <div className="border border-[#E6E4DD] rounded-lg p-3" key={entry.id}>
                 <p className="text-sm font-medium text-[#2C2B29]">{entry.action}</p>
-                <p className="text-xs text-[#8C8981] mt-1">{entry.actor} • {entry.sourceModule}</p>
+                <p className="text-xs text-[#8C8981] mt-1">
+                  {entry.actor} • {entry.sourceModule}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+        <div className="bg-white border border-[#E6E4DD] rounded-xl p-5 shadow-sm">
+          <div className="flex items-center gap-2 mb-4">
+            <Shield className="w-4 h-4 text-[#5A7C96]" />
+            <h3 className="text-sm font-medium text-[#2C2B29]">Access Snapshot</h3>
+          </div>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div>
+              <p className="text-xs font-bold text-[#A8A69F] uppercase tracking-wider mb-3">Roles</p>
+              <div className="space-y-2">
+                {(data?.accessOverview.roles || []).slice(0, 5).map((role) => (
+                  <div className="rounded-lg border border-[#E6E4DD] bg-[#FCFBF8] p-3" key={role.code}>
+                    <p className="text-sm font-medium text-[#2C2B29]">{role.name}</p>
+                    <p className="text-xs text-[#8C8981] mt-1">
+                      {role.userCount} users • {role.permissionCodes.length} permissions
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-xs font-bold text-[#A8A69F] uppercase tracking-wider mb-3">Users</p>
+              <div className="space-y-2">
+                {(data?.accessOverview.users || []).slice(0, 5).map((user) => (
+                  <div className="rounded-lg border border-[#E6E4DD] bg-[#FCFBF8] p-3" key={user.id}>
+                    <p className="text-sm font-medium text-[#2C2B29]">{user.displayName}</p>
+                    <p className="text-xs text-[#8C8981] mt-1">
+                      {user.roleCodes.join(', ') || 'No active roles'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white border border-[#E6E4DD] rounded-xl p-5 shadow-sm">
+          <h3 className="text-sm font-medium text-[#2C2B29] mb-4">Recent Notifications</h3>
+          <div className="space-y-3">
+            {(data?.recentNotifications || []).map((entry) => (
+              <div className="border border-[#E6E4DD] rounded-lg p-3" key={entry.id}>
+                <p className="text-sm font-medium text-[#2C2B29]">{entry.title}</p>
+                <p className="text-xs text-[#8C8981] mt-1">{entry.body}</p>
               </div>
             ))}
           </div>

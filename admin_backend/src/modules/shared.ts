@@ -194,7 +194,7 @@ export const fetchMatters = async (filters: {
       m.due_total_amount AS dueAmount,
       m.opened_at AS createdAt,
       m.last_activity_at AS lastUpdated,
-      MAX(CASE WHEN ma.is_primary = 1 AND cp.id IS NOT NULL THEN cp.display_name END) AS assignedCounsel,
+      MAX(CASE WHEN ma.is_primary = 1 AND cp.id IS NOT NULL THEN cp.full_name END) AS assignedCounsel,
       MAX(CASE WHEN ma.is_primary = 1 AND iu.id IS NOT NULL THEN iu.display_name END) AS assignedStaff,
       MAX(CASE WHEN e.join_url IS NOT NULL AND e.status_code = 'upcoming' THEN e.join_url END) AS meetingLink
     FROM matters m
@@ -581,7 +581,7 @@ export const fetchMessagesByThreadIds = async (threadIds: string[]) => {
        msg.public_id AS id,
        ct.public_id AS threadId,
        COALESCE(u.public_id, CONCAT('system:', COALESCE(msg.sender_system_code, 'unknown'))) AS senderId,
-       COALESCE(u.display_name, cp.display_name, 'System') AS senderName,
+       COALESCE(u.display_name, cp.full_name, 'System') AS senderName,
        CASE
          WHEN msg.sender_system_code IS NOT NULL THEN 'system'
          WHEN u.actor_type_code = 'client' THEN 'client'

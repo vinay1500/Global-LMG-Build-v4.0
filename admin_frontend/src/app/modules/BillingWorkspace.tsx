@@ -7,25 +7,45 @@ import {
 } from 'lucide-react';
 import { INVOICES, PAYMENTS, formatCurrency, formatDate, Invoice, Payment } from '../data/seedData';
 import { StatusBadge } from '../components/dashboard/StatusBadge';
+import type { RefundRecord } from '../lib/api/contracts';
 
 type FilterStatus = 'all' | 'paid' | 'pending' | 'overdue' | 'draft';
 
 export const BillingWorkspace: React.FC<{
   invoices?: Invoice[];
+  onCreateRefund?: (payload: {
+    amount: number;
+    invoiceId?: string;
+    paymentId: string;
+    reasonText: string;
+  }) => Promise<void>;
   payments?: Payment[];
+  refunds?: RefundRecord[];
 }> = ({
   invoices = INVOICES,
+  onCreateRefund,
   payments = PAYMENTS,
+  refunds = [],
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<FilterStatus>('all');
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(invoices[0]?.id || null);
+  const [refundAmount, setRefundAmount] = useState('');
+  const [refundReason, setRefundReason] = useState('');
+  const [showRefundForm, setShowRefundForm] = useState(false);
+  const [isSubmittingRefund, setIsSubmittingRefund] = useState(false);
 
   useEffect(() => {
     if (!invoices.some((invoice) => invoice.id === selectedInvoiceId)) {
       setSelectedInvoiceId(invoices[0]?.id || null);
     }
   }, [invoices, selectedInvoiceId]);
+
+  useEffect(() => {
+    setShowRefundForm(false);
+    setRefundAmount('');
+    setRefundReason('');
+  }, [selectedInvoiceId]);
 
   const activeInvoice = useMemo(
     () => invoices.find(i => i.id === selectedInvoiceId) || null,
@@ -38,6 +58,13 @@ export const BillingWorkspace: React.FC<{
       new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
     );
   }, [activeInvoice, payments]);
+
+  const activeRefunds = useMemo(() => {
+    if (!activeInvoice) return [];
+    return refunds
+      .filter((refund) => refund.invoiceId === activeInvoice.id)
+      .sort((a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime());
+  }, [activeInvoice, refunds]);
 
   const filteredInvoices = useMemo(() => {
     return invoices.filter(inv => {
@@ -82,11 +109,11 @@ export const BillingWorkspace: React.FC<{
           <p className="text-sm text-gray-500 mt-1">Finance operations, invoice tracking, and revenue management.</p>
         </div>
         <div className="flex items-center gap-3">
-          <button className="px-4 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition flex items-center gap-2">
-            <Download className="w-4 h-4" /> Export CSV
+          <button className="px-4 py-2 bg-white border border-dashed border-gray-200 text-gray-400 text-sm font-medium rounded-lg flex items-center gap-2 cursor-not-allowed">
+            <Download className="w-4 h-4" /> Export Later
           </button>
-          <button className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition flex items-center gap-2">
-            <Plus className="w-4 h-4" /> New Invoice
+          <button className="px-4 py-2 bg-gray-100 text-gray-400 text-sm font-medium rounded-lg flex items-center gap-2 cursor-not-allowed">
+            <Plus className="w-4 h-4" /> Invoice Create Later
           </button>
         </div>
       </div>
@@ -358,9 +385,71 @@ export const BillingWorkspace: React.FC<{
                     <div>
                       <p className="text-sm font-bold text-emerald-900">Fully Paid</p>
                       <p className="text-xs text-emerald-700 mt-0.5">Received on {activeInvoice.paidDate ? formatDate(activeInvoice.paidDate) : 'N/A'}</p>
-                      <button className="mt-3 text-xs font-medium text-emerald-700 hover:text-emerald-900 bg-white/60 px-3 py-1.5 rounded border border-emerald-200 transition">
+                      <button
+                        className="mt-3 text-xs font-medium text-emerald-700 hover:text-emerald-900 bg-white/60 px-3 py-1.5 rounded border border-emerald-200 transition disabled:opacity-50"
+                        disabled={!activePayments[0] || isSubmittingRefund}
+                        onClick={() => setShowRefundForm((current) => !current)}
+                        type="button"
+                      >
                         Issue Refund
                       </button>
+                      {showRefundForm ? (
+                        <div className="mt-3 space-y-2 rounded-lg border border-emerald-200 bg-white/70 p-3">
+                          <input
+                            className="w-full rounded border border-gray-200 px-3 py-2 text-xs outline-none"
+                            onChange={(event) => setRefundAmount(event.target.value)}
+                            placeholder="Refund amount"
+                            type="number"
+                            value={refundAmount}
+                          />
+                          <textarea
+                            className="w-full rounded border border-gray-200 px-3 py-2 text-xs outline-none"
+                            onChange={(event) => setRefundReason(event.target.value)}
+                            placeholder="Reason for refund"
+                            rows={3}
+                            value={refundReason}
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded border border-gray-200"
+                              onClick={() => {
+                                setShowRefundForm(false);
+                                setRefundAmount('');
+                                setRefundReason('');
+                              }}
+                              type="button"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              className="px-3 py-1.5 text-xs bg-emerald-700 text-white rounded disabled:opacity-50"
+                              disabled={!refundAmount || !refundReason.trim() || !onCreateRefund || !activePayments[0]}
+                              onClick={() => {
+                                if (!activePayments[0] || !onCreateRefund) {
+                                  return;
+                                }
+
+                                setIsSubmittingRefund(true);
+                                void onCreateRefund({
+                                  amount: Number(refundAmount),
+                                  invoiceId: activeInvoice.id,
+                                  paymentId: activePayments[0].id,
+                                  reasonText: refundReason.trim(),
+                                })
+                                  .then(() => {
+                                    setRefundAmount('');
+                                    setRefundReason('');
+                                    setShowRefundForm(false);
+                                  })
+                                  .finally(() => setIsSubmittingRefund(false));
+                              }}
+                              type="button"
+                            >
+                              Submit Refund
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 ) : (
@@ -412,6 +501,22 @@ export const BillingWorkspace: React.FC<{
                         </div>
                         <p className="text-[10px] text-gray-500">via {payment.method} • Ref: {payment.reference}</p>
                         <p className="text-[10px] text-gray-400 mt-1">{formatDate(payment.timestamp.split('T')[0])} by {payment.recordedBy}</p>
+                      </div>
+                    </div>
+                  ))}
+
+                  {activeRefunds.map((refund) => (
+                    <div key={refund.id} className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group is-active">
+                      <div className="flex items-center justify-center w-4 h-4 rounded-full border-2 border-white bg-amber-500 text-white shadow shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 z-10" />
+                      <div className="w-[calc(100%-2rem)] md:w-[calc(50%-1.5rem)] bg-white border border-gray-100 p-3 rounded-lg shadow-sm">
+                        <div className="flex justify-between items-start mb-1">
+                          <span className="font-bold text-gray-900 text-xs">Refund Issued</span>
+                          <span className="font-bold text-amber-600 text-xs">{formatCurrency(refund.amount)}</span>
+                        </div>
+                        <p className="text-[10px] text-gray-500">{refund.reasonText}</p>
+                        <p className="text-[10px] text-gray-400 mt-1">
+                          {formatDate(refund.requestedAt.split('T')[0])} by {refund.requestedBy}
+                        </p>
                       </div>
                     </div>
                   ))}

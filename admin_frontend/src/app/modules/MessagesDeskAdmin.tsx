@@ -18,6 +18,7 @@ interface MessagesDeskAdminProps {
   invoices?: Invoice[];
   matters?: Matter[];
   messages?: ChatMessage[];
+  onSendReply?: (threadId: string, content: string) => Promise<void>;
   searchQuery: string;
   threads?: MessageThread[];
 }
@@ -30,6 +31,7 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
   invoices = INVOICES,
   matters = MATTERS,
   messages = CHAT_MESSAGES,
+  onSendReply,
   searchQuery,
   threads = MESSAGE_THREADS,
 }) => {
@@ -37,6 +39,7 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
   const [filterType, setFilterType] = useState<FilterType>('all');
   const [selectedThreadId, setSelectedThreadId] = useState<string>(threads[0]?.id || '');
   const [newMessage, setNewMessage] = useState('');
+  const [isSending, setIsSending] = useState(false);
 
   useEffect(() => {
     if (!threads.some((thread) => thread.id === selectedThreadId)) {
@@ -135,11 +138,11 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
           <p className="text-sm text-gray-500 mt-1">Manage client correspondence and internal thread routing.</p>
         </div>
         <div className="flex items-center gap-3">
-          <button className="px-4 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition">
-            Export Logs
+          <button className="px-4 py-2 bg-white border border-dashed border-gray-200 text-gray-400 text-sm font-medium rounded-lg cursor-not-allowed">
+            Export Later
           </button>
-          <button className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition flex items-center gap-2">
-            <MessageSquare className="w-4 h-4" /> New Message
+          <button className="px-4 py-2 bg-gray-100 text-gray-400 text-sm font-medium rounded-lg cursor-not-allowed flex items-center gap-2">
+            <MessageSquare className="w-4 h-4" /> New Message Later
           </button>
         </div>
       </div>
@@ -366,7 +369,21 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                     <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition" title="Attach file"><Paperclip className="w-4 h-4" /></button>
                     <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition text-xs font-medium px-3">Use Template</button>
                   </div>
-                  <button className="bg-gray-900 text-white px-4 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-gray-800 transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed" disabled={!newMessage.trim()}>
+                  <button
+                    className="bg-gray-900 text-white px-4 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-gray-800 transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                    disabled={!newMessage.trim() || isSending || !onSendReply}
+                    onClick={() => {
+                      if (!activeThread || !newMessage.trim() || !onSendReply) {
+                        return;
+                      }
+
+                      setIsSending(true);
+                      void onSendReply(activeThread.id, newMessage.trim())
+                        .then(() => setNewMessage(''))
+                        .finally(() => setIsSending(false));
+                    }}
+                    type="button"
+                  >
                     Send <Send className="w-3.5 h-3.5" />
                   </button>
                 </div>

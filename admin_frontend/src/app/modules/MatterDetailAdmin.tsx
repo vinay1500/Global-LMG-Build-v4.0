@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   ArrowLeft, Video, MessageSquare, FileText, Download, 
   ExternalLink, Edit2, CheckCircle, Clock, Trash2, Check,
@@ -21,18 +21,68 @@ const formatSize = (bytes: number) => {
 };
 
 interface MatterDetailAdminProps {
+  assignmentOptions?: {
+    counsel: Array<{ id: string; name: string }>;
+    staff: Array<{ id: string; name: string }>;
+  };
   matter: Matter;
+  onAddMatterNote?: (payload: { bodyText: string; title: string; visibleToClient?: boolean }) => Promise<void>;
+  onAssignMatter?: (payload: {
+    assignmentRoleCode: string;
+    counselPartnerId?: string;
+    internalUserId?: string;
+    isPrimary?: boolean;
+    notes?: string;
+  }) => Promise<void>;
   onBack: () => void;
   onChat: (threadId: string | null) => void;
+  onCreateEvent?: (payload: {
+    clientAccountId?: string;
+    date: string;
+    durationMinutes?: number;
+    matterId?: string;
+    meetLink?: string;
+    mode: string;
+    notes?: string;
+    time: string;
+    title: string;
+    type: string;
+    visibleToClient?: boolean;
+  }) => Promise<void>;
+  onSaveMatterDetails?: (payload: {
+    issueSummary?: string;
+    operationalStatusCode?: string;
+    quotedTotalAmount?: number;
+    selectedServices?: string[];
+  }) => Promise<void>;
+  onUpdateStage?: (payload: {
+    changeNote?: string;
+    operationalStatusCode?: string;
+    stageCode: string;
+    visibleToClient?: boolean;
+  }) => Promise<void>;
   myInvoices: Invoice[];
   myDocs: PlatformDocument[];
   myEvents: PlatformEvent[];
   myThreads: MessageThread[];
-  onUpdateFee: (matterId: string, newFee: number) => void;
+  onUpdateFee: (matterId: string, newFee: number) => Promise<void> | void;
 }
 
 export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({ 
-  matter: initialMatter, onBack, onChat, myInvoices, myDocs, myEvents: initialEvents, myThreads, onUpdateFee 
+  assignmentOptions,
+  matter: initialMatter,
+  onAddMatterNote,
+  onAssignMatter,
+  onBack,
+  onChat,
+  onCreateEvent,
+  onSaveMatterDetails,
+  onUpdateFee,
+  onUpdateStage,
+  myInvoices,
+  myDocs,
+  myEvents: initialEvents,
+  myThreads,
 }) => {
   const [matter, setMatter] = useState(initialMatter);
   const [localEvents, setLocalEvents] = useState<PlatformEvent[]>(initialEvents);
@@ -52,15 +102,28 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
   
   const [showStageDropdown, setShowStageDropdown] = useState(false);
   const [isEditingMatter, setIsEditingMatter] = useState(false);
+  const [isSavingMatter, setIsSavingMatter] = useState(false);
+  const [assignmentDraft, setAssignmentDraft] = useState({
+    counselPartnerId: '',
+    internalUserId: '',
+  });
   
   // Add Event state
   const [newEvent, setNewEvent] = useState({
     title: '', date: '', time: '', type: 'meeting', location: ''
   });
 
-  const handleSaveFee = () => {
+  useEffect(() => {
+    setMatter(initialMatter);
+    setLocalEvents(initialEvents);
+    setEditedFee(initialMatter.totalFee.toString());
+    setEditedSummary(initialMatter.issueSummary);
+    setEditedServices(initialMatter.selectedServices);
+  }, [initialEvents, initialMatter]);
+
+  const handleSaveFee = async () => {
     const fee = parseInt(editedFee.replace(/,/g, '')) || 0;
-    onUpdateFee(matter.id, fee);
+    await onUpdateFee(matter.id, fee);
     setMatter({ ...matter, totalFee: fee });
     setIsEditingFee(false);
   };
@@ -85,43 +148,65 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
     setShowClientSimulation(true);
   };
 
-  const handleAddEvent = () => {
+  const handleAddEvent = async () => {
+    if (!onCreateEvent) {
+      return;
+    }
+
     const isMeeting = newEvent.type === 'meeting';
-    const createdEvent: PlatformEvent = {
-      id: `EVT-${Date.now()}`,
+    await onCreateEvent({
+      date: newEvent.date || new Date().toISOString().split('T')[0],
+      durationMinutes: isMeeting ? 60 : 30,
+      meetLink: isMeeting ? newEvent.location || undefined : undefined,
+      mode: isMeeting ? 'video' : 'court',
+      notes: '',
+      time: newEvent.time || '10:00',
       title: newEvent.title || (isMeeting ? 'Scheduled Meeting' : 'New Event'),
       type: isMeeting ? 'consultation' : 'hearing',
-      clientId: matter.clientId,
-      clientName: matter.clientName,
-      matterId: matter.id,
-      matterTitle: matter.title,
-      date: newEvent.date || new Date().toISOString().split('T')[0],
-      time: newEvent.time || '10:00 AM',
-      duration: isMeeting ? 60 : 0,
-      mode: isMeeting ? 'video' : 'court',
-      location: newEvent.location || (isMeeting ? 'Video Conference' : ''),
       visibleToClient: true,
-      meetLink: isMeeting ? (newEvent.location || 'https://meet.google.com/abc-defg-hij') : undefined,
-      status: 'upcoming'
-    };
-    setLocalEvents([...localEvents, createdEvent]);
+    });
     setShowEventForm(false);
-    if (isMeeting) {
-      alert('Meeting scheduled and Google Meet link generated!');
-    } else {
-      alert('Event added successfully!');
-    }
+    setNewEvent({ title: '', date: '', time: '', type: 'meeting', location: '' });
   };
 
-  const handleStageUpdate = (stageId: string) => {
+  const handleStageUpdate = async (stageId: string) => {
+    if (!onUpdateStage) {
+      return;
+    }
+
     const idx = LIFECYCLE_STAGES.findIndex(s => s.id === stageId);
     const newStages = LIFECYCLE_STAGES.map((s, i) => ({
       id: s.id as any,
       label: s.label,
       completed: i <= idx
     }));
+    await onUpdateStage({
+      operationalStatusCode: matter.operationalStatus,
+      stageCode: stageId,
+      visibleToClient: true,
+    });
     setMatter({ ...matter, lifecycleStage: stageId as any, stages: newStages });
     setShowStageDropdown(false);
+  };
+
+  const handleSaveMatter = async () => {
+    if (!onSaveMatterDetails) {
+      setIsEditingMatter(false);
+      return;
+    }
+
+    setIsSavingMatter(true);
+    try {
+      await onSaveMatterDetails({
+        issueSummary: matter.issueSummary,
+        operationalStatusCode: matter.operationalStatus,
+        quotedTotalAmount: matter.totalFee,
+        selectedServices: matter.selectedServices,
+      });
+      setIsEditingMatter(false);
+    } finally {
+      setIsSavingMatter(false);
+    }
   };
 
   const STAGES_LIST = LIFECYCLE_STAGES.map(s => ({
@@ -195,7 +280,11 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
               <MessageSquare className="w-4 h-4" /> Open Chat
             </button>
             {isEditingMatter ? (
-              <button onClick={() => setIsEditingMatter(false)} className="px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-2 transition">
+              <button
+                onClick={() => void handleSaveMatter()}
+                className="px-4 py-2 text-sm bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 flex items-center gap-2 transition disabled:opacity-50"
+                disabled={isSavingMatter}
+              >
                 <Save className="w-4 h-4" /> Save Changes
               </button>
             ) : (
@@ -260,56 +349,20 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
               <>
                 {/* Package Builder Section */}
                 <div className="border-t border-gray-100 pt-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-medium flex items-center gap-2" style={{ fontFamily: "'Playfair Display', serif" }}>
-                  <Package className="w-5 h-5 text-gray-400" />
-                  Service Packages & Quoting
-                </h3>
-                {!showPackageBuilder && (
-                  <button 
-                    onClick={() => setShowPackageBuilder(true)}
-                    className="text-sm text-blue-600 hover:text-blue-700 font-medium"
-                  >
-                    {matterPackages.length > 0 ? 'Edit Packages' : '+ Create Package Tiers'}
-                  </button>
-                )}
-              </div>
-              
-              {showPackageBuilder ? (
-                <div className="bg-gray-50 p-6 rounded-xl border border-gray-200">
-                  <PackageBuilder 
-                    matterId={matter.id} 
-                    existingPackages={matterPackages}
-                    onSave={(pkgs) => { handleSavePackages(pkgs); setShowPackageBuilder(false); }} 
-                  />
-                  <button onClick={() => setShowPackageBuilder(false)} className="mt-4 text-sm text-gray-500 hover:text-gray-700">Close without saving</button>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-medium flex items-center gap-2" style={{ fontFamily: "'Playfair Display', serif" }}>
+                      <Package className="w-5 h-5 text-gray-400" />
+                      Service Packages & Quoting
+                    </h3>
+                    <span className="text-xs uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
+                      Deferred
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-500 bg-gray-50 p-4 rounded-lg border border-gray-100">
+                    Package publishing, client selection, and invoice generation are intentionally deferred to the
+                    package workflow phase so this screen no longer pretends those actions are live.
+                  </p>
                 </div>
-              ) : matterPackages.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {matterPackages.map(pkg => (
-                    <div key={pkg.id} className="border border-gray-200 rounded-xl p-4 bg-white shadow-sm flex flex-col relative group">
-                      <h4 className="font-medium text-gray-900">{pkg.name}</h4>
-                      <p className="text-xl font-semibold text-gray-900 mt-1 mb-3">{formatCurrency(pkg.price)}</p>
-                      <ul className="text-sm text-gray-600 space-y-1.5 flex-1 mb-4">
-                        {pkg.points.map((pt, i) => (
-                          <li key={i} className="flex items-start gap-1.5"><Check className="w-3.5 h-3.5 text-emerald-500 mt-0.5 flex-shrink-0"/> {pt}</li>
-                        ))}
-                      </ul>
-                      <button 
-                        onClick={() => applyPackageFee(pkg.price)}
-                        className="w-full py-1.5 text-sm border border-gray-200 rounded text-gray-700 hover:bg-gray-50 transition"
-                      >
-                        Apply this fee
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-gray-500 bg-gray-50 p-4 rounded-lg border border-gray-100">
-                  No packages created for this matter yet. Create custom service tiers to present to the client.
-                </p>
-              )}
-            </div>
 
             {/* Matter Details */}
             <div className="space-y-6">
@@ -372,7 +425,30 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm text-gray-500 font-medium">Client-Visible Updates</h3>
-                  {isEditingMatter && <button className="text-xs text-blue-600 hover:underline">+ Add Update</button>}
+                  {isEditingMatter && (
+                    <button
+                      className="text-xs text-blue-600 hover:underline"
+                      onClick={() => {
+                        if (!onAddMatterNote) {
+                          return;
+                        }
+
+                        const bodyText = window.prompt('Add a client-visible update');
+                        if (!bodyText?.trim()) {
+                          return;
+                        }
+
+                        void onAddMatterNote({
+                          bodyText: bodyText.trim(),
+                          title: 'Matter update',
+                          visibleToClient: true,
+                        });
+                      }}
+                      type="button"
+                    >
+                      + Add Update
+                    </button>
+                  )}
                 </div>
                 {matter.clientVisibleNotes.length > 0 ? (
                   <div className="space-y-2">
@@ -391,7 +467,30 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm text-gray-500 font-medium">Internal Notes</h3>
-                  {isEditingMatter && <button className="text-xs text-blue-600 hover:underline">+ Add Note</button>}
+                  {isEditingMatter && (
+                    <button
+                      className="text-xs text-blue-600 hover:underline"
+                      onClick={() => {
+                        if (!onAddMatterNote) {
+                          return;
+                        }
+
+                        const bodyText = window.prompt('Add an internal note');
+                        if (!bodyText?.trim()) {
+                          return;
+                        }
+
+                        void onAddMatterNote({
+                          bodyText: bodyText.trim(),
+                          title: 'Internal note',
+                          visibleToClient: false,
+                        });
+                      }}
+                      type="button"
+                    >
+                      + Add Note
+                    </button>
+                  )}
                 </div>
                 {matter.internalNotes && matter.internalNotes.length > 0 ? (
                   <div className="space-y-2">
@@ -519,8 +618,8 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                     <h3 className="text-lg font-medium" style={{ fontFamily: "'Playfair Display', serif" }}>Matter Documents</h3>
                     <p className="text-sm text-gray-500">Manage case files and adjust client visibility.</p>
                   </div>
-                  <button className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 hover:bg-gray-800 transition">
-                    + Upload File
+                  <button className="bg-gray-100 text-gray-400 px-4 py-2 rounded-lg text-sm flex items-center gap-2 cursor-not-allowed">
+                    Upload Later
                   </button>
                 </div>
 
@@ -583,13 +682,21 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                 <div className="flex justify-between px-2"><span className="text-gray-500">Paid</span><span className="text-emerald-600 font-medium">{formatCurrency(matter.paidAmount)}</span></div>
                 <div className="flex justify-between border-t border-gray-200 pt-3 px-2"><span className="text-gray-500 font-medium">Due Balance</span><span className={`font-bold ${matter.dueAmount > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{formatCurrency(matter.dueAmount)}</span></div>
               </div>
-              <button onClick={handleGenerateInvoice} className="w-full bg-white border border-gray-200 text-gray-700 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition">Generate Invoice</button>
+              <button
+                className="w-full bg-white border border-dashed border-gray-300 text-gray-500 py-2 rounded-lg text-sm font-medium cursor-not-allowed"
+                disabled
+                type="button"
+              >
+                Invoice Generation Deferred
+              </button>
             </div>
 
             <div className="bg-gray-50 border border-gray-100 rounded-xl p-5 space-y-3">
               <div className="flex justify-between items-center mb-2">
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Internal Details</h3>
-                <button className="text-xs text-blue-600 hover:underline">Edit Details</button>
+                <button className="text-xs text-blue-600 hover:underline" onClick={() => setIsEditingMatter(true)} type="button">
+                  Edit Details
+                </button>
               </div>
               <div className="space-y-2 text-sm text-gray-600">
                 <div className="flex justify-between"><span className="text-gray-400">Expertise:</span> <span>{matter.expertiseArea}</span></div>
@@ -597,6 +704,82 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                 <div className="flex justify-between"><span className="text-gray-400">Created:</span> <span>{formatDate(matter.createdAt)}</span></div>
                 <div className="flex justify-between"><span className="text-gray-400">Updated:</span> <span>{formatDate(matter.lastUpdated)}</span></div>
               </div>
+              {isEditingMatter && assignmentOptions ? (
+                <div className="pt-3 border-t border-gray-200 space-y-3">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Assigned Staff</label>
+                    <select
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                      onChange={(event) =>
+                        setAssignmentDraft((current) => ({
+                          ...current,
+                          internalUserId: event.target.value,
+                        }))
+                      }
+                      value={assignmentDraft.internalUserId}
+                    >
+                      <option value="">Keep current</option>
+                      {assignmentOptions.staff.map((staff) => (
+                        <option key={staff.id} value={staff.id}>
+                          {staff.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Assigned Counsel</label>
+                    <select
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                      onChange={(event) =>
+                        setAssignmentDraft((current) => ({
+                          ...current,
+                          counselPartnerId: event.target.value,
+                        }))
+                      }
+                      value={assignmentDraft.counselPartnerId}
+                    >
+                      <option value="">Keep current</option>
+                      {assignmentOptions.counsel.map((counsel) => (
+                        <option key={counsel.id} value={counsel.id}>
+                          {counsel.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    className="w-full text-xs font-medium bg-white border border-gray-200 rounded-lg py-2 text-gray-700 disabled:opacity-50"
+                    disabled={!assignmentDraft.counselPartnerId && !assignmentDraft.internalUserId}
+                    onClick={() => {
+                      if (!onAssignMatter) {
+                        return;
+                      }
+
+                      if (assignmentDraft.internalUserId) {
+                        void onAssignMatter({
+                          assignmentRoleCode: 'internal_owner',
+                          internalUserId: assignmentDraft.internalUserId,
+                          isPrimary: true,
+                        }).then(() =>
+                          setAssignmentDraft((current) => ({ ...current, internalUserId: '' }))
+                        );
+                      }
+
+                      if (assignmentDraft.counselPartnerId) {
+                        void onAssignMatter({
+                          assignmentRoleCode: 'lead_counsel',
+                          counselPartnerId: assignmentDraft.counselPartnerId,
+                          isPrimary: true,
+                        }).then(() =>
+                          setAssignmentDraft((current) => ({ ...current, counselPartnerId: '' }))
+                        );
+                      }
+                    }}
+                    type="button"
+                  >
+                    Save Assignments
+                  </button>
+                </div>
+              ) : null}
             </div>
 
             {myInvoices.length > 0 && (

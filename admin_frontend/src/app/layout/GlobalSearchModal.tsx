@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowDown,
@@ -11,19 +11,13 @@ import {
   Search,
   Users,
 } from 'lucide-react';
-import { DOCUMENTS, MATTERS, MESSAGE_THREADS, PLATFORM_USERS } from '../data/seedData';
-
-type SearchResult = {
-  id: string;
-  subtitle: string;
-  title: string;
-  type: 'Client' | 'Document' | 'Matter' | 'Message';
-};
+import type { SearchResultItem } from '../lib/api/contracts';
+import { adminApi } from '../lib/api/admin';
 
 type GlobalSearchModalProps = {
   isOpen: boolean;
   onClose: () => void;
-  onSelect: (result: SearchResult) => void;
+  onSelect: (result: SearchResultItem) => void;
 };
 
 export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
@@ -33,84 +27,28 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
 }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [results, setResults] = useState<SearchResultItem[]>([]);
 
-  const results = useMemo<SearchResult[]>(() => {
-    const textQuery = query.trim().toLowerCase();
-    if (!textQuery) {
-      return [];
+  useEffect(() => {
+    if (!isOpen || !query.trim()) {
+      setResults([]);
+      return;
     }
 
-    const merged: SearchResult[] = [];
+    const timer = window.setTimeout(() => {
+      void adminApi.search(query.trim()).then((response) => setResults(response.results));
+    }, 180);
 
-    PLATFORM_USERS.forEach((user) => {
-      if (
-        user.name.toLowerCase().includes(textQuery) ||
-        user.email.toLowerCase().includes(textQuery) ||
-        user.phone.toLowerCase().includes(textQuery)
-      ) {
-        merged.push({
-          id: user.id,
-          subtitle: `${user.email} • ${user.region || 'Region pending'}`,
-          title: user.name,
-          type: 'Client',
-        });
-      }
-    });
+    return () => window.clearTimeout(timer);
+  }, [isOpen, query]);
 
-    MATTERS.forEach((matter) => {
-      if (
-        matter.title.toLowerCase().includes(textQuery) ||
-        matter.referenceCode.toLowerCase().includes(textQuery) ||
-        matter.clientName.toLowerCase().includes(textQuery)
-      ) {
-        merged.push({
-          id: matter.id,
-          subtitle: `${matter.referenceCode} • ${matter.clientName}`,
-          title: matter.title,
-          type: 'Matter',
-        });
-      }
-    });
-
-    DOCUMENTS.forEach((document) => {
-      if (
-        document.name.toLowerCase().includes(textQuery) ||
-        document.clientName.toLowerCase().includes(textQuery)
-      ) {
-        merged.push({
-          id: document.id,
-          subtitle: `${document.clientName}${document.matterTitle ? ` • ${document.matterTitle}` : ''}`,
-          title: document.name,
-          type: 'Document',
-        });
-      }
-    });
-
-    MESSAGE_THREADS.forEach((thread) => {
-      if (
-        thread.clientName.toLowerCase().includes(textQuery) ||
-        thread.matterTitle.toLowerCase().includes(textQuery) ||
-        thread.lastMessage.toLowerCase().includes(textQuery)
-      ) {
-        merged.push({
-          id: thread.id,
-          subtitle: thread.matterTitle || 'General inquiry',
-          title: thread.clientName,
-          type: 'Message',
-        });
-      }
-    });
-
-    return merged.slice(0, 15);
-  }, [query]);
-
-  const handleSelect = (result: SearchResult) => {
+  const handleSelect = (result: SearchResultItem) => {
     onSelect(result);
     setQuery('');
     setSelectedIndex(0);
   };
 
-  const getIcon = (type: SearchResult['type']) => {
+  const getIcon = (type: SearchResultItem['type']) => {
     switch (type) {
       case 'Client':
         return Users;

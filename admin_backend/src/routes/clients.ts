@@ -1,14 +1,14 @@
 import { Router } from 'express';
 import { asyncHandler } from '../lib/httpErrors.js';
 import { getClientWorkspace, listClients } from '../modules/clients/service.js';
-import { requireReadActor } from './shared.js';
+import { requireReadPermission } from './shared.js';
 
 export const clientsRouter = Router();
 
 clientsRouter.get(
   '/clients',
   asyncHandler(async (request, response) => {
-    await requireReadActor(request);
+    await requireReadPermission(request, 'client_account.view');
     response.json(
       await listClients({
         limit: Number(request.query.limit || 100),
@@ -22,7 +22,7 @@ clientsRouter.get(
 clientsRouter.get(
   '/clients/:clientAccountId',
   asyncHandler(async (request, response) => {
-    await requireReadActor(request);
+    await requireReadPermission(request, 'client_account.view');
     response.json(await getClientWorkspace(String(request.params.clientAccountId || '')));
   })
 );

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { 
   FileText, File, Image as ImageIcon, Package, Search, Filter, 
   Download, Eye, EyeOff, MoreVertical, CheckCircle, Clock, 
@@ -9,6 +9,10 @@ import { EmptyState } from './EmptyState';
 
 interface DocumentsCenterAdminProps {
   documents: PlatformDocument[];
+  onUpdateDocument?: (
+    documentId: string,
+    payload: { reviewState: 'reviewed' | 'unreviewed'; visibility: 'client' | 'internal' }
+  ) => Promise<void>;
   searchQuery: string;
 }
 
@@ -42,7 +46,11 @@ const getFileIcon = (type: string, className = "w-5 h-5") => {
   }
 };
 
-export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({ documents, searchQuery: globalSearch }) => {
+export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
+  documents,
+  onUpdateDocument,
+  searchQuery: globalSearch,
+}) => {
   const [localSearch, setLocalSearch] = useState('');
   const [groupBy, setGroupBy] = useState<GroupBy>('none');
   const [selectedDoc, setSelectedDoc] = useState<PlatformDocument | null>(documents[0] || null);
@@ -50,6 +58,16 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({ docu
   // Filters
   const [visibilityFilter, setVisibilityFilter] = useState<'all' | 'client' | 'internal'>('all');
   const [reviewFilter, setReviewFilter] = useState<'all' | 'reviewed' | 'unreviewed'>('all');
+
+  useEffect(() => {
+    if (!selectedDoc) {
+      setSelectedDoc(documents[0] || null);
+      return;
+    }
+
+    const nextSelected = documents.find((document) => document.id === selectedDoc.id) || null;
+    setSelectedDoc(nextSelected || documents[0] || null);
+  }, [documents, selectedDoc?.id]);
 
   const filteredDocs = useMemo(() => {
     let result = documents;
@@ -109,8 +127,8 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({ docu
           <p className="text-sm text-gray-500 mt-1">Manage files, adjust visibility, and review uploads.</p>
         </div>
         <div className="flex items-center gap-3">
-          <button className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition">
-            + Upload Document
+          <button className="px-4 py-2 bg-gray-100 text-gray-400 text-sm font-medium rounded-lg cursor-not-allowed">
+            Upload Later
           </button>
         </div>
       </div>
@@ -279,7 +297,22 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({ docu
                     <h4 className="text-sm font-medium text-gray-900">Client Visibility</h4>
                     <p className="text-xs text-gray-500 mt-0.5">Can the client see this document?</p>
                   </div>
-                  <button className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${selectedDoc.visibility === 'client' ? 'bg-blue-600' : 'bg-gray-300'}`}>
+                  <button
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${selectedDoc.visibility === 'client' ? 'bg-blue-600' : 'bg-gray-300'}`}
+                    onClick={() => {
+                      if (!onUpdateDocument) {
+                        return;
+                      }
+
+                      const nextVisibility = selectedDoc.visibility === 'client' ? 'internal' : 'client';
+                      void onUpdateDocument(selectedDoc.id, {
+                        reviewState:
+                          selectedDoc.reviewState === 'reviewed' ? 'reviewed' : 'unreviewed',
+                        visibility: nextVisibility,
+                      });
+                    }}
+                    type="button"
+                  >
                     <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${selectedDoc.visibility === 'client' ? 'translate-x-6' : 'translate-x-1'}`} />
                   </button>
                 </div>
@@ -291,7 +324,17 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({ docu
                   </div>
                   <select 
                     className="text-sm border border-gray-300 rounded-md px-2 py-1 outline-none font-medium bg-white"
-                    defaultValue={selectedDoc.reviewState}
+                    onChange={(event) => {
+                      if (!onUpdateDocument) {
+                        return;
+                      }
+
+                      void onUpdateDocument(selectedDoc.id, {
+                        reviewState: event.target.value as 'reviewed' | 'unreviewed',
+                        visibility: selectedDoc.visibility,
+                      });
+                    }}
+                    value={selectedDoc.reviewState}
                   >
                     <option value="unreviewed">Needs Review</option>
                     <option value="reviewed">Reviewed & Approved</option>

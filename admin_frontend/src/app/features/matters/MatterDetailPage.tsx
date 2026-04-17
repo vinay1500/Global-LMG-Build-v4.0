@@ -54,34 +54,54 @@ export const MatterDetailPage = () => {
     return <Navigate replace to="/matters" />;
   }
 
-  const handleUpdateFee = (targetMatterId: string, newFee: number) => {
-    setWorkspace((current) =>
-      current
-        ? {
-            ...current,
-            matter:
-              current.matter.id === targetMatterId
-                ? {
-                    ...current.matter,
-                    dueAmount: Math.max(newFee - current.matter.paidAmount, 0),
-                    totalFee: newFee,
-                  }
-                : current.matter,
-          }
-        : current
-    );
+  const handleUpdateFee = async (_targetMatterId: string, newFee: number) => {
+    await adminApi.updateMatterDetails(String(matterId || ''), {
+      quotedTotalAmount: newFee,
+    });
+    const nextWorkspace = await refresh();
+    setWorkspace(nextWorkspace);
   };
 
   return (
     <MatterDetailAdmin
+      assignmentOptions={workspace?.assignmentOptions}
       matter={matter}
       myDocs={workspace?.documents || []}
       myEvents={workspace?.events || []}
       myInvoices={workspace?.invoices || []}
       myThreads={workspace?.threads || []}
+      onAddMatterNote={async (payload) => {
+        await adminApi.createMatterNote(matter.id, payload);
+        const nextWorkspace = await refresh();
+        setWorkspace(nextWorkspace);
+      }}
+      onAssignMatter={async (payload) => {
+        await adminApi.createMatterAssignment(matter.id, payload);
+        const nextWorkspace = await refresh();
+        setWorkspace(nextWorkspace);
+      }}
       onBack={() => navigate('/matters')}
       onChat={() => navigate('/messages')}
+      onCreateEvent={async (payload) => {
+        await adminApi.createEvent({
+          ...payload,
+          clientAccountId: matter.clientId,
+          matterId: matter.id,
+        });
+        const nextWorkspace = await refresh();
+        setWorkspace(nextWorkspace);
+      }}
+      onSaveMatterDetails={async (payload) => {
+        await adminApi.updateMatterDetails(matter.id, payload);
+        const nextWorkspace = await refresh();
+        setWorkspace(nextWorkspace);
+      }}
       onUpdateFee={handleUpdateFee}
+      onUpdateStage={async (payload) => {
+        await adminApi.updateMatterStage(matter.id, payload);
+        const nextWorkspace = await refresh();
+        setWorkspace(nextWorkspace);
+      }}
     />
   );
 };

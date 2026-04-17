@@ -30,5 +30,15 @@ export const BillingPage = () => {
     );
   }
 
-  return <BillingWorkspace invoices={data?.invoices} payments={data?.payments} />;
+  return (
+    <BillingWorkspace
+      invoices={data?.invoices}
+      onCreateRefund={async (payload) => {
+        await adminApi.createRefund(payload);
+        await refresh();
+      }}
+      payments={data?.payments}
+      refunds={data?.refunds}
+    />
+  );
 };

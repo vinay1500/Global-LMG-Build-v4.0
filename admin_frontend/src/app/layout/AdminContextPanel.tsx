@@ -1,14 +1,17 @@
 import React from 'react';
 import { FileText, Link as LinkIcon, Mail, X } from 'lucide-react';
-import { AUDIT_ENTRIES, NOTIFICATIONS, formatDateTime } from '../data/seedData';
+import { formatDateTime } from '../data/seedData';
+import { useAsyncResource } from '../hooks/useAsyncResource';
+import { adminApi } from '../lib/api/admin';
 
 type AdminContextPanelProps = {
   onClose: () => void;
 };
 
 export const AdminContextPanel: React.FC<AdminContextPanelProps> = ({ onClose }) => {
-  const recentAudit = AUDIT_ENTRIES.slice(0, 3);
-  const recentNotifications = NOTIFICATIONS.slice(0, 3);
+  const { data } = useAsyncResource(() => adminApi.getDashboardWorkspace(), []);
+  const recentAudit = (data?.recentAudit || []).slice(0, 3);
+  const recentNotifications = (data?.recentNotifications || []).slice(0, 3);
 
   return (
     <aside className="fixed xl:static top-0 right-0 h-full w-80 bg-[#FCFBF8] border-l border-[#E6E4DD] overflow-y-auto z-50 xl:z-0 shadow-[-4px_0_24px_rgba(0,0,0,0.08)] xl:shadow-[-4px_0_12px_rgba(0,0,0,0.02)]">
