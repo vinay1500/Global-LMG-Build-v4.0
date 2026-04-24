@@ -162,6 +162,12 @@ export interface DashboardSnapshotResponse {
   users: PlatformUser[];
 }
 
+export interface DashboardPackageSelectionResponse {
+  generatedInvoiceId: string;
+  selectedPackageId: string;
+  snapshot: DashboardSnapshotResponse;
+}
+
 export interface NotificationPreferencesResponse {
   caseActivityAlerts: boolean;
   emailUpdates: boolean;

@@ -32,10 +32,21 @@ export const BillingPage = () => {
 
   return (
     <BillingWorkspace
+      matters={data?.matters}
+      onCreateInvoice={async (payload) => {
+        const result = await adminApi.createInvoice(payload);
+        await refresh();
+        return result;
+      }}
       invoices={data?.invoices}
       onCreateRefund={async (payload) => {
         await adminApi.createRefund(payload);
         await refresh();
+      }}
+      onSendInvoice={async (invoiceId) => {
+        const result = await adminApi.sendInvoice(invoiceId);
+        await refresh();
+        return result;
       }}
       payments={data?.payments}
       refunds={data?.refunds}

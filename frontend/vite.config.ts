@@ -75,7 +75,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     plugins: [
-       react(),
+      react({ fastRefresh: false }),
       tailwindcss(),
       createSeoAssetPlugin(publicSiteUrl),
     ],

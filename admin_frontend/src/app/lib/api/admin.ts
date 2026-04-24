@@ -6,12 +6,17 @@ import type {
   DashboardWorkspaceResponse,
   DocumentsListResponse,
   EventsWorkspaceResponse,
+  MatterPackageProposalsResponse,
   MatterWorkspaceResponse,
   MattersListResponse,
   MessagesWorkspaceResponse,
   NotificationsListResponse,
+  ReportsWorkspaceResponse,
+  RequestsWorkspaceResponse,
   RbacWorkspaceResponse,
   SearchResultsResponse,
+  SettingsWorkspaceResponse,
+  TasksWorkspaceResponse,
 } from './contracts';
 import { apiRequest } from './client';
 import { API_ENDPOINTS } from './endpoints';
@@ -32,6 +37,17 @@ const withQuery = (url: string, params: Record<string, string | number | undefin
 };
 
 export const adminApi = {
+  createInvoice: (payload: {
+    amount: number;
+    description: string;
+    dueDate?: string;
+    matterId: string;
+  }) =>
+    apiRequest<{ invoiceId: string; status: 'created' }>(API_ENDPOINTS.admin.createInvoice(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
   createEvent: (payload: {
     clientAccountId?: string;
     date: string;
@@ -99,14 +115,24 @@ export const adminApi = {
   getEventsWorkspace: () => apiRequest<EventsWorkspaceResponse>(API_ENDPOINTS.admin.events()),
   getHealth: () =>
     apiRequest<{ service: string; status: 'ok' }>(API_ENDPOINTS.admin.health()),
+  getMatterPackageProposals: (matterId: string) =>
+    apiRequest<MatterPackageProposalsResponse>(API_ENDPOINTS.admin.matterPackageProposals(matterId)),
   getMatterWorkspace: (matterId: string) =>
     apiRequest<MatterWorkspaceResponse>(API_ENDPOINTS.admin.matterWorkspace(matterId)),
   getMessagesWorkspace: () =>
     apiRequest<MessagesWorkspaceResponse>(API_ENDPOINTS.admin.messagesWorkspace()),
   getNotifications: () =>
     apiRequest<NotificationsListResponse>(API_ENDPOINTS.admin.notifications()),
+  getReportsWorkspace: () =>
+    apiRequest<ReportsWorkspaceResponse>(API_ENDPOINTS.admin.reportsWorkspace()),
+  getRequestsWorkspace: () =>
+    apiRequest<RequestsWorkspaceResponse>(API_ENDPOINTS.admin.requestsWorkspace()),
   getRbacWorkspace: () =>
     apiRequest<RbacWorkspaceResponse>(API_ENDPOINTS.admin.rbacWorkspace()),
+  getSettingsWorkspace: () =>
+    apiRequest<SettingsWorkspaceResponse>(API_ENDPOINTS.admin.settingsWorkspace()),
+  getTasksWorkspace: () =>
+    apiRequest<TasksWorkspaceResponse>(API_ENDPOINTS.admin.tasksWorkspace()),
   listClients: (params: { limit?: number; offset?: number; search?: string } = {}) =>
     apiRequest<ClientsListResponse>(
       withQuery(API_ENDPOINTS.admin.clients(), {
@@ -144,6 +170,62 @@ export const adminApi = {
       withQuery(API_ENDPOINTS.admin.search(), {
         q: query,
       })
+    ),
+  sendInvoice: (invoiceId: string) =>
+    apiRequest<{ invoiceId: string; status: 'reminder_sent' | 'sent' }>(
+      API_ENDPOINTS.admin.sendInvoice(invoiceId),
+      {
+        method: 'POST',
+      }
+    ),
+  saveMatterPackageDraft: (
+    matterId: string,
+    payload: {
+      packages: Array<{
+        description?: string;
+        displayOrder?: number;
+        featurePoints?: string[];
+        id?: string;
+        isRecommended?: boolean;
+        name: string;
+        price: number;
+        serviceCodes?: string[];
+      }>;
+      proposalVersion?: number;
+    }
+  ) =>
+    apiRequest<MatterPackageProposalsResponse>(API_ENDPOINTS.admin.matterPackageDraft(matterId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PUT',
+    }),
+  publishMatterProposal: (
+    matterId: string,
+    payload: { note?: string; proposalVersion: number }
+  ) =>
+    apiRequest<MatterPackageProposalsResponse>(API_ENDPOINTS.admin.matterPackagePublish(matterId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  overrideMatterPackageSelection: (
+    matterId: string,
+    payload: { matterPackageId: string; reasonText: string }
+  ) =>
+    apiRequest<{ generatedInvoiceId: string; status: 'updated'; workspace: MatterPackageProposalsResponse }>(
+      API_ENDPOINTS.admin.matterPackageOverride(matterId),
+      {
+        body: JSON.stringify(payload),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      }
+    ),
+  archiveMatterProposal: (matterId: string, proposalVersion: number) =>
+    apiRequest<MatterPackageProposalsResponse>(
+      API_ENDPOINTS.admin.matterPackageArchive(matterId, proposalVersion),
+      {
+        method: 'POST',
+      }
     ),
   updateDocumentControls: (
     documentId: string,

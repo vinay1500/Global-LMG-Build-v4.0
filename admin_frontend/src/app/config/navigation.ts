@@ -25,7 +25,7 @@ export type AdminNavItem = {
 
 export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   { id: 'dashboard', label: 'Dashboard', path: '/dashboard', icon: LayoutDashboard },
-  { id: 'requests', label: 'Requests', path: '/requests', icon: Inbox, deferred: true },
+  { id: 'requests', label: 'Requests', path: '/requests', icon: Inbox },
   { id: 'clients', label: 'Clients', path: '/clients', icon: Users },
   { id: 'matters', label: 'Matters Desk', path: '/matters', icon: Briefcase },
   { id: 'meetings', label: 'Meetings', path: '/meetings', icon: Calendar },
@@ -33,8 +33,8 @@ export const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   { id: 'documents', label: 'Documents', path: '/documents', icon: FileText },
   { id: 'billing', label: 'Billing & Ledger', path: '/billing', icon: CreditCard },
   { id: 'notifications', label: 'Notifications', path: '/notifications', icon: Bell },
-  { id: 'tasks', label: 'Tasks & Ops', path: '/tasks', icon: CheckCircle, deferred: true },
+  { id: 'tasks', label: 'Tasks & Ops', path: '/tasks', icon: CheckCircle },
   { id: 'audit', label: 'Audit Log', path: '/audit', icon: History },
-  { id: 'reports', label: 'Reports', path: '/reports', icon: BarChart3, deferred: true },
-  { id: 'settings', label: 'Settings', path: '/settings', icon: Settings, deferred: true },
+  { id: 'reports', label: 'Reports', path: '/reports', icon: BarChart3 },
+  { id: 'settings', label: 'Settings', path: '/settings', icon: Settings },
 ];

@@ -58,6 +58,21 @@ export const dashboardService = {
     return repository.sendMessage(currentClient, threadId, content, attachmentUploadIds);
   },
 
+  async selectMatterPackage(
+    currentClient: PlatformUser,
+    matterId: string,
+    matterPackageId: string,
+    proposalVersion: number
+  ) {
+    const repository = await getRepository();
+    return repository.selectMatterPackage(
+      currentClient,
+      matterId,
+      matterPackageId,
+      proposalVersion
+    );
+  },
+
   createEmptySnapshot(currentClient: PlatformUser) {
     return createEmptyDashboardSnapshot(currentClient);
   },

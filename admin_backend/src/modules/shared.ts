@@ -187,7 +187,7 @@ export const fetchMatters = async (filters: {
       m.operational_status_code AS operationalStatus,
       ld.domain_name AS expertiseArea,
       m.issue_summary AS issueSummary,
-      pur.rule_code AS urgency,
+      pur.urgency_code AS urgency,
       m.consultation_mode_code AS consultationMode,
       m.quoted_total_amount AS totalFee,
       m.paid_total_amount AS paidAmount,
@@ -209,7 +209,7 @@ export const fetchMatters = async (filters: {
     GROUP BY
       m.id, m.public_id, ca.public_id, ca.display_name, m.title, m.matter_number,
       m.current_stage_code, m.operational_status_code, ld.domain_name, m.issue_summary,
-      pur.rule_code, m.consultation_mode_code, m.quoted_total_amount, m.paid_total_amount,
+      pur.urgency_code, m.consultation_mode_code, m.quoted_total_amount, m.paid_total_amount,
       m.due_total_amount, m.opened_at, m.last_activity_at
     ORDER BY m.last_activity_at DESC`;
 
@@ -532,7 +532,7 @@ export const fetchThreads = async (filters: { clientAccountIds?: string[]; matte
        m.title AS matterTitle,
        m.matter_number AS matterRef,
        m.current_stage_code AS stage,
-       pur.rule_code AS urgency,
+       pur.urgency_code AS urgency,
        lm.body_text AS lastMessage,
        lm.sent_at AS lastMessageAt,
        owner.display_name AS assignedTo,

@@ -1,6 +1,7 @@
 import type { RequestData } from '../../data/requestWizardData';
 import type {
   DashboardMessageSubmissionPayload,
+  DashboardPackageSelectionResponse,
   DashboardSnapshotResponse,
   InvoiceDetailResponse,
   NotificationPreferencesResponse,
@@ -64,4 +65,9 @@ export const dashboardApi = {
     ),
   sendMessage: (payload: DashboardMessageSubmissionPayload) =>
     postJson<DashboardSnapshotResponse>(API_ENDPOINTS.dashboard.messages(), payload),
+  selectMatterPackage: (matterId: string, payload: { matterPackageId: string; proposalVersion: number }) =>
+    postJson<DashboardPackageSelectionResponse>(
+      API_ENDPOINTS.dashboard.matterPackageSelection(matterId),
+      payload
+    ),
 };

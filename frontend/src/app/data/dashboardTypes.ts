@@ -49,7 +49,15 @@ export type InvoiceStatus =
   | 'paid'
   | 'overdue'
   | 'failed'
-  | 'refunded';
+  | 'refunded'
+  | 'void';
+
+export type MatterPackageProposalStatus =
+  | 'draft'
+  | 'published'
+  | 'selected'
+  | 'superseded'
+  | 'archived';
 
 export type EventType =
   | 'verification-call'
@@ -151,6 +159,15 @@ export interface MatterPackage {
   price: number;
   createdBy: string;
   createdAt: string;
+  displayOrder: number;
+  features: string[];
+  isRecommended: boolean;
+  isSelected: boolean;
+  proposalStatus: MatterPackageProposalStatus;
+  proposalVersion: number;
+  publishedAt?: string;
+  selectedAt?: string;
+  supersededAt?: string;
 }
 
 export interface Invoice {

@@ -16,6 +16,7 @@ import type {
 } from '../data/dashboardTypes';
 import type { RequestData } from '../data/requestWizardData';
 import type {
+  DashboardPackageSelectionResponse,
   NotificationPreferencesResponse,
   PortalNotificationResponse,
 } from '../lib/api/contracts';
@@ -42,10 +43,16 @@ export interface DashboardContextType {
   isSubmittingRequest: boolean;
   isSavingPreferences: boolean;
   isUploadingDocuments: boolean;
+  isSelectingPackage: boolean;
   errorMessage: string | null;
   reloadDashboard: () => Promise<void>;
   submitRequest: (request: RequestData) => Promise<void>;
   sendMessage: (threadId: string, content: string, attachments?: File[]) => Promise<void>;
+  selectMatterPackage: (
+    matterId: string,
+    matterPackageId: string,
+    proposalVersion: number
+  ) => Promise<DashboardPackageSelectionResponse>;
   uploadDocuments: (files: File[]) => Promise<void>;
   markNotificationRead: (notificationId: string) => Promise<void>;
   dismissNotification: (notificationId: string) => Promise<void>;

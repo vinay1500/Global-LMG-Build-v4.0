@@ -9,6 +9,13 @@ import {
   updateMatterDetails,
   updateMatterStage,
 } from '../modules/matters/service.js';
+import {
+  archiveProposal,
+  getMatterPackageProposals,
+  overridePackageSelection,
+  publishProposal,
+  saveDraftProposal,
+} from '../modules/packages/service.js';
 import { requireMutationPermission, requireReadPermission } from './shared.js';
 
 export const mattersRouter = Router();
@@ -44,6 +51,35 @@ const updateMatterDetailsSchema = z.object({
   selectedServices: z.array(z.string().trim().min(2).max(64)).max(20).optional(),
 });
 
+const packageDraftSchema = z.object({
+  proposalVersion: z.number().int().positive().optional(),
+  packages: z
+    .array(
+      z.object({
+        description: z.string().trim().max(2000).optional(),
+        displayOrder: z.number().int().min(0).optional(),
+        featurePoints: z.array(z.string().trim().min(1).max(255)).max(25).optional(),
+        id: z.string().trim().min(2).max(64).optional(),
+        isRecommended: z.boolean().optional(),
+        name: z.string().trim().min(2).max(160),
+        price: z.number().nonnegative(),
+        serviceCodes: z.array(z.string().trim().min(2).max(64)).max(20).optional(),
+      })
+    )
+    .min(1)
+    .max(8),
+});
+
+const packagePublishSchema = z.object({
+  note: z.string().trim().max(2000).optional(),
+  proposalVersion: z.number().int().positive(),
+});
+
+const packageOverrideSchema = z.object({
+  matterPackageId: z.string().trim().min(2).max(64),
+  reasonText: z.string().trim().min(5).max(2000),
+});
+
 mattersRouter.get(
   '/matters',
   asyncHandler(async (request, response) => {
@@ -62,6 +98,14 @@ mattersRouter.get(
   asyncHandler(async (request, response) => {
     await requireReadPermission(request, 'matter.view');
     response.json(await getMatterWorkspace(String(request.params.matterId || '')));
+  })
+);
+
+mattersRouter.get(
+  '/matters/:matterId/package-proposals',
+  asyncHandler(async (request, response) => {
+    await requireReadPermission(request, 'matter.view');
+    response.json(await getMatterPackageProposals(String(request.params.matterId || '')));
   })
 );
 
@@ -93,6 +137,48 @@ mattersRouter.patch(
   })
 );
 
+mattersRouter.put(
+  '/matters/:matterId/package-proposals/draft',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'matter.update');
+    response.json(
+      await saveDraftProposal(
+        actor,
+        String(request.params.matterId || ''),
+        packageDraftSchema.parse(request.body)
+      )
+    );
+  })
+);
+
+mattersRouter.post(
+  '/matters/:matterId/package-proposals/publish',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'matter.update');
+    response.json(
+      await publishProposal(
+        actor,
+        String(request.params.matterId || ''),
+        packagePublishSchema.parse(request.body)
+      )
+    );
+  })
+);
+
+mattersRouter.post(
+  '/matters/:matterId/package-selection/override',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'matter.update');
+    response.json(
+      await overridePackageSelection(
+        actor,
+        String(request.params.matterId || ''),
+        packageOverrideSchema.parse(request.body)
+      )
+    );
+  })
+);
+
 mattersRouter.post(
   '/matters/:matterId/notes',
   asyncHandler(async (request, response) => {
@@ -116,6 +202,20 @@ mattersRouter.post(
         actor,
         String(request.params.matterId || ''),
         assignmentSchema.parse(request.body)
+      )
+    );
+  })
+);
+
+mattersRouter.post(
+  '/matters/:matterId/package-proposals/:proposalVersion/archive',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'matter.update');
+    response.json(
+      await archiveProposal(
+        actor,
+        String(request.params.matterId || ''),
+        z.coerce.number().int().positive().parse(request.params.proposalVersion)
       )
     );
   })

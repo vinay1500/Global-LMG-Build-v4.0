@@ -71,8 +71,89 @@ export interface MatterWorkspaceResponse {
   threads: MessageThread[];
 }
 
+export interface MatterPackageProposalPackage {
+  createdAt: string;
+  createdBy: string;
+  description: string;
+  displayOrder: number;
+  featurePoints: string[];
+  id: string;
+  isRecommended: boolean;
+  isSelected: boolean;
+  name: string;
+  price: number;
+  publishedAt?: string;
+  selectedAt?: string;
+  serviceCodes: string[];
+  supersededAt?: string;
+}
+
+export interface MatterPackageProposalRecord {
+  linkedInvoice: {
+    id: string;
+    invoiceNumber: string;
+    matterPackageId: string;
+    statusCode: string;
+  } | null;
+  packages: MatterPackageProposalPackage[];
+  proposalVersion: number;
+  publishedAt?: string;
+  selectedAt?: string;
+  selectedPackageId: string | null;
+  status: 'archived' | 'draft' | 'published' | 'selected' | 'superseded';
+  supersededAt?: string;
+}
+
+export interface MatterPackageProposalsResponse {
+  active: MatterPackageProposalRecord | null;
+  draft: MatterPackageProposalRecord | null;
+  history: MatterPackageProposalRecord[];
+  linkedInvoiceSummary: MatterPackageProposalRecord['linkedInvoice'] | null;
+  matter: {
+    id: string;
+    matterNumber: string;
+    title: string;
+  };
+  selectedPackageId: string | null;
+}
+
 export interface DocumentsListResponse {
   documents: PlatformDocument[];
+}
+
+export interface AdminRequestRecord {
+  clientEmail: string;
+  clientId: string;
+  clientName: string;
+  clientPhone: string;
+  consultationMode: string;
+  createdAt: string;
+  expertiseArea: string;
+  id: string;
+  issueSummary: string;
+  matterId?: string;
+  matterNumber?: string;
+  ownerName: string;
+  preferredEndAt?: string;
+  preferredStartAt?: string;
+  quoteTotalAmount: number;
+  requestNumber: string;
+  selectedServices: string[];
+  statusCode: string;
+  statusLabel: string;
+  title: string;
+  urgencyCode: string;
+  urgencyLabel: string;
+}
+
+export interface RequestsWorkspaceResponse {
+  metrics: {
+    convertedThisMonth: number;
+    openRequests: number;
+    scheduledConsultations: number;
+    urgentRequests: number;
+  };
+  requests: AdminRequestRecord[];
 }
 
 export interface MessagesWorkspaceResponse {
@@ -84,8 +165,36 @@ export interface MessagesWorkspaceResponse {
   threads: MessageThread[];
 }
 
+export interface AdminTaskRecord {
+  assignee: string;
+  client: string;
+  dueDate: string;
+  id: string;
+  isOverdue: boolean;
+  isToday: boolean;
+  matter: string;
+  note: string;
+  priority: 'High' | 'Medium' | 'Low';
+  sourceId: string;
+  sourceType: 'document' | 'event' | 'invoice' | 'matter' | 'message';
+  status: 'completed' | 'in_progress' | 'todo' | 'waiting_client' | 'waiting_internal';
+  title: string;
+}
+
+export interface TasksWorkspaceResponse {
+  metrics: {
+    completedRecent: number;
+    dueToday: number;
+    open: number;
+    overdue: number;
+    waiting: number;
+  };
+  tasks: AdminTaskRecord[];
+}
+
 export interface BillingWorkspaceResponse {
   invoices: Invoice[];
+  matters: Matter[];
   payments: Payment[];
   refunds: RefundRecord[];
 }
@@ -175,4 +284,90 @@ export interface DashboardWorkspaceResponse {
   recentNotifications: SystemNotification[];
   revenueTrend: Array<{ month: string; revenue: number }>;
   stageMix: Array<{ name: string; value: number }>;
+}
+
+export interface ReportsWorkspaceResponse {
+  documentActivity: Array<{ label: string; value: number }>;
+  intakeTrend: Array<{ converted: number; leads: number; month: string }>;
+  invoiceAging: Array<{ amount: number; bucket: string }>;
+  resolutionTimes: Array<{ days: number; label: string }>;
+  revenueTrend: Array<{ currentRevenue: number; month: string; previousRevenue: number }>;
+  stageMix: Array<{ label: string; value: number }>;
+  summary: {
+    averageResolutionDays: number;
+    clientConversionRate: number;
+    refundsWriteOffs: number;
+    totalCollections: number;
+    totalRequests: number;
+  };
+  workloadByAssignee: Array<{
+    activeMatters: number;
+    label: string;
+    utilizationRate: number;
+    waitingThreads: number;
+  }>;
+}
+
+export interface SettingsWorkspaceResponse {
+  consultationModes: Array<{
+    code: string;
+    isActive: boolean;
+    label: string;
+  }>;
+  documentCategories: Array<{
+    code: string;
+    usageCount: number;
+  }>;
+  invoiceConfiguration: {
+    defaultManualDueDays: number;
+    invoiceStatuses: Array<{ code: string; label: string }>;
+    latestInvoiceNumber: string | null;
+    nextInvoiceNumber: string | null;
+    taxRates: Array<{
+      code: string;
+      isActive: boolean;
+      name: string;
+      ratePercent: number;
+    }>;
+  };
+  notificationTypes: Array<{
+    code: string;
+    label: string;
+  }>;
+  pricingRules: {
+    serviceSlabs: Array<{
+      baseAmount: number;
+      effectiveFrom: string;
+      effectiveTo: string | null;
+      isActive: boolean;
+      maxServiceCount: number | null;
+      minServiceCount: number;
+      perExtraServiceAmount: number | null;
+    }>;
+    urgencyRules: Array<{
+      code: string;
+      isActive: boolean;
+      label: string;
+      surchargeType: string;
+      surchargeValue: number;
+    }>;
+  };
+  rbac: {
+    canManage: boolean;
+    permissions: RbacWorkspaceResponse['permissions'];
+    roles: RbacWorkspaceResponse['roles'];
+  };
+  services: Array<{
+    code: string;
+    description: string;
+    domainName: string;
+    isActive: boolean;
+    name: string;
+    sortOrder: number;
+  }>;
+  templates: Array<{
+    channel: string;
+    id: string;
+    label: string;
+  }>;
 }

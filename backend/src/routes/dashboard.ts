@@ -43,6 +43,11 @@ const dashboardMessageSchema = z.object({
   }
 );
 
+const dashboardPackageSelectionSchema = z.object({
+  matterPackageId: z.string().trim().min(1).max(64),
+  proposalVersion: z.coerce.number().int().positive(),
+});
+
 const toDashboardUser = (user: Awaited<ReturnType<typeof requireAuthenticatedUser>>) =>
   ({
     avatar: user.avatar,
@@ -97,5 +102,23 @@ dashboardRouter.post(
       payload.attachmentUploadIds
     );
     respondWithSnapshot(response, snapshot);
+  })
+);
+
+dashboardRouter.post(
+  '/dashboard/matters/:matterId/package-selection',
+  asyncHandler(async (request, response) => {
+    requireCsrf(request);
+    const authenticatedUser = await requireAuthenticatedUser(request, response);
+    const matterId = z.string().trim().min(1).max(64).parse(request.params.matterId);
+    const payload = dashboardPackageSelectionSchema.parse(request.body);
+    response.json(
+      await dashboardService.selectMatterPackage(
+        toDashboardUser(authenticatedUser),
+        matterId,
+        payload.matterPackageId,
+        payload.proposalVersion
+      )
+    );
   })
 );

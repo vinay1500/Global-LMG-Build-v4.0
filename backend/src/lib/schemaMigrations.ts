@@ -2053,4 +2053,230 @@ export const NORMALIZED_MIGRATIONS: SchemaMigrationDefinition[] = [
       `DEALLOCATE PREPARE add_phone_tokens_provider_index_stmt`
     ],
   },
+  {
+    id: '012-package-proposal-lifecycle',
+    description:
+      'Add matter package proposal lifecycle metadata, package features, and package-linked invoice support.',
+    statements: [
+      `SET @matters_has_selected_package_column := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'matters'
+          AND column_name = 'selected_matter_package_id'
+      )`,
+      `SET @add_matters_selected_package_column_sql := IF(
+        @matters_has_selected_package_column = 0,
+        'ALTER TABLE matters ADD COLUMN selected_matter_package_id BIGINT UNSIGNED NULL AFTER due_total_amount',
+        'DO 0'
+      )`,
+      `PREPARE add_matters_selected_package_column_stmt FROM @add_matters_selected_package_column_sql`,
+      `EXECUTE add_matters_selected_package_column_stmt`,
+      `DEALLOCATE PREPARE add_matters_selected_package_column_stmt`,
+      `SET @matters_has_selected_package_index := (
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'matters'
+          AND index_name = 'idx_matters_selected_package'
+      )`,
+      `SET @add_matters_selected_package_index_sql := IF(
+        @matters_has_selected_package_index = 0,
+        'ALTER TABLE matters ADD INDEX idx_matters_selected_package (selected_matter_package_id)',
+        'DO 0'
+      )`,
+      `PREPARE add_matters_selected_package_index_stmt FROM @add_matters_selected_package_index_sql`,
+      `EXECUTE add_matters_selected_package_index_stmt`,
+      `DEALLOCATE PREPARE add_matters_selected_package_index_stmt`,
+      `SET @matters_has_selected_package_fk := (
+        SELECT COUNT(*)
+        FROM information_schema.referential_constraints
+        WHERE constraint_schema = DATABASE()
+          AND table_name = 'matters'
+          AND constraint_name = 'fk_matters_selected_package'
+      )`,
+      `SET @add_matters_selected_package_fk_sql := IF(
+        @matters_has_selected_package_fk = 0,
+        'ALTER TABLE matters ADD CONSTRAINT fk_matters_selected_package FOREIGN KEY (selected_matter_package_id) REFERENCES matter_packages (id) ON UPDATE CASCADE ON DELETE SET NULL',
+        'DO 0'
+      )`,
+      `PREPARE add_matters_selected_package_fk_stmt FROM @add_matters_selected_package_fk_sql`,
+      `EXECUTE add_matters_selected_package_fk_stmt`,
+      `DEALLOCATE PREPARE add_matters_selected_package_fk_stmt`,
+      `SET @packages_has_proposal_version := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'matter_packages'
+          AND column_name = 'proposal_version_no'
+      )`,
+      `SET @add_packages_proposal_version_sql := IF(
+        @packages_has_proposal_version = 0,
+        'ALTER TABLE matter_packages ADD COLUMN proposal_version_no INT UNSIGNED NULL AFTER matter_id',
+        'DO 0'
+      )`,
+      `PREPARE add_packages_proposal_version_stmt FROM @add_packages_proposal_version_sql`,
+      `EXECUTE add_packages_proposal_version_stmt`,
+      `DEALLOCATE PREPARE add_packages_proposal_version_stmt`,
+      `SET @packages_has_display_order := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'matter_packages'
+          AND column_name = 'display_order'
+      )`,
+      `SET @add_packages_display_order_sql := IF(
+        @packages_has_display_order = 0,
+        'ALTER TABLE matter_packages ADD COLUMN display_order INT NOT NULL DEFAULT 0 AFTER total_price',
+        'DO 0'
+      )`,
+      `PREPARE add_packages_display_order_stmt FROM @add_packages_display_order_sql`,
+      `EXECUTE add_packages_display_order_stmt`,
+      `DEALLOCATE PREPARE add_packages_display_order_stmt`,
+      `SET @packages_has_is_recommended := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'matter_packages'
+          AND column_name = 'is_recommended'
+      )`,
+      `SET @add_packages_is_recommended_sql := IF(
+        @packages_has_is_recommended = 0,
+        'ALTER TABLE matter_packages ADD COLUMN is_recommended TINYINT(1) NOT NULL DEFAULT 0 AFTER display_order',
+        'DO 0'
+      )`,
+      `PREPARE add_packages_is_recommended_stmt FROM @add_packages_is_recommended_sql`,
+      `EXECUTE add_packages_is_recommended_stmt`,
+      `DEALLOCATE PREPARE add_packages_is_recommended_stmt`,
+      `SET @packages_has_published_at := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'matter_packages'
+          AND column_name = 'published_at'
+      )`,
+      `SET @add_packages_published_at_sql := IF(
+        @packages_has_published_at = 0,
+        'ALTER TABLE matter_packages ADD COLUMN published_at DATETIME(6) NULL AFTER updated_at',
+        'DO 0'
+      )`,
+      `PREPARE add_packages_published_at_stmt FROM @add_packages_published_at_sql`,
+      `EXECUTE add_packages_published_at_stmt`,
+      `DEALLOCATE PREPARE add_packages_published_at_stmt`,
+      `SET @packages_has_superseded_at := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'matter_packages'
+          AND column_name = 'superseded_at'
+      )`,
+      `SET @add_packages_superseded_at_sql := IF(
+        @packages_has_superseded_at = 0,
+        'ALTER TABLE matter_packages ADD COLUMN superseded_at DATETIME(6) NULL AFTER published_at',
+        'DO 0'
+      )`,
+      `PREPARE add_packages_superseded_at_stmt FROM @add_packages_superseded_at_sql`,
+      `EXECUTE add_packages_superseded_at_stmt`,
+      `DEALLOCATE PREPARE add_packages_superseded_at_stmt`,
+      `SET @packages_has_selected_at := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'matter_packages'
+          AND column_name = 'selected_at'
+      )`,
+      `SET @add_packages_selected_at_sql := IF(
+        @packages_has_selected_at = 0,
+        'ALTER TABLE matter_packages ADD COLUMN selected_at DATETIME(6) NULL AFTER superseded_at',
+        'DO 0'
+      )`,
+      `PREPARE add_packages_selected_at_stmt FROM @add_packages_selected_at_sql`,
+      `EXECUTE add_packages_selected_at_stmt`,
+      `DEALLOCATE PREPARE add_packages_selected_at_stmt`,
+      `UPDATE matter_packages
+       SET proposal_version_no = COALESCE(proposal_version_no, 1),
+           published_at = COALESCE(published_at, IF(archived_at IS NULL, created_at, NULL))
+       WHERE proposal_version_no IS NULL OR published_at IS NULL`,
+      `ALTER TABLE matter_packages
+       MODIFY proposal_version_no INT UNSIGNED NOT NULL`,
+      `SET @packages_has_proposal_index := (
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'matter_packages'
+          AND index_name = 'idx_matter_packages_proposal_version'
+      )`,
+      `SET @add_packages_proposal_index_sql := IF(
+        @packages_has_proposal_index = 0,
+        'ALTER TABLE matter_packages ADD INDEX idx_matter_packages_proposal_version (matter_id, proposal_version_no)',
+        'DO 0'
+      )`,
+      `PREPARE add_packages_proposal_index_stmt FROM @add_packages_proposal_index_sql`,
+      `EXECUTE add_packages_proposal_index_stmt`,
+      `DEALLOCATE PREPARE add_packages_proposal_index_stmt`,
+      `CREATE TABLE IF NOT EXISTS matter_package_features (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        matter_package_id BIGINT UNSIGNED NOT NULL,
+        feature_text VARCHAR(255) NOT NULL,
+        sort_order INT NOT NULL DEFAULT 0,
+        created_at DATETIME(6) NOT NULL,
+        PRIMARY KEY (id),
+        INDEX idx_matter_package_features_package (matter_package_id),
+        CONSTRAINT fk_matter_package_features_package FOREIGN KEY (matter_package_id)
+          REFERENCES matter_packages (id)
+          ON UPDATE CASCADE
+          ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+      `SET @invoices_has_matter_package_column := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'invoices'
+          AND column_name = 'matter_package_id'
+      )`,
+      `SET @add_invoices_matter_package_column_sql := IF(
+        @invoices_has_matter_package_column = 0,
+        'ALTER TABLE invoices ADD COLUMN matter_package_id BIGINT UNSIGNED NULL AFTER matter_id',
+        'DO 0'
+      )`,
+      `PREPARE add_invoices_matter_package_column_stmt FROM @add_invoices_matter_package_column_sql`,
+      `EXECUTE add_invoices_matter_package_column_stmt`,
+      `DEALLOCATE PREPARE add_invoices_matter_package_column_stmt`,
+      `SET @invoices_has_matter_package_index := (
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'invoices'
+          AND index_name = 'idx_invoices_matter_package'
+      )`,
+      `SET @add_invoices_matter_package_index_sql := IF(
+        @invoices_has_matter_package_index = 0,
+        'ALTER TABLE invoices ADD INDEX idx_invoices_matter_package (matter_package_id)',
+        'DO 0'
+      )`,
+      `PREPARE add_invoices_matter_package_index_stmt FROM @add_invoices_matter_package_index_sql`,
+      `EXECUTE add_invoices_matter_package_index_stmt`,
+      `DEALLOCATE PREPARE add_invoices_matter_package_index_stmt`,
+      `SET @invoices_has_matter_package_fk := (
+        SELECT COUNT(*)
+        FROM information_schema.referential_constraints
+        WHERE constraint_schema = DATABASE()
+          AND table_name = 'invoices'
+          AND constraint_name = 'fk_invoices_matter_package'
+      )`,
+      `SET @add_invoices_matter_package_fk_sql := IF(
+        @invoices_has_matter_package_fk = 0,
+        'ALTER TABLE invoices ADD CONSTRAINT fk_invoices_matter_package FOREIGN KEY (matter_package_id) REFERENCES matter_packages (id) ON UPDATE CASCADE ON DELETE SET NULL',
+        'DO 0'
+      )`,
+      `PREPARE add_invoices_matter_package_fk_stmt FROM @add_invoices_matter_package_fk_sql`,
+      `EXECUTE add_invoices_matter_package_fk_stmt`,
+      `DEALLOCATE PREPARE add_invoices_matter_package_fk_stmt`,
+      `UPDATE matter_packages mp
+       INNER JOIN matters m
+         ON m.selected_matter_package_id = mp.id
+       SET mp.selected_at = COALESCE(mp.selected_at, mp.updated_at)
+       WHERE mp.selected_at IS NULL`
+    ],
+  },
 ];

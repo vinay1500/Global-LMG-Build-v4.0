@@ -7,14 +7,17 @@ import { BillingPage } from './features/billing/BillingPage';
 import { ClientDetailPage } from './features/clients/ClientDetailPage';
 import { ClientsPage } from './features/clients/ClientsPage';
 import { DashboardPage } from './features/dashboard/DashboardPage';
-import { DeferredModulePage } from './features/deferred/DeferredModulePage';
 import { DocumentsPage } from './features/documents/DocumentsPage';
 import { MatterDetailPage } from './features/matters/MatterDetailPage';
 import { MattersPage } from './features/matters/MattersPage';
 import { MessagesPage } from './features/messages/MessagesPage';
 import { MeetingsPage } from './features/meetings/MeetingsPage';
 import { NotificationsPage } from './features/notifications/NotificationsPage';
+import { ReportsPage } from './features/reports/ReportsPage';
+import { RequestsPage } from './features/requests/RequestsPage';
+import { SettingsPage } from './features/settings/SettingsPage';
 import { NotFoundPage } from './features/system/NotFoundPage';
+import { TasksPage } from './features/tasks/TasksPage';
 import { AdminLayout } from './layout/AdminLayout';
 import { RequireAdminAuth } from './routes/RequireAdminAuth';
 
@@ -38,42 +41,10 @@ export const AdminRoutes = () => {
           <Route path="/billing" element={<BillingPage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/audit" element={<AuditPage />} />
-          <Route
-            path="/requests"
-            element={
-              <DeferredModulePage
-                description="Requests has been intentionally deferred from Phase 1 while we stabilize the standalone admin shell."
-                title="Requests Deferred"
-              />
-            }
-          />
-          <Route
-            path="/tasks"
-            element={
-              <DeferredModulePage
-                description="Tasks & Ops is deferred from Phase 1 and will stay visible only as a roadmap placeholder."
-                title="Tasks Deferred"
-              />
-            }
-          />
-          <Route
-            path="/reports"
-            element={
-              <DeferredModulePage
-                description="Reports is deferred from Phase 1 and will be wired only after operational loops are live."
-                title="Reports Deferred"
-              />
-            }
-          />
-          <Route
-            path="/settings"
-            element={
-              <DeferredModulePage
-                description="Settings is deferred from Phase 1 so we can keep focus on the runnable admin foundation."
-                title="Settings Deferred"
-              />
-            }
-          />
+          <Route path="/requests" element={<RequestsPage />} />
+          <Route path="/tasks" element={<TasksPage />} />
+          <Route path="/reports" element={<ReportsPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Route>
       </Route>
 

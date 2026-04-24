@@ -5,7 +5,7 @@ import {
   Clock, AlertCircle, RefreshCcw, MoreVertical, 
   ArrowUpRight, FileCheck, Landmark, Copy, Printer
 } from 'lucide-react';
-import { INVOICES, PAYMENTS, formatCurrency, formatDate, Invoice, Payment } from '../data/seedData';
+import { INVOICES, MATTERS, PAYMENTS, formatCurrency, formatDate, Invoice, Matter, Payment } from '../data/seedData';
 import { StatusBadge } from '../components/dashboard/StatusBadge';
 import type { RefundRecord } from '../lib/api/contracts';
 
@@ -13,20 +13,43 @@ type FilterStatus = 'all' | 'paid' | 'pending' | 'overdue' | 'draft';
 
 export const BillingWorkspace: React.FC<{
   invoices?: Invoice[];
+  matters?: Matter[];
+  onCreateInvoice?: (payload: {
+    amount: number;
+    description: string;
+    dueDate?: string;
+    matterId: string;
+  }) => Promise<{ invoiceId: string; status: 'created' }>;
   onCreateRefund?: (payload: {
     amount: number;
     invoiceId?: string;
     paymentId: string;
     reasonText: string;
   }) => Promise<void>;
+  onSendInvoice?: (
+    invoiceId: string
+  ) => Promise<{ invoiceId: string; status: 'reminder_sent' | 'sent' }>;
   payments?: Payment[];
   refunds?: RefundRecord[];
 }> = ({
   invoices = INVOICES,
+  matters = MATTERS,
+  onCreateInvoice,
   onCreateRefund,
+  onSendInvoice,
   payments = PAYMENTS,
   refunds = [],
 }) => {
+  const [showCreateInvoiceForm, setShowCreateInvoiceForm] = useState(false);
+  const [createMatterId, setCreateMatterId] = useState(matters[0]?.id || '');
+  const [createDescription, setCreateDescription] = useState('');
+  const [createAmount, setCreateAmount] = useState('');
+  const [createDueDate, setCreateDueDate] = useState('');
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [isCreatingInvoice, setIsCreatingInvoice] = useState(false);
+  const [isSendingInvoice, setIsSendingInvoice] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<FilterStatus>('all');
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | null>(invoices[0]?.id || null);
@@ -47,10 +70,23 @@ export const BillingWorkspace: React.FC<{
     setRefundReason('');
   }, [selectedInvoiceId]);
 
+  useEffect(() => {
+    if (!matters.some((matter) => matter.id === createMatterId)) {
+      setCreateMatterId(matters[0]?.id || '');
+    }
+  }, [createMatterId, matters]);
+
   const activeInvoice = useMemo(
     () => invoices.find(i => i.id === selectedInvoiceId) || null,
     [invoices, selectedInvoiceId]
   );
+
+  const canSendInvoice = useMemo(
+    () => Boolean(activeInvoice && !['paid', 'refunded', 'void'].includes(activeInvoice.status)),
+    [activeInvoice]
+  );
+
+  const sendInvoiceLabel = activeInvoice?.status === 'draft' ? 'Send Invoice' : 'Send Reminder';
   
   const activePayments = useMemo(() => {
     if (!activeInvoice) return [];
@@ -96,7 +132,68 @@ export const BillingWorkspace: React.FC<{
       case 'sent': return 'text-blue-700 bg-blue-50 border-blue-100';
       case 'overdue': return 'text-red-700 bg-red-50 border-red-100';
       case 'draft': return 'text-gray-700 bg-gray-50 border-gray-200';
+      case 'refunded': return 'text-amber-700 bg-amber-50 border-amber-100';
+      case 'void': return 'text-slate-700 bg-slate-50 border-slate-200';
       default: return 'text-gray-700 bg-gray-50 border-gray-100';
+    }
+  };
+
+  const resetCreateInvoiceForm = () => {
+    setCreateDescription('');
+    setCreateAmount('');
+    setCreateDueDate('');
+    setCreateError(null);
+  };
+
+  const handleCreateInvoice = async () => {
+    if (!onCreateInvoice) {
+      return;
+    }
+
+    setCreateError(null);
+    setActionMessage(null);
+    setActionError(null);
+    setIsCreatingInvoice(true);
+
+    try {
+      const result = await onCreateInvoice({
+        amount: Number(createAmount),
+        description: createDescription.trim(),
+        dueDate: createDueDate || undefined,
+        matterId: createMatterId,
+      });
+
+      setSelectedInvoiceId(result.invoiceId);
+      setShowCreateInvoiceForm(false);
+      resetCreateInvoiceForm();
+      setActionMessage('Draft invoice created from live admin billing data.');
+    } catch (error) {
+      setCreateError(error instanceof Error ? error.message : 'Unable to create the invoice.');
+    } finally {
+      setIsCreatingInvoice(false);
+    }
+  };
+
+  const handleSendInvoice = async () => {
+    if (!activeInvoice || !onSendInvoice || !canSendInvoice) {
+      return;
+    }
+
+    setActionMessage(null);
+    setActionError(null);
+    setIsSendingInvoice(true);
+
+    try {
+      const result = await onSendInvoice(activeInvoice.id);
+      setActionMessage(
+        result.status === 'sent'
+          ? 'Invoice sent to the client.'
+          : 'Payment reminder sent to the client.'
+      );
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Unable to send this invoice right now.');
+    } finally {
+      setIsSendingInvoice(false);
     }
   };
 
@@ -112,11 +209,127 @@ export const BillingWorkspace: React.FC<{
           <button className="px-4 py-2 bg-white border border-dashed border-gray-200 text-gray-400 text-sm font-medium rounded-lg flex items-center gap-2 cursor-not-allowed">
             <Download className="w-4 h-4" /> Export Later
           </button>
-          <button className="px-4 py-2 bg-gray-100 text-gray-400 text-sm font-medium rounded-lg flex items-center gap-2 cursor-not-allowed">
-            <Plus className="w-4 h-4" /> Invoice Create Later
+          <button
+            className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg flex items-center gap-2 transition hover:bg-gray-800 disabled:opacity-50"
+            disabled={!onCreateInvoice || matters.length === 0}
+            onClick={() => {
+              setActionMessage(null);
+              setActionError(null);
+              setCreateError(null);
+              setShowCreateInvoiceForm((current) => !current);
+            }}
+            type="button"
+          >
+            <Plus className="w-4 h-4" /> Create Invoice
           </button>
         </div>
       </div>
+
+      {showCreateInvoiceForm ? (
+        <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5 space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-900">Create Draft Invoice</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                Build a live invoice against a matter, then send it once the line item looks right.
+              </p>
+            </div>
+            <button
+              className="px-3 py-1.5 text-xs font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50"
+              onClick={() => {
+                setShowCreateInvoiceForm(false);
+                resetCreateInvoiceForm();
+              }}
+              type="button"
+            >
+              Close
+            </button>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <label className="space-y-1">
+              <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">Matter</span>
+              <select
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400 bg-white"
+                onChange={(event) => setCreateMatterId(event.target.value)}
+                value={createMatterId}
+              >
+                {matters.map((matter) => (
+                  <option key={matter.id} value={matter.id}>
+                    {matter.referenceCode} · {matter.clientName} · {matter.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="space-y-1">
+              <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">Amount</span>
+              <input
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400 bg-white"
+                onChange={(event) => setCreateAmount(event.target.value)}
+                placeholder="25000"
+                type="number"
+                value={createAmount}
+              />
+            </label>
+
+            <label className="space-y-1">
+              <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">Due Date</span>
+              <input
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400 bg-white"
+                onChange={(event) => setCreateDueDate(event.target.value)}
+                type="date"
+                value={createDueDate}
+              />
+            </label>
+
+            <label className="space-y-1 md:col-span-2 xl:col-span-1">
+              <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">Line Item</span>
+              <input
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-gray-400 bg-white"
+                onChange={(event) => setCreateDescription(event.target.value)}
+                placeholder="Professional services for matter review"
+                type="text"
+                value={createDescription}
+              />
+            </label>
+          </div>
+
+          {createError ? <p className="text-sm text-red-600">{createError}</p> : null}
+
+          <div className="flex items-center gap-3">
+            <button
+              className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg disabled:opacity-50"
+              disabled={
+                isCreatingInvoice ||
+                !createMatterId ||
+                !createDescription.trim() ||
+                !createAmount ||
+                Number(createAmount) <= 0
+              }
+              onClick={() => void handleCreateInvoice()}
+              type="button"
+            >
+              {isCreatingInvoice ? 'Creating...' : 'Create Draft Invoice'}
+            </button>
+            <span className="text-xs text-gray-500">
+              The invoice is saved as a draft first, then sent from the detail panel.
+            </span>
+          </div>
+        </div>
+      ) : null}
+
+      {actionMessage ? (
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          {actionMessage}
+        </div>
+      ) : null}
+
+      {actionError ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {actionError}
+        </div>
+      ) : null}
 
       {/* KPI Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 flex-shrink-0">
@@ -230,7 +443,21 @@ export const BillingWorkspace: React.FC<{
               {/* Paper Document */}
               <div className="bg-white w-full shadow-md rounded-sm overflow-hidden border border-gray-200">
                 {/* Ribbon Top */}
-                <div className={`h-2 w-full ${activeInvoice.status === 'paid' ? 'bg-emerald-500' : activeInvoice.status === 'overdue' ? 'bg-red-500' : activeInvoice.status === 'draft' ? 'bg-gray-400' : 'bg-blue-600'}`} />
+                <div
+                  className={`h-2 w-full ${
+                    activeInvoice.status === 'paid'
+                      ? 'bg-emerald-500'
+                      : activeInvoice.status === 'overdue'
+                        ? 'bg-red-500'
+                        : activeInvoice.status === 'draft'
+                          ? 'bg-gray-400'
+                          : activeInvoice.status === 'refunded'
+                            ? 'bg-amber-500'
+                            : activeInvoice.status === 'void'
+                              ? 'bg-slate-400'
+                              : 'bg-blue-600'
+                  }`}
+                />
                 
                 <div className="p-10">
                   {/* Header */}
@@ -355,19 +582,26 @@ export const BillingWorkspace: React.FC<{
             <div className="p-5 border-b border-gray-100 bg-gray-50/50">
               <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Quick Actions</h3>
               <div className="grid grid-cols-2 gap-2">
-                <button className="flex flex-col items-center justify-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition text-gray-700">
+                <button
+                  className="flex flex-col items-center justify-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition text-gray-700 disabled:opacity-50"
+                  disabled={!canSendInvoice || !onSendInvoice || isSendingInvoice}
+                  onClick={() => void handleSendInvoice()}
+                  type="button"
+                >
                   <Mail className="w-4 h-4 mb-1.5" />
-                  <span className="text-[10px] font-medium uppercase tracking-wide">Email</span>
+                  <span className="text-[10px] font-medium uppercase tracking-wide">
+                    {activeInvoice.status === 'draft' ? 'Send' : 'Remind'}
+                  </span>
                 </button>
-                <button className="flex flex-col items-center justify-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition text-gray-700">
+                <button className="flex flex-col items-center justify-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition text-gray-700 cursor-not-allowed opacity-60">
                   <Download className="w-4 h-4 mb-1.5" />
                   <span className="text-[10px] font-medium uppercase tracking-wide">Download</span>
                 </button>
-                <button className="flex flex-col items-center justify-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition text-gray-700">
+                <button className="flex flex-col items-center justify-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition text-gray-700 cursor-not-allowed opacity-60">
                   <Printer className="w-4 h-4 mb-1.5" />
                   <span className="text-[10px] font-medium uppercase tracking-wide">Print</span>
                 </button>
-                <button className="flex flex-col items-center justify-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition text-gray-700">
+                <button className="flex flex-col items-center justify-center p-3 border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition text-gray-700 cursor-not-allowed opacity-60">
                   <Copy className="w-4 h-4 mb-1.5" />
                   <span className="text-[10px] font-medium uppercase tracking-wide">Copy Link</span>
                 </button>
@@ -452,6 +686,20 @@ export const BillingWorkspace: React.FC<{
                       ) : null}
                     </div>
                   </div>
+                ) : activeInvoice.status === 'void' ? (
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+                    <p className="text-sm font-bold text-slate-900">Invoice Voided</p>
+                    <p className="text-xs text-slate-600 mt-1">
+                      This invoice is preserved for history but is no longer collectible.
+                    </p>
+                  </div>
+                ) : activeInvoice.status === 'refunded' ? (
+                  <div className="bg-amber-50 border border-amber-100 rounded-lg p-4">
+                    <p className="text-sm font-bold text-amber-900">Invoice Refunded</p>
+                    <p className="text-xs text-amber-700 mt-1">
+                      Funds have been returned to the client against this invoice.
+                    </p>
+                  </div>
                 ) : (
                   <div className="bg-blue-50 border border-blue-100 rounded-lg p-4">
                     <div className="flex justify-between items-end mb-3">
@@ -463,11 +711,16 @@ export const BillingWorkspace: React.FC<{
                     </div>
                     
                     <div className="space-y-2 mt-4">
-                      <button className="w-full py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-2 shadow-sm">
+                      <button className="w-full py-2 bg-blue-600 text-white text-sm font-medium rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-not-allowed opacity-60">
                         <DollarSign className="w-4 h-4" /> Record Payment
                       </button>
-                      <button className="w-full py-2 bg-white text-gray-700 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 transition flex items-center justify-center gap-2">
-                        <Mail className="w-4 h-4" /> Send Reminder
+                      <button
+                        className="w-full py-2 bg-white text-gray-700 border border-gray-200 text-sm font-medium rounded-lg hover:bg-gray-50 transition flex items-center justify-center gap-2 disabled:opacity-50"
+                        disabled={!canSendInvoice || !onSendInvoice || isSendingInvoice}
+                        onClick={() => void handleSendInvoice()}
+                        type="button"
+                      >
+                        <Mail className="w-4 h-4" /> {isSendingInvoice ? 'Sending...' : sendInvoiceLabel}
                       </button>
                     </div>
                   </div>

@@ -5,6 +5,7 @@ import { dashboardApi } from '../lib/api/dashboard';
 import { ApiRequestError } from '../lib/api/client';
 import { uploadsApi } from '../lib/api/uploads';
 import type {
+  DashboardPackageSelectionResponse,
   DashboardSnapshotResponse,
   NotificationPreferencesResponse,
   PortalNotificationResponse,
@@ -74,6 +75,7 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [isSavingPreferences, setIsSavingPreferences] = useState(false);
   const [isUploadingDocuments, setIsUploadingDocuments] = useState(false);
+  const [isSelectingPackage, setIsSelectingPackage] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [notificationPreferences, setNotificationPreferences] =
     useState<NotificationPreferencesResponse>(DEFAULT_NOTIFICATION_PREFERENCES);
@@ -252,6 +254,39 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
     }
   };
 
+  const selectMatterPackage = async (
+    matterId: string,
+    matterPackageId: string,
+    proposalVersion: number
+  ): Promise<DashboardPackageSelectionResponse> => {
+    setIsSelectingPackage(true);
+    setErrorMessage(null);
+
+    try {
+      const response = await dashboardApi.selectMatterPackage(matterId, {
+        matterPackageId,
+        proposalVersion,
+      });
+      const nextNotifications = await dashboardApi.getNotifications();
+      setDashboardState(response.snapshot);
+      setNotifications(nextNotifications);
+      return response;
+    } catch (error) {
+      const authError = await resolveAuthExpiry(error);
+      const message =
+        authError ||
+        toErrorMessage(
+          error,
+          'We could not confirm that package right now. Please try again.'
+        );
+
+      setErrorMessage(message);
+      throw new Error(message);
+    } finally {
+      setIsSelectingPackage(false);
+    }
+  };
+
   const markNotificationRead = async (notificationId: string) => {
     const previousNotifications = notifications;
     setNotifications((current) =>
@@ -342,12 +377,14 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
         isSubmittingRequest,
         isSavingPreferences,
         isUploadingDocuments,
+        isSelectingPackage,
         errorMessage,
         notificationPreferences,
         notifications,
         reloadDashboard,
         submitRequest,
         sendMessage,
+        selectMatterPackage,
         uploadDocuments,
         markNotificationRead,
         dismissNotification,

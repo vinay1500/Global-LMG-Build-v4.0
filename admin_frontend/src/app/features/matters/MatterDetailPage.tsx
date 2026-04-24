@@ -1,10 +1,26 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router';
-import type { MatterWorkspaceResponse } from '../../lib/api/contracts';
+import type {
+  MatterPackageProposalsResponse,
+  MatterWorkspaceResponse,
+} from '../../lib/api/contracts';
 import { WorkspaceState } from '../../components/shared/WorkspaceState';
 import { useAsyncResource } from '../../hooks/useAsyncResource';
 import { adminApi } from '../../lib/api/admin';
 import { MatterDetailAdmin } from '../../modules/MatterDetailAdmin';
+import type { PackageTier } from '../../modules/PackageBuilder';
+
+const toDraftPayload = (packages: PackageTier[]) => ({
+  packages: packages.map((pkg, index) => ({
+    description: pkg.description,
+    displayOrder: index,
+    featurePoints: pkg.points,
+    id: pkg.id.startsWith('tier-') ? undefined : pkg.id,
+    isRecommended: pkg.isRecommended,
+    name: pkg.name,
+    price: pkg.price,
+  })),
+});
 
 export const MatterDetailPage = () => {
   const navigate = useNavigate();
@@ -14,6 +30,18 @@ export const MatterDetailPage = () => {
     [matterId]
   );
   const [workspace, setWorkspace] = useState<MatterWorkspaceResponse | null>(null);
+  const {
+    data: packageWorkspaceData,
+    errorMessage: packageErrorMessage,
+    isLoading: isPackageLoading,
+    refresh: refreshPackageWorkspace,
+    setData: setPackageWorkspace,
+  } = useAsyncResource(
+    () => adminApi.getMatterPackageProposals(String(matterId || '')),
+    [matterId]
+  );
+  const [packageWorkspaceState, setPackageWorkspaceState] =
+    useState<MatterPackageProposalsResponse | null>(null);
 
   useEffect(() => {
     if (data) {
@@ -21,16 +49,26 @@ export const MatterDetailPage = () => {
     }
   }, [data]);
 
-  const matter = useMemo(
-    () => (workspace?.matter?.id === matterId ? workspace.matter : null),
-    [matterId, workspace]
+  useEffect(() => {
+    if (packageWorkspaceData) {
+      setPackageWorkspaceState(packageWorkspaceData);
+    }
+  }, [packageWorkspaceData]);
+
+  const workspaceSnapshot = workspace ?? data;
+  const packageWorkspaceSnapshot = packageWorkspaceState ?? packageWorkspaceData;
+
+  const matter = useMemo(() => workspaceSnapshot?.matter ?? null, [workspaceSnapshot]);
+  const packageWorkspace = useMemo(
+    () => packageWorkspaceSnapshot?.matter?.id === matterId ? packageWorkspaceSnapshot : null,
+    [matterId, packageWorkspaceSnapshot]
   );
 
   if (!matterId) {
     return <Navigate replace to="/matters" />;
   }
 
-  if (isLoading && !workspace) {
+  if (isLoading && !workspaceSnapshot) {
     return (
       <WorkspaceState
         description="Fetching the matter record, linked documents, events, invoices, and message threads."
@@ -39,7 +77,7 @@ export const MatterDetailPage = () => {
     );
   }
 
-  if (errorMessage && !workspace) {
+  if (errorMessage && !workspaceSnapshot) {
     return (
       <WorkspaceState
         actionLabel="Try Again"
@@ -62,14 +100,31 @@ export const MatterDetailPage = () => {
     setWorkspace(nextWorkspace);
   };
 
+  const refreshAll = async () => {
+    const [nextWorkspace, nextPackageWorkspace] = await Promise.all([
+      refresh(),
+      refreshPackageWorkspace(),
+    ]);
+    setWorkspace(nextWorkspace);
+    setPackageWorkspace(nextPackageWorkspace);
+    setPackageWorkspaceState(nextPackageWorkspace);
+    return {
+      nextPackageWorkspace,
+      nextWorkspace,
+    };
+  };
+
   return (
-    <MatterDetailAdmin
-      assignmentOptions={workspace?.assignmentOptions}
+      <MatterDetailAdmin
+      assignmentOptions={workspaceSnapshot?.assignmentOptions}
+      isPackageLoading={isPackageLoading}
       matter={matter}
-      myDocs={workspace?.documents || []}
-      myEvents={workspace?.events || []}
-      myInvoices={workspace?.invoices || []}
-      myThreads={workspace?.threads || []}
+      myDocs={workspaceSnapshot?.documents || []}
+      myEvents={workspaceSnapshot?.events || []}
+      myInvoices={workspaceSnapshot?.invoices || []}
+      myThreads={workspaceSnapshot?.threads || []}
+      packageErrorMessage={packageErrorMessage}
+      packageWorkspace={packageWorkspace}
       onAddMatterNote={async (payload) => {
         await adminApi.createMatterNote(matter.id, payload);
         const nextWorkspace = await refresh();
@@ -91,10 +146,36 @@ export const MatterDetailPage = () => {
         const nextWorkspace = await refresh();
         setWorkspace(nextWorkspace);
       }}
+      onArchiveProposal={async (proposalVersion) => {
+        const nextPackageWorkspace = await adminApi.archiveMatterProposal(matter.id, proposalVersion);
+        setPackageWorkspace(nextPackageWorkspace);
+        setPackageWorkspaceState(nextPackageWorkspace);
+      }}
+      onOverridePackageSelection={async (matterPackageId, reasonText) => {
+        await adminApi.overrideMatterPackageSelection(matter.id, {
+          matterPackageId,
+          reasonText,
+        });
+        await refreshAll();
+      }}
+      onPublishProposal={async (proposalVersion) => {
+        await adminApi.publishMatterProposal(matter.id, {
+          proposalVersion,
+        });
+        await refreshAll();
+      }}
       onSaveMatterDetails={async (payload) => {
         await adminApi.updateMatterDetails(matter.id, payload);
         const nextWorkspace = await refresh();
         setWorkspace(nextWorkspace);
+      }}
+      onSavePackageDraft={async (packages) => {
+        const nextPackageWorkspace = await adminApi.saveMatterPackageDraft(matter.id, {
+          ...toDraftPayload(packages),
+          proposalVersion: packageWorkspace?.draft?.proposalVersion,
+        });
+        setPackageWorkspace(nextPackageWorkspace);
+        setPackageWorkspaceState(nextPackageWorkspace);
       }}
       onUpdateFee={handleUpdateFee}
       onUpdateStage={async (payload) => {

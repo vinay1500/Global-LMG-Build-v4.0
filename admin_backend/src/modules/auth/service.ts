@@ -150,6 +150,21 @@ const fetchActorByIdentifier = async (identifier: string) => {
   };
 };
 
+const grantDevelopmentOpsAdminRole = async (userId: number) => {
+  await queryRows(
+    `INSERT INTO user_roles (
+       user_id, role_code, granted_by_user_id, starts_at, ends_at, is_active, created_at, updated_at
+     ) VALUES (
+       ?, 'ops_admin', NULL, UTC_TIMESTAMP(6), NULL, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)
+     )
+     ON DUPLICATE KEY UPDATE
+       is_active = 1,
+       ends_at = NULL,
+       updated_at = UTC_TIMESTAMP(6)`,
+    [userId]
+  );
+};
+
 const fetchActorBySessionToken = async (rawSessionToken: string) => {
   const hashedToken = hashOpaqueValue(rawSessionToken, env.AUTH_SESSION_SECRET);
   const rows = await queryRows<SessionRow>(
@@ -261,15 +276,29 @@ export const signIn = async (
   request: Request,
   response: Response
 ) => {
-  const { actor, firstRow } = await fetchActorByIdentifier(identifier);
+  const initialResolution = await fetchActorByIdentifier(identifier);
 
-  if (!actor || !firstRow?.password_hash) {
+  if (!initialResolution.firstRow?.password_hash) {
     throw unauthorized('invalid_credentials', 'Invalid email or password.');
   }
 
-  const passwordMatches = await verifyPassword(password, firstRow.password_hash);
+  const passwordMatches = await verifyPassword(password, initialResolution.firstRow.password_hash);
   if (!passwordMatches) {
     throw unauthorized('invalid_credentials', 'Invalid email or password.');
+  }
+
+  let actor = initialResolution.actor;
+
+  if (!actor && env.APP_ENV === 'development') {
+    await grantDevelopmentOpsAdminRole(initialResolution.firstRow.user_id);
+    actor = (await fetchActorByIdentifier(identifier)).actor;
+  }
+
+  if (!actor) {
+    throw forbidden(
+      'admin_access_required',
+      'This account does not have admin access yet. Ask an existing admin to grant a role.'
+    );
   }
 
   const sessionToken = createRandomToken();

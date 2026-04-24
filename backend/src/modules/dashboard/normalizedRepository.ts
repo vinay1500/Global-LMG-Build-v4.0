@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
-import { fromMysqlDateTime, nowUtc, toMysqlDateTime } from '../../lib/datetime.js';
+import { addDaysUtc, fromMysqlDateTime, nowUtc, toMysqlDateTime } from '../../lib/datetime.js';
 import { createPublicId } from '../../lib/ids.js';
 import { conflict, forbidden, notFound } from '../../lib/httpErrors.js';
 import { selectAll, selectOne, withConnection, withTransaction } from '../../lib/mysqlUtils.js';
@@ -78,10 +78,17 @@ interface MatterUpdateRow extends RowDataPacket {
 interface PackageRow extends RowDataPacket {
   created_at: string | Date;
   created_by: string;
+  display_order: number;
   description: string | null;
+  is_recommended: number;
   matter_public_id: string;
+  matter_selected_package_id: number | null;
   package_name: string;
+  proposal_version_no: number;
   public_id: string;
+  published_at: string | Date | null;
+  selected_at: string | Date | null;
+  superseded_at: string | Date | null;
   total_price: string | number;
 }
 
@@ -89,6 +96,30 @@ interface PackageServiceRow extends RowDataPacket {
   matter_package_id: number;
   public_id: string;
   service_code: string;
+}
+
+interface PackageFeatureRow extends RowDataPacket {
+  feature_text: string;
+  matter_package_id: number;
+  public_id: string;
+}
+
+interface PackageSelectionCandidateRow extends RowDataPacket {
+  description: string | null;
+  id: number;
+  matter_id: number;
+  package_name: string;
+  proposal_version_no: number;
+  public_id: string;
+  published_at: string | Date | null;
+  selected_at: string | Date | null;
+  superseded_at: string | Date | null;
+  total_price: string | number;
+}
+
+interface SelectedPackageSummaryRow extends RowDataPacket {
+  id: number;
+  proposal_version_no: number;
 }
 
 interface InvoiceRow extends RowDataPacket {
@@ -108,6 +139,44 @@ interface InvoiceRow extends RowDataPacket {
   subtotal_amount: string | number;
   tax_amount: string | number;
   total_amount: string | number;
+}
+
+interface MatterSelectionRow extends RowDataPacket {
+  client_account_id: number;
+  due_total_amount: string | number;
+  matter_number: string;
+  opened_by_user_id: number;
+  owner_user_id: number | null;
+  paid_total_amount: string | number;
+  public_id: string;
+  quoted_total_amount: string | number;
+  selected_matter_package_id: number | null;
+  title: string;
+}
+
+interface ExistingPackageInvoiceRow extends RowDataPacket {
+  amount_paid: string | number;
+  archived_at: string | Date | null;
+  id: number;
+  public_id: string;
+  status_code: string;
+}
+
+interface InvoicePaymentStateRow extends RowDataPacket {
+  captured_amount: string | number;
+}
+
+interface BillingSnapshotSeedRow extends RowDataPacket {
+  address_line1: string | null;
+  address_line2: string | null;
+  billing_email: string;
+  billing_name: string;
+  billing_phone: string;
+  city: string | null;
+  country_code: string | null;
+  gstin: string | null;
+  postal_code: string | null;
+  state: string | null;
 }
 
 interface InvoiceLineRow extends RowDataPacket {
@@ -1069,6 +1138,241 @@ export class NormalizedDashboardRepository {
     return this.getSnapshot(currentClient);
   }
 
+  public async selectMatterPackage(
+    currentClient: PlatformUser,
+    matterPublicId: string,
+    matterPackagePublicId: string,
+    proposalVersion: number
+  ) {
+    await this.initialize();
+
+    let generatedInvoiceId = '';
+
+    await withTransaction(this.pool, async (connection) => {
+      const context = await this.resolveClientContext(connection, currentClient.id);
+      const userRow = await selectOne<RowDataPacket>(
+        connection,
+        'SELECT id FROM users WHERE public_id = ? LIMIT 1',
+        [currentClient.id]
+      );
+
+      if (!userRow?.id) {
+        throw notFound('current_user_not_found', 'Current user could not be resolved.');
+      }
+
+      const matterRow = await selectOne<MatterSelectionRow>(
+        connection,
+        `SELECT
+           m.id,
+           m.public_id,
+           m.client_account_id,
+           m.title,
+           m.matter_number,
+           m.quoted_total_amount,
+           m.paid_total_amount,
+           m.due_total_amount,
+           m.selected_matter_package_id,
+           m.opened_by_user_id,
+           ca.owner_user_id
+         FROM matters m
+         INNER JOIN client_accounts ca
+           ON ca.id = m.client_account_id
+         WHERE m.public_id = ?
+           AND m.client_account_id = ?
+           AND m.archived_at IS NULL
+         LIMIT 1`,
+        [matterPublicId, context.clientAccountId]
+      );
+
+      if (!matterRow?.id) {
+        throw forbidden('matter_forbidden', 'You do not have access to this matter.');
+      }
+
+      const packageRow = await selectOne<PackageSelectionCandidateRow>(
+        connection,
+        `SELECT
+           mp.id,
+           mp.public_id,
+           mp.matter_id,
+           mp.package_name,
+           mp.description,
+           mp.total_price,
+           mp.proposal_version_no,
+           mp.published_at,
+           mp.superseded_at,
+           mp.selected_at
+         FROM matter_packages mp
+         WHERE mp.public_id = ?
+           AND mp.matter_id = ?
+           AND mp.archived_at IS NULL
+         LIMIT 1`,
+        [matterPackagePublicId, Number(matterRow.id)]
+      );
+
+      if (!packageRow?.id) {
+        throw forbidden('package_forbidden', 'This package is not available for the selected matter.');
+      }
+
+      if (Number(packageRow.proposal_version_no) !== proposalVersion) {
+        throw conflict(
+          'proposal_version_mismatch',
+          'The selected package does not belong to the current proposal version.'
+        );
+      }
+
+      if (!packageRow.published_at || packageRow.superseded_at) {
+        throw conflict(
+          'proposal_not_selectable',
+          'This package is no longer available for selection. Refresh the matter and try again.'
+        );
+      }
+
+      if (Number(matterRow.selected_matter_package_id || 0) === Number(packageRow.id)) {
+        const existingInvoice = await this.findActiveInvoiceForPackage(connection, Number(packageRow.id));
+        generatedInvoiceId = existingInvoice?.public_id || '';
+        return;
+      }
+
+      if (matterRow.selected_matter_package_id) {
+        const selectedPackageRow = await selectOne<SelectedPackageSummaryRow>(
+          connection,
+          `SELECT id, proposal_version_no
+           FROM matter_packages
+           WHERE id = ?
+           LIMIT 1`,
+          [Number(matterRow.selected_matter_package_id)]
+        );
+
+        if (selectedPackageRow && Number(selectedPackageRow.proposal_version_no) === proposalVersion) {
+          throw conflict(
+            'proposal_already_selected',
+            'A package has already been selected for this proposal version.'
+          );
+        }
+
+        const currentInvoice = await this.findActiveInvoiceForPackage(
+          connection,
+          Number(matterRow.selected_matter_package_id)
+        );
+
+        if (currentInvoice?.id) {
+          const hasCapturedPayment = await this.invoiceHasCapturedPayment(
+            connection,
+            Number(currentInvoice.id)
+          );
+
+          if (hasCapturedPayment) {
+            throw conflict(
+              'package_selection_locked',
+              'This matter already has a paid package invoice. Ask support to reconcile billing before selecting a new package.'
+            );
+          }
+
+          await connection.execute(
+            `UPDATE invoices
+             SET status_code = 'void',
+                 amount_due = 0,
+                 archived_at = UTC_TIMESTAMP(6),
+                 updated_at = UTC_TIMESTAMP(6),
+                 row_version = row_version + 1
+             WHERE id = ?`,
+            [Number(currentInvoice.id)]
+          );
+
+          await connection.execute(
+            `UPDATE invoice_installments
+             SET status_code = 'void',
+                 amount_remaining = 0
+             WHERE invoice_id = ?`,
+            [Number(currentInvoice.id)]
+          );
+        }
+      }
+
+      const createdAt = toMysqlDateTime(nowUtc());
+      await connection.execute(
+        `UPDATE matter_packages
+         SET selected_at = CASE WHEN id = ? THEN ? ELSE NULL END,
+             updated_at = ?,
+             row_version = row_version + 1
+         WHERE matter_id = ?
+           AND proposal_version_no = ?`,
+        [Number(packageRow.id), createdAt, createdAt, Number(matterRow.id), proposalVersion]
+      );
+
+      const packagePrice = toAmount(packageRow.total_price);
+      const paidAmount = toAmount(matterRow.paid_total_amount);
+      const nextDueAmount = Math.max(packagePrice - paidAmount, 0);
+
+      await connection.execute(
+        `UPDATE matters
+         SET selected_matter_package_id = ?,
+             quoted_total_amount = ?,
+             due_total_amount = ?,
+             operational_status_code = 'awaiting-payment',
+             last_activity_at = UTC_TIMESTAMP(6),
+             updated_at = UTC_TIMESTAMP(6),
+             row_version = row_version + 1
+         WHERE id = ?`,
+        [Number(packageRow.id), packagePrice, nextDueAmount, Number(matterRow.id)]
+      );
+
+      const invoice = await this.createPackageInvoice(connection, {
+        actorUserId: Number(userRow.id),
+        clientAccountId: Number(matterRow.client_account_id),
+        matterId: Number(matterRow.id),
+        matterPackageId: Number(packageRow.id),
+        packageName: packageRow.package_name,
+        totalAmount: packagePrice,
+      });
+      generatedInvoiceId = invoice.publicId;
+
+      const clientRecipients = await this.getClientRecipientUserIds(
+        connection,
+        Number(matterRow.client_account_id)
+      );
+      await this.insertNotifications(connection, clientRecipients, {
+        bodyText: `Invoice ${invoice.invoiceNumber} has been generated for the ${packageRow.package_name} package.`,
+        invoiceId: invoice.id,
+        matterId: Number(matterRow.id),
+        notificationTypeCode: 'invoice_generated',
+        priorityCode: 'normal',
+        title: 'Invoice generated',
+      });
+
+      const adminRecipients = await this.getMatterAdminRecipientUserIds(
+        connection,
+        Number(matterRow.id)
+      );
+      await this.insertNotifications(connection, adminRecipients, {
+        bodyText: `${currentClient.name} selected the ${packageRow.package_name} package.`,
+        invoiceId: invoice.id,
+        matterId: Number(matterRow.id),
+        notificationTypeCode: 'proposal',
+        priorityCode: 'normal',
+        title: 'Package selected',
+      });
+
+      await this.insertAuditEvent(connection, {
+        actionCode: 'matter.package.selected',
+        actionLabel: 'Matter package selected',
+        actorRoleCodeSnapshot: 'client',
+        actorUserId: Number(userRow.id),
+        entityPk: Number(packageRow.id),
+        entityTableName: 'matter_packages',
+        sourceModule: 'Client Dashboard',
+        summaryNewValue: packageRow.package_name,
+        summaryOldValue: matterPublicId,
+      });
+    });
+
+    return {
+      generatedInvoiceId,
+      selectedPackageId: matterPackagePublicId,
+      snapshot: await this.getSnapshot(currentClient),
+    };
+  }
+
   public async sendMessage(
     currentClient: PlatformUser,
     threadPublicId: string,
@@ -1229,6 +1533,338 @@ export class NormalizedDashboardRepository {
     return this.getSnapshot(currentClient);
   }
 
+  private async getClientRecipientUserIds(connection: PoolConnection, clientAccountId: number) {
+    const rows = await selectAll<RowDataPacket & { user_id: number }>(
+      connection,
+      `SELECT DISTINCT cac.user_id
+       FROM client_account_contacts cac
+       WHERE cac.client_account_id = ?
+         AND cac.portal_access_enabled = 1
+         AND cac.archived_at IS NULL`,
+      [clientAccountId]
+    );
+
+    return rows.map((row) => Number(row.user_id));
+  }
+
+  private async getMatterAdminRecipientUserIds(connection: PoolConnection, matterId: number) {
+    const rows = await selectAll<RowDataPacket & { user_id: number }>(
+      connection,
+      `SELECT DISTINCT user_id
+       FROM (
+         SELECT m.opened_by_user_id AS user_id
+         FROM matters m
+         WHERE m.id = ?
+         UNION
+         SELECT ca.owner_user_id AS user_id
+         FROM matters m
+         INNER JOIN client_accounts ca ON ca.id = m.client_account_id
+         WHERE m.id = ?
+         UNION
+         SELECT ma.internal_user_id AS user_id
+         FROM matter_assignments ma
+         WHERE ma.matter_id = ?
+           AND ma.removed_at IS NULL
+           AND ma.internal_user_id IS NOT NULL
+       ) recipients
+       WHERE user_id IS NOT NULL`,
+      [matterId, matterId, matterId]
+    );
+
+    return rows.map((row) => Number(row.user_id));
+  }
+
+  private async insertNotifications(
+    connection: PoolConnection,
+    recipientUserIds: number[],
+    input: {
+      bodyText: string;
+      invoiceId?: number | null;
+      matterId?: number | null;
+      notificationTypeCode: string;
+      priorityCode: string;
+      title: string;
+    }
+  ) {
+    if (recipientUserIds.length === 0) {
+      return;
+    }
+
+    const createdAt = toMysqlDateTime(nowUtc());
+
+    for (const recipientUserId of recipientUserIds) {
+      await connection.execute(
+        `INSERT INTO notifications (
+           public_id,
+           recipient_user_id,
+           notification_type_code,
+           title,
+           body_text,
+           priority_code,
+           matter_id,
+           invoice_id,
+           thread_id,
+           event_id,
+           document_id,
+           is_read,
+           read_at,
+           dismissed_at,
+           created_at,
+           expires_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 0, NULL, NULL, ?, NULL)`,
+        [
+          createPublicId(),
+          recipientUserId,
+          input.notificationTypeCode,
+          input.title,
+          input.bodyText,
+          input.priorityCode,
+          input.matterId || null,
+          input.invoiceId || null,
+          createdAt,
+        ]
+      );
+    }
+  }
+
+  private async insertAuditEvent(
+    connection: PoolConnection,
+    input: {
+      actionCode: string;
+      actionLabel: string;
+      actorRoleCodeSnapshot: string;
+      actorUserId: number | null;
+      entityPk: number | null;
+      entityTableName: string;
+      sourceModule: string;
+      summaryNewValue?: string | null;
+      summaryOldValue?: string | null;
+    }
+  ) {
+    await connection.execute(
+      `INSERT INTO audit_events (
+         public_id,
+         actor_user_id,
+         actor_role_code_snapshot,
+         entity_table_name,
+         entity_pk,
+         action_code,
+         action_label,
+         source_module,
+         request_correlation_id,
+         ip_address,
+         user_agent,
+         summary_old_value,
+         summary_new_value,
+         occurred_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`,
+      [
+        createPublicId(),
+        input.actorUserId,
+        input.actorRoleCodeSnapshot,
+        input.entityTableName,
+        input.entityPk,
+        input.actionCode,
+        input.actionLabel,
+        input.sourceModule,
+        input.summaryOldValue || null,
+        input.summaryNewValue || null,
+        toMysqlDateTime(nowUtc()),
+      ]
+    );
+  }
+
+  private async findActiveInvoiceForPackage(connection: PoolConnection, matterPackageId: number) {
+    return selectOne<ExistingPackageInvoiceRow>(
+      connection,
+      `SELECT id, public_id, status_code, amount_paid, archived_at
+       FROM invoices
+       WHERE matter_package_id = ?
+         AND archived_at IS NULL
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1`,
+      [matterPackageId]
+    );
+  }
+
+  private async invoiceHasCapturedPayment(connection: PoolConnection, invoiceId: number) {
+    const row = await selectOne<InvoicePaymentStateRow>(
+      connection,
+      `SELECT COALESCE(SUM(pa.amount_applied), 0) AS captured_amount
+       FROM payment_allocations pa
+       INNER JOIN payment_transactions pt
+         ON pt.id = pa.payment_transaction_id
+       WHERE pa.invoice_id = ?
+         AND pt.status_code = 'captured'`,
+      [invoiceId]
+    );
+
+    return toAmount(row?.captured_amount) > 0;
+  }
+
+  private async createPackageInvoice(
+    connection: PoolConnection,
+    input: {
+      actorUserId: number;
+      clientAccountId: number;
+      matterId: number;
+      matterPackageId: number;
+      packageName: string;
+      totalAmount: number;
+    }
+  ) {
+    const invoicePublicId = createPublicId();
+    const invoiceNumber = await allocateBusinessNumber(connection, 'invoice', 'INV');
+    const createdAt = toMysqlDateTime(nowUtc());
+    const issueDate = nowUtc().slice(0, 10);
+    const dueDate = addDaysUtc(7).slice(0, 10);
+    const billingSeed = await selectOne<BillingSnapshotSeedRow>(
+      connection,
+      `SELECT
+         ca.billing_name,
+         ca.primary_email AS billing_email,
+         ca.primary_phone AS billing_phone,
+         ca.gstin,
+         addr.line1 AS address_line1,
+         addr.line2 AS address_line2,
+         addr.city,
+         addr.state,
+         addr.postal_code,
+         addr.country_code
+       FROM client_accounts ca
+       LEFT JOIN client_addresses addr
+         ON addr.client_account_id = ca.id
+         AND addr.is_primary = 1
+         AND addr.archived_at IS NULL
+       WHERE ca.id = ?
+       LIMIT 1`,
+      [input.clientAccountId]
+    );
+
+    const [invoiceInsert] = await connection.execute(
+      `INSERT INTO invoices (
+         public_id,
+         invoice_number,
+         client_account_id,
+         matter_id,
+         matter_package_id,
+         subscription_id,
+         invoice_type_code,
+         status_code,
+         currency_code,
+         issue_date,
+         due_date,
+         subtotal_amount,
+         discount_amount,
+         tax_amount,
+         total_amount,
+         amount_paid,
+         amount_refunded,
+         amount_due,
+         created_by_user_id,
+         created_at,
+         updated_at,
+         archived_at
+       ) VALUES (?, ?, ?, ?, ?, NULL, 'matter-package', 'sent', 'INR', ?, ?, ?, 0, 0, ?, 0, 0, ?, ?, ?, ?, NULL)`,
+      [
+        invoicePublicId,
+        invoiceNumber,
+        input.clientAccountId,
+        input.matterId,
+        input.matterPackageId,
+        issueDate,
+        dueDate,
+        input.totalAmount,
+        input.totalAmount,
+        input.totalAmount,
+        input.actorUserId,
+        createdAt,
+        createdAt,
+      ]
+    );
+    const invoiceId = Number((invoiceInsert as { insertId: number }).insertId);
+
+    await connection.execute(
+      `INSERT INTO invoice_billing_snapshots (
+         invoice_id,
+         billing_name,
+         billing_email,
+         billing_phone,
+         address_line1,
+         address_line2,
+         city,
+         state,
+         postal_code,
+         country_code,
+         gstin,
+         created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        invoiceId,
+        billingSeed?.billing_name || 'Billing Contact',
+        billingSeed?.billing_email || '',
+        billingSeed?.billing_phone || '',
+        billingSeed?.address_line1 || 'Address pending',
+        billingSeed?.address_line2 || null,
+        billingSeed?.city || '',
+        billingSeed?.state || '',
+        billingSeed?.postal_code || '',
+        billingSeed?.country_code || 'IN',
+        billingSeed?.gstin || null,
+        createdAt,
+      ]
+    );
+
+    const [lineInsert] = await connection.execute(
+      `INSERT INTO invoice_lines (
+         invoice_id,
+         line_type_code,
+         service_id,
+         subscription_plan_id,
+         description,
+         quantity,
+         unit_price,
+         line_subtotal,
+         discount_amount,
+         taxable_amount,
+         line_total,
+         sort_order,
+         created_at
+       ) VALUES (?, 'service-package', NULL, NULL, ?, 1, ?, ?, 0, ?, ?, 1, ?)`,
+      [
+        invoiceId,
+        input.packageName,
+        input.totalAmount,
+        input.totalAmount,
+        input.totalAmount,
+        input.totalAmount,
+        createdAt,
+      ]
+    );
+
+    await connection.execute(
+      `INSERT INTO invoice_installments (
+         invoice_id,
+         installment_no,
+         due_date,
+         amount_due,
+         amount_paid,
+         amount_remaining,
+         status_code,
+         paid_at,
+         created_at
+       ) VALUES (?, 1, ?, ?, 0, ?, 'pending', NULL, ?)`,
+      [invoiceId, dueDate, input.totalAmount, input.totalAmount, createdAt]
+    );
+
+    return {
+      id: invoiceId,
+      invoiceLineId: Number((lineInsert as { insertId: number }).insertId),
+      invoiceNumber,
+      publicId: invoicePublicId,
+    };
+  }
+
   private parsePreferredWindow(preferredDate: string, preferredTime: string) {
     const trimmedDate = preferredDate.trim();
     const trimmedTime = preferredTime.trim();
@@ -1336,9 +1972,11 @@ export class NormalizedDashboardRepository {
     );
     const packageRows = await selectAll<RowDataPacket>(
       connection,
-      `SELECT matter_id, public_id
-       FROM matter_packages
-       WHERE matter_id IN (${matterIdPlaceholders}) AND archived_at IS NULL`,
+      `SELECT m.id AS matter_id, mp.public_id
+       FROM matters m
+       LEFT JOIN matter_packages mp
+         ON mp.id = m.selected_matter_package_id
+       WHERE m.id IN (${matterIdPlaceholders})`,
       matterIds
     );
 
@@ -1398,14 +2036,23 @@ export class NormalizedDashboardRepository {
          mp.package_name,
          mp.description,
          mp.total_price,
+         mp.display_order,
+         mp.is_recommended,
+         mp.proposal_version_no,
+         mp.published_at,
+         mp.superseded_at,
+         mp.selected_at,
          mp.created_at,
          creator.display_name AS created_by,
-         m.public_id AS matter_public_id
+         m.public_id AS matter_public_id,
+         m.selected_matter_package_id AS matter_selected_package_id
        FROM matter_packages mp
        INNER JOIN matters m ON m.id = mp.matter_id
        INNER JOIN users creator ON creator.id = mp.created_by_user_id
-       WHERE m.client_account_id = ? AND mp.archived_at IS NULL
-       ORDER BY mp.created_at DESC`,
+       WHERE m.client_account_id = ?
+         AND mp.archived_at IS NULL
+         AND mp.published_at IS NOT NULL
+       ORDER BY mp.proposal_version_no DESC, mp.display_order ASC, mp.created_at ASC`,
       [clientAccountId]
     );
 
@@ -1422,17 +2069,42 @@ export class NormalizedDashboardRepository {
        WHERE mp.archived_at IS NULL`
     );
 
+    const features = await selectAll<PackageFeatureRow>(
+      connection,
+      `SELECT mpf.matter_package_id, mp.public_id, mpf.feature_text
+       FROM matter_package_features mpf
+       INNER JOIN matter_packages mp ON mp.id = mpf.matter_package_id
+       WHERE mp.archived_at IS NULL
+       ORDER BY mpf.sort_order ASC, mpf.id ASC`
+    );
+
     return packages.map((entry) => ({
       createdAt: toIso(entry.created_at),
       createdBy: entry.created_by,
       description: entry.description || '',
+      displayOrder: Number(entry.display_order || 0),
+      features: features
+        .filter((feature) => feature.public_id === entry.public_id)
+        .map((feature) => feature.feature_text),
       id: entry.public_id,
+      isRecommended: Boolean(entry.is_recommended),
+      isSelected: Number(entry.matter_selected_package_id || 0) === Number(entry.id),
       matterId: entry.matter_public_id,
       name: entry.package_name,
       price: toAmount(entry.total_price),
+      proposalStatus:
+        entry.superseded_at
+          ? 'superseded'
+          : entry.selected_at
+            ? 'selected'
+            : 'published',
+      proposalVersion: Number(entry.proposal_version_no),
+      publishedAt: entry.published_at ? toIso(entry.published_at) : undefined,
+      selectedAt: entry.selected_at ? toIso(entry.selected_at) : undefined,
       services: services
         .filter((service) => service.public_id === entry.public_id)
         .map((service) => service.service_code),
+      supersededAt: entry.superseded_at ? toIso(entry.superseded_at) : undefined,
     }));
   }
 

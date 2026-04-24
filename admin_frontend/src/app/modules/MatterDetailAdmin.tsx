@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { 
   ArrowLeft, Video, MessageSquare, FileText, Download, 
-  ExternalLink, Edit2, CheckCircle, Clock, Trash2, Check,
-  Package, IndianRupee, Save, Calendar, Users, AlertCircle, Phone, X
+  Edit2, Clock, Check,
+  Package, Save, Calendar
 } from 'lucide-react';
 import { StatusBadge, UrgencyDot } from '../components/dashboard/StatusBadge';
 import { LifecycleStepper } from '../components/dashboard/LifecycleStepper';
@@ -10,6 +10,7 @@ import {
   formatCurrency, formatDate, getServiceName, SERVICES, LIFECYCLE_STAGES,
   type Matter, type Invoice, type PlatformEvent, type PlatformDocument, type MessageThread 
 } from '../data/seedData';
+import type { MatterPackageProposalsResponse } from '../lib/api/contracts';
 import { PackageBuilder, type PackageTier } from './PackageBuilder';
 
 const formatSize = (bytes: number) => {
@@ -26,7 +27,11 @@ interface MatterDetailAdminProps {
     staff: Array<{ id: string; name: string }>;
   };
   matter: Matter;
+  isPackageLoading?: boolean;
+  packageErrorMessage?: string | null;
+  packageWorkspace?: MatterPackageProposalsResponse | null;
   onAddMatterNote?: (payload: { bodyText: string; title: string; visibleToClient?: boolean }) => Promise<void>;
+  onArchiveProposal?: (proposalVersion: number) => Promise<void>;
   onAssignMatter?: (payload: {
     assignmentRoleCode: string;
     counselPartnerId?: string;
@@ -55,6 +60,9 @@ interface MatterDetailAdminProps {
     quotedTotalAmount?: number;
     selectedServices?: string[];
   }) => Promise<void>;
+  onSavePackageDraft?: (packages: PackageTier[]) => Promise<void>;
+  onOverridePackageSelection?: (matterPackageId: string, reasonText: string) => Promise<void>;
+  onPublishProposal?: (proposalVersion: number) => Promise<void>;
   onUpdateStage?: (payload: {
     changeNote?: string;
     operationalStatusCode?: string;
@@ -70,15 +78,22 @@ interface MatterDetailAdminProps {
 
 export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({ 
   assignmentOptions,
+  isPackageLoading = false,
   matter: initialMatter,
   onAddMatterNote,
+  onArchiveProposal,
   onAssignMatter,
   onBack,
   onChat,
   onCreateEvent,
+  onOverridePackageSelection,
+  onPublishProposal,
   onSaveMatterDetails,
+  onSavePackageDraft,
   onUpdateFee,
   onUpdateStage,
+  packageErrorMessage,
+  packageWorkspace,
   myInvoices,
   myDocs,
   myEvents: initialEvents,
@@ -89,12 +104,12 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
   
   const [isEditingFee, setIsEditingFee] = useState(false);
   const [editedFee, setEditedFee] = useState(matter.totalFee.toString());
-  const [showPackageBuilder, setShowPackageBuilder] = useState(false);
-  const [matterPackages, setMatterPackages] = useState<PackageTier[]>([]);
+  const [isSavingPackageDraft, setIsSavingPackageDraft] = useState(false);
+  const [isPublishingProposal, setIsPublishingProposal] = useState(false);
+  const [isOverridingPackage, setIsOverridingPackage] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'events' | 'documents'>('overview');
   
   const [showEventForm, setShowEventForm] = useState(false);
-  const [showClientSimulation, setShowClientSimulation] = useState(false);
   const [isEditingSummary, setIsEditingSummary] = useState(false);
   const [editedSummary, setEditedSummary] = useState(matter.issueSummary);
   const [isEditingServices, setIsEditingServices] = useState(false);
@@ -128,24 +143,60 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
     setIsEditingFee(false);
   };
 
-  const handleSavePackages = (packages: PackageTier[]) => {
-    setMatterPackages(packages);
-    alert('Packages published to client view.');
-  };
-
-  const applyPackageFee = (price: number) => {
-    onUpdateFee(matter.id, price);
-    setMatter({ ...matter, totalFee: price });
-    alert(`Total fee updated to ${formatCurrency(price)} based on package selection.`);
-  };
-  
-  const handleGenerateInvoice = () => {
-    if (matterPackages.length === 0) {
-      alert('Please create service packages first so the client has options to choose from.');
-      setShowPackageBuilder(true);
+  const handleSavePackages = async (packages: PackageTier[]) => {
+    if (!onSavePackageDraft) {
       return;
     }
-    setShowClientSimulation(true);
+
+    setIsSavingPackageDraft(true);
+    try {
+      await onSavePackageDraft(packages);
+    } finally {
+      setIsSavingPackageDraft(false);
+    }
+  };
+
+  const handlePublishPackages = async () => {
+    if (!packageWorkspace?.draft || !onPublishProposal) {
+      return;
+    }
+
+    setIsPublishingProposal(true);
+    try {
+      await onPublishProposal(packageWorkspace.draft.proposalVersion);
+    } finally {
+      setIsPublishingProposal(false);
+    }
+  };
+
+  const handleArchivePackages = async (proposalVersion: number) => {
+    if (!onArchiveProposal) {
+      return;
+    }
+
+    if (!window.confirm(`Archive proposal version ${proposalVersion}?`)) {
+      return;
+    }
+
+    await onArchiveProposal(proposalVersion);
+  };
+
+  const handleOverridePackage = async (matterPackageId: string, packageName: string) => {
+    if (!onOverridePackageSelection) {
+      return;
+    }
+
+    const reasonText = window.prompt(`Why are you overriding the selection to "${packageName}"?`);
+    if (!reasonText?.trim()) {
+      return;
+    }
+
+    setIsOverridingPackage(true);
+    try {
+      await onOverridePackageSelection(matterPackageId, reasonText.trim());
+    } finally {
+      setIsOverridingPackage(false);
+    }
   };
 
   const handleAddEvent = async () => {
@@ -212,6 +263,35 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
   const STAGES_LIST = LIFECYCLE_STAGES.map(s => ({
     id: s.id, label: s.label
   }));
+  const editorPackages: PackageTier[] =
+    packageWorkspace?.draft?.packages?.map((pkg) => ({
+      description: pkg.description,
+      id: pkg.id,
+      isRecommended: pkg.isRecommended,
+      name: pkg.name,
+      points: pkg.featurePoints,
+      price: pkg.price,
+    })) ||
+    packageWorkspace?.active?.packages?.map((pkg) => ({
+      description: pkg.description,
+      id: pkg.id,
+      isRecommended: pkg.isRecommended,
+      name: pkg.name,
+      points: pkg.featurePoints,
+      price: pkg.price,
+    })) ||
+    [];
+  const selectedPackage =
+    packageWorkspace?.active?.packages.find((pkg) => pkg.isSelected) ||
+    packageWorkspace?.history.flatMap((proposal) => proposal.packages).find((pkg) => pkg.isSelected) ||
+    null;
+  const selectedPackageVersion =
+    packageWorkspace?.active?.packages.some((pkg) => pkg.isSelected)
+      ? packageWorkspace.active.proposalVersion
+      : packageWorkspace?.history.find((proposal) => proposal.packages.some((pkg) => pkg.isSelected))
+          ?.proposalVersion;
+  const linkedPackageInvoice =
+    packageWorkspace?.linkedInvoiceSummary || packageWorkspace?.active?.linkedInvoice || null;
 
   return (
     <div className="space-y-6">
@@ -354,14 +434,196 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                       <Package className="w-5 h-5 text-gray-400" />
                       Service Packages & Quoting
                     </h3>
-                    <span className="text-xs uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full">
-                      Deferred
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {packageWorkspace?.draft && onArchiveProposal ? (
+                        <button
+                          className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
+                          onClick={() => void handleArchivePackages(packageWorkspace.draft!.proposalVersion)}
+                          type="button"
+                        >
+                          Archive Draft
+                        </button>
+                      ) : null}
+                      {packageWorkspace?.draft && onPublishProposal ? (
+                        <button
+                          className="rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-gray-800 disabled:opacity-60"
+                          disabled={isPublishingProposal}
+                          onClick={() => void handlePublishPackages()}
+                          type="button"
+                        >
+                          {isPublishingProposal ? 'Publishing...' : 'Publish to Client'}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
-                  <p className="text-sm text-gray-500 bg-gray-50 p-4 rounded-lg border border-gray-100">
-                    Package publishing, client selection, and invoice generation are intentionally deferred to the
-                    package workflow phase so this screen no longer pretends those actions are live.
-                  </p>
+
+                  {packageErrorMessage ? (
+                    <p className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                      {packageErrorMessage}
+                    </p>
+                  ) : isPackageLoading && !packageWorkspace ? (
+                    <p className="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm text-gray-500">
+                      Loading package proposal workspace...
+                    </p>
+                  ) : (
+                    <div className="space-y-5">
+                      <div className="grid gap-4 md:grid-cols-3">
+                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                            Draft Workspace
+                          </p>
+                          <p className="mt-2 text-sm text-gray-700">
+                            {packageWorkspace?.draft
+                              ? `Version ${packageWorkspace.draft.proposalVersion} ready for final edits.`
+                              : 'No draft exists yet. Save the package builder to create one.'}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                            Active Proposal
+                          </p>
+                          <p className="mt-2 text-sm text-gray-700">
+                            {packageWorkspace?.active
+                              ? `Version ${packageWorkspace.active.proposalVersion} is ${packageWorkspace.active.status}.`
+                              : 'No proposal has been published to the client yet.'}
+                          </p>
+                        </div>
+                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                          <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                            Invoice Link
+                          </p>
+                          <p className="mt-2 text-sm text-gray-700">
+                            {linkedPackageInvoice
+                              ? `${linkedPackageInvoice.invoiceNumber} is ${linkedPackageInvoice.statusCode}.`
+                              : 'A package invoice will auto-generate after client selection.'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <PackageBuilder
+                        existingPackages={editorPackages}
+                        isSaving={isSavingPackageDraft}
+                        matterId={matter.id}
+                        onSave={(packages) => void handleSavePackages(packages)}
+                        saveLabel={packageWorkspace?.draft ? 'Update Draft' : 'Save Draft'}
+                      />
+
+                      {packageWorkspace?.active ? (
+                        <div className="space-y-4 rounded-xl border border-gray-200 bg-white p-5">
+                          <div className="flex items-center justify-between gap-3">
+                            <div>
+                              <h4 className="text-base font-medium text-gray-900">Client-Facing Proposal</h4>
+                              <p className="text-sm text-gray-500">
+                                Version {packageWorkspace.active.proposalVersion} · {packageWorkspace.active.status}
+                              </p>
+                            </div>
+                            {packageWorkspace.active.linkedInvoice ? (
+                              <span className="rounded-full bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-emerald-700">
+                                Invoice {packageWorkspace.active.linkedInvoice.invoiceNumber}
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-indigo-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-indigo-700">
+                                Client review open
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                            {packageWorkspace.active.packages.map((pkg) => (
+                              <div
+                                key={pkg.id}
+                                className={`flex flex-col rounded-xl border p-5 shadow-sm ${
+                                  pkg.isRecommended ? 'border-gray-900 ring-1 ring-gray-900/10' : 'border-gray-200'
+                                }`}
+                              >
+                                <div className="mb-3 flex items-start justify-between gap-3">
+                                  <div>
+                                    <h5 className="font-medium text-gray-900">{pkg.name}</h5>
+                                    <p className="mt-1 text-sm text-gray-500">
+                                      {pkg.description || 'Client-facing package description pending.'}
+                                    </p>
+                                  </div>
+                                  <div className="flex flex-col items-end gap-2">
+                                    {pkg.isRecommended ? (
+                                      <span className="rounded-full bg-gray-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-white">
+                                        Recommended
+                                      </span>
+                                    ) : null}
+                                    {pkg.isSelected ? (
+                                      <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
+                                        Selected
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </div>
+
+                                <p className="mb-4 text-2xl font-semibold text-gray-900">
+                                  {formatCurrency(pkg.price)}
+                                </p>
+
+                                <div className="flex-1 space-y-2">
+                                  {pkg.featurePoints.map((point, index) => (
+                                    <div key={`${pkg.id}-${index}`} className="flex items-start gap-2 text-sm text-gray-700">
+                                      <Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-500" />
+                                      <span>{point}</span>
+                                    </div>
+                                  ))}
+                                </div>
+
+                                {!pkg.isSelected && packageWorkspace.active?.status === 'selected' && onOverridePackageSelection ? (
+                                  <button
+                                    className="mt-5 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
+                                    disabled={isOverridingPackage}
+                                    onClick={() => void handleOverridePackage(pkg.id, pkg.name)}
+                                    type="button"
+                                  >
+                                    {isOverridingPackage ? 'Updating...' : 'Override Selection'}
+                                  </button>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {packageWorkspace?.history.length ? (
+                        <div className="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-5">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-base font-medium text-gray-900">Proposal History</h4>
+                            <span className="text-xs uppercase tracking-wider text-gray-400">
+                              {packageWorkspace.history.length} archived record(s)
+                            </span>
+                          </div>
+                          <div className="space-y-3">
+                            {packageWorkspace.history.map((proposal) => (
+                              <div
+                                key={proposal.proposalVersion}
+                                className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3"
+                              >
+                                <div>
+                                  <p className="text-sm font-medium text-gray-900">
+                                    Version {proposal.proposalVersion}
+                                  </p>
+                                  <p className="text-xs text-gray-500">
+                                    {proposal.status} · {proposal.packages.length} package option(s)
+                                  </p>
+                                </div>
+                                {proposal.status === 'superseded' && onArchiveProposal ? (
+                                  <button
+                                    className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
+                                    onClick={() => void handleArchivePackages(proposal.proposalVersion)}
+                                    type="button"
+                                  >
+                                    Archive
+                                  </button>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
                 </div>
 
             {/* Matter Details */}
@@ -682,14 +944,27 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                 <div className="flex justify-between px-2"><span className="text-gray-500">Paid</span><span className="text-emerald-600 font-medium">{formatCurrency(matter.paidAmount)}</span></div>
                 <div className="flex justify-between border-t border-gray-200 pt-3 px-2"><span className="text-gray-500 font-medium">Due Balance</span><span className={`font-bold ${matter.dueAmount > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{formatCurrency(matter.dueAmount)}</span></div>
               </div>
-              <button
-                className="w-full bg-white border border-dashed border-gray-300 text-gray-500 py-2 rounded-lg text-sm font-medium cursor-not-allowed"
-                disabled
-                type="button"
-              >
-                Invoice Generation Deferred
-              </button>
+              {linkedPackageInvoice ? (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  Latest package invoice: <span className="font-semibold">{linkedPackageInvoice.invoiceNumber}</span>
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-500">
+                  Invoice will generate automatically after the client confirms a package.
+                </div>
+              )}
             </div>
+
+            {selectedPackage ? (
+              <div className="bg-gray-50 border border-gray-100 rounded-xl p-5 space-y-2">
+                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Selected Package</h3>
+                <p className="text-sm font-medium text-gray-900">{selectedPackage.name}</p>
+                <p className="text-xs text-gray-500">
+                  {selectedPackageVersion ? `Proposal v${selectedPackageVersion} · ` : ''}
+                  {formatCurrency(selectedPackage.price)}
+                </p>
+              </div>
+            ) : null}
 
             <div className="bg-gray-50 border border-gray-100 rounded-xl p-5 space-y-3">
               <div className="flex justify-between items-center mb-2">
@@ -825,55 +1100,6 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
           </div>
         </div>
       </div>
-      {showClientSimulation && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl max-w-2xl w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-medium" style={{ fontFamily: "'Playfair Display', serif" }}>Client View Simulation</h2>
-              <button onClick={() => setShowClientSimulation(false)} className="text-gray-400 hover:text-gray-900 transition"><X className="w-5 h-5"/></button>
-            </div>
-            <p className="text-sm text-gray-500 mb-6">This simulates the client experience. When the client selects a package below, it confirms the service tier and automatically updates the matter fee structure.</p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {matterPackages.map(pkg => (
-                <div key={pkg.id} className="border border-gray-200 rounded-xl p-5 bg-white shadow-sm flex flex-col hover:border-gray-900 transition cursor-pointer group" onClick={() => {
-                  applyPackageFee(pkg.price);
-                  setShowClientSimulation(false);
-                  
-                  const packageEvent: PlatformEvent = {
-                    id: `EVT-${Date.now()}`,
-                    title: `Package Selected: ${pkg.name}`,
-                    type: 'package_selection',
-                    clientId: matter.clientId,
-                    clientName: matter.clientName,
-                    matterId: matter.id,
-                    matterTitle: matter.title,
-                    date: new Date().toISOString().split('T')[0],
-                    time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
-                    duration: 0,
-                    mode: 'office',
-                    visibleToClient: true,
-                    actionCTA: '',
-                    notes: `Client selected the ${pkg.name} package for ${formatCurrency(pkg.price)}`,
-                    status: 'completed'
-                  };
-                  setLocalEvents([...localEvents, packageEvent]);
-                }}>
-                  <h4 className="font-medium text-gray-900">{pkg.name}</h4>
-                  <p className="text-2xl font-semibold text-gray-900 mt-2 mb-4">{formatCurrency(pkg.price)}</p>
-                  <ul className="text-sm text-gray-600 space-y-2 flex-1 mb-6">
-                    {pkg.points.map((pt, i) => (
-                      <li key={i} className="flex items-start gap-2"><Check className="w-4 h-4 text-emerald-500 mt-0.5 flex-shrink-0"/> {pt}</li>
-                    ))}
-                  </ul>
-                  <div className="w-full py-2 text-center text-sm font-medium border border-gray-900 text-gray-900 rounded group-hover:bg-gray-900 group-hover:text-white transition">
-                    Simulate Client Selection
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

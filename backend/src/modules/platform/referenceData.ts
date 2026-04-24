@@ -149,10 +149,13 @@ export const MATTER_OPERATIONAL_STATUS_SEEDS = [
   ['verification-scheduled', 'Verification Scheduled', 3, 0],
   ['consultation-completed', 'Consultation Completed', 4, 0],
   ['fee-pending', 'Fee Pending', 5, 0],
-  ['work-in-progress', 'Work In Progress', 6, 0],
-  ['immediate', 'Immediate', 7, 0],
-  ['completed', 'Completed', 8, 1],
-  ['archived', 'Archived', 9, 1],
+  ['package-ready', 'Package Ready', 6, 0],
+  ['awaiting-payment', 'Awaiting Payment', 7, 0],
+  ['paid', 'Paid', 8, 0],
+  ['work-in-progress', 'Work In Progress', 9, 0],
+  ['immediate', 'Immediate', 10, 0],
+  ['completed', 'Completed', 11, 1],
+  ['archived', 'Archived', 12, 1],
 ] as const;
 
 export const INVOICE_STATUS_SEEDS = [
@@ -161,6 +164,7 @@ export const INVOICE_STATUS_SEEDS = [
   ['pending', 'Pending', 3, 0],
   ['paid', 'Paid', 4, 1],
   ['overdue', 'Overdue', 5, 0],
+  ['void', 'Void', 6, 1],
 ] as const;
 
 export const PAYMENT_STATUS_SEEDS = [
@@ -193,7 +197,8 @@ export const NOTIFICATION_TYPE_SEEDS = [
   ['event_reminder', 'Event Reminder', 4],
   ['message_received', 'Message Received', 5],
   ['document_uploaded', 'Document Uploaded', 6],
-  ['system', 'System', 7],
+  ['proposal', 'Proposal', 7],
+  ['system', 'System', 8],
 ] as const;
 
 export const LEGAL_DOMAIN_SEEDS = [

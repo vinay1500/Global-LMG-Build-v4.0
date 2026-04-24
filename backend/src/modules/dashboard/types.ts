@@ -16,19 +16,34 @@ export type LifecycleStage =
 export type OperationalStatus =
   | 'new-lead'
   | 'awaiting-verification'
+  | 'verification-done'
   | 'verification-scheduled'
+  | 'consultation-scheduled'
   | 'consultation-completed'
   | 'fee-pending'
+  | 'package-ready'
+  | 'invoice-sent'
+  | 'awaiting-payment'
+  | 'paid'
   | 'work-in-progress'
+  | 'awaiting-client'
+  | 'awaiting-team'
   | 'immediate'
   | 'completed'
-  | 'archived';
+  | 'archived'
+  | 'lost-closed';
 export type PriorityBadge = 'awaiting-client' | 'in-progress' | 'immediate-6h' | 'completed';
-export type InvoiceStatus = 'draft' | 'sent' | 'pending' | 'paid' | 'overdue';
+export type InvoiceStatus = 'draft' | 'sent' | 'pending' | 'paid' | 'overdue' | 'refunded' | 'void';
 export type EventType = 'consultation' | 'hearing' | 'verification-call';
 export type DocReviewState = 'unreviewed' | 'reviewed' | 'needs-client-action';
 export type AdminRole = 'case-manager' | 'billing-admin' | 'ops-admin';
 export type UrgencyLevel = 'standard' | 'within-6hrs' | 'within-2hrs';
+export type MatterPackageProposalStatus =
+  | 'draft'
+  | 'published'
+  | 'selected'
+  | 'superseded'
+  | 'archived';
 
 export interface StageItem {
   completed: boolean;
@@ -105,11 +120,20 @@ export interface MatterPackage {
   createdAt: string;
   createdBy: string;
   description: string;
+  displayOrder: number;
+  features: string[];
   id: string;
+  isRecommended: boolean;
+  isSelected: boolean;
   matterId: string;
   name: string;
   price: number;
+  proposalStatus: MatterPackageProposalStatus;
+  proposalVersion: number;
+  publishedAt?: string;
+  selectedAt?: string;
   services: string[];
+  supersededAt?: string;
 }
 
 export interface InvoiceItem {

@@ -13,6 +13,7 @@ import { formatCurrency, formatDate, getServiceName } from '../../../utils/dashb
 import type {
   Invoice,
   Matter,
+  MatterPackage,
   MessageThread,
   PlatformDocument,
   PlatformEvent,
@@ -20,6 +21,8 @@ import type {
 
 interface MatterDetailSectionProps {
   activeTab: string;
+  isSelectingPackage: boolean;
+  matterPackages: MatterPackage[];
   selectedMatter: Matter;
   myInvoices: Invoice[];
   myDocs: PlatformDocument[];
@@ -30,11 +33,18 @@ interface MatterDetailSectionProps {
   onOpenBilling: () => void;
   onOpenInvoice: (invoiceId: string) => void;
   onOpenMessagesForMatter: (threadId: string | null) => void;
+  onSelectPackage: (
+    matterId: string,
+    matterPackageId: string,
+    proposalVersion: number
+  ) => Promise<void>;
   formatSize: (bytes: number) => string;
 }
 
 export const MatterDetailSection = ({
   activeTab,
+  isSelectingPackage,
+  matterPackages,
   selectedMatter,
   myInvoices,
   myDocs,
@@ -45,11 +55,31 @@ export const MatterDetailSection = ({
   onOpenBilling,
   onOpenInvoice,
   onOpenMessagesForMatter,
+  onSelectPackage,
   formatSize,
 }: MatterDetailSectionProps) => {
   const matterInvoices = myInvoices.filter((invoice) => invoice.matterId === selectedMatter.id);
   const matterDocuments = myDocs.filter((document) => document.matterId === selectedMatter.id);
   const matterEvents = myEvents.filter((event) => event.matterId === selectedMatter.id);
+  const liveProposalPackages = matterPackages.filter(
+    (entry) => entry.proposalStatus === 'published' || entry.proposalStatus === 'selected'
+  );
+  const activeProposalVersion = liveProposalPackages.reduce(
+    (highestVersion, entry) => Math.max(highestVersion, entry.proposalVersion),
+    0
+  );
+  const activeProposalPackages = liveProposalPackages
+    .filter((entry) => entry.proposalVersion === activeProposalVersion)
+    .sort((left, right) => left.displayOrder - right.displayOrder || left.name.localeCompare(right.name));
+  const selectedPackage =
+    matterPackages.find((entry) => entry.isSelected) ||
+    activeProposalPackages.find((entry) => entry.isSelected) ||
+    null;
+  const activeSelectionLocked = activeProposalPackages.some((entry) => entry.isSelected);
+  const hasReplacementProposal =
+    Boolean(selectedPackage) &&
+    activeProposalPackages.length > 0 &&
+    !activeProposalPackages.some((entry) => entry.id === selectedPackage?.id);
 
   return (
     <div className="space-y-6">
@@ -124,6 +154,107 @@ export const MatterDetailSection = ({
                 ))}
               </div>
             </div>
+
+            {(activeProposalPackages.length > 0 || selectedPackage) && (
+              <div>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm text-gray-500">Service Proposal</h3>
+                    <p className="mt-1 text-xs text-gray-400">
+                      Review the current package options for this matter. Selecting a package will
+                      generate the invoice automatically.
+                    </p>
+                  </div>
+                  {activeProposalVersion > 0 && (
+                    <span className="rounded-full bg-indigo-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-indigo-700">
+                      Proposal v{activeProposalVersion}
+                    </span>
+                  )}
+                </div>
+
+                {hasReplacementProposal && (
+                  <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    A newer proposal version is available. Selecting a new package will replace the
+                    previous unpaid invoice automatically.
+                  </div>
+                )}
+
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {activeProposalPackages.map((pkg) => {
+                    const isLocked = activeSelectionLocked && !pkg.isSelected;
+                    return (
+                      <div
+                        key={pkg.id}
+                        className={`relative flex h-full flex-col rounded-xl border bg-white p-5 shadow-sm ${
+                          pkg.isRecommended
+                            ? 'border-gray-900 ring-1 ring-gray-900/10'
+                            : 'border-gray-200'
+                        }`}
+                      >
+                        <div className="mb-3 flex items-start justify-between gap-3">
+                          <div>
+                            <h4 className="text-base font-semibold text-gray-900">{pkg.name}</h4>
+                            <p className="mt-1 text-sm text-gray-500">
+                              {pkg.description || 'Custom package tailored to this matter.'}
+                            </p>
+                          </div>
+                          <div className="flex flex-col items-end gap-2">
+                            {pkg.isRecommended && (
+                              <span className="rounded-full bg-gray-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-white">
+                                Recommended
+                              </span>
+                            )}
+                            {pkg.isSelected && (
+                              <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
+                                Selected
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="mb-5 text-2xl font-semibold text-gray-900">
+                          {formatCurrency(pkg.price)}
+                        </div>
+
+                        <div className="flex-1 space-y-2">
+                          {(pkg.features.length > 0 ? pkg.features : pkg.services.map(getServiceName)).map(
+                            (feature, index) => (
+                              <div key={`${pkg.id}-${index}`} className="flex items-start gap-2 text-sm text-gray-700">
+                                <div className="mt-1.5 h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                                <span>{feature}</span>
+                              </div>
+                            )
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={pkg.isSelected || isSelectingPackage || isLocked}
+                          onClick={() =>
+                            void onSelectPackage(selectedMatter.id, pkg.id, pkg.proposalVersion)
+                          }
+                          className={`mt-6 w-full rounded-lg py-2.5 text-sm font-medium transition ${
+                            pkg.isSelected
+                              ? 'cursor-default border border-emerald-200 bg-emerald-50 text-emerald-700'
+                              : isLocked
+                                ? 'cursor-not-allowed border border-gray-200 bg-gray-100 text-gray-400'
+                                : 'bg-gray-900 text-white hover:bg-gray-800'
+                          }`}
+                        >
+                          {pkg.isSelected
+                            ? 'Selected Package'
+                            : isSelectingPackage
+                              ? 'Confirming...'
+                              : isLocked
+                                ? 'Selection Locked'
+                                : 'Select Package'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             {selectedMatter.clientVisibleNotes.length > 0 && (
               <div>
@@ -216,6 +347,21 @@ export const MatterDetailSection = ({
                 </button>
               )}
             </div>
+
+            {selectedPackage && (
+              <div className="space-y-2 rounded-xl bg-gray-50 p-4">
+                <h3 className="text-xs uppercase tracking-wider text-gray-400">Selected Package</h3>
+                <p className="text-sm font-medium text-gray-900">{selectedPackage.name}</p>
+                <p className="text-xs text-gray-500">
+                  Proposal v{selectedPackage.proposalVersion} · {formatCurrency(selectedPackage.price)}
+                </p>
+                {selectedPackage.selectedAt && (
+                  <p className="text-xs text-gray-500">
+                    Selected on {formatDate(selectedPackage.selectedAt)}
+                  </p>
+                )}
+              </div>
+            )}
 
             {selectedMatter.assignedCounsel && (
               <div className="space-y-2 rounded-xl bg-gray-50 p-4">

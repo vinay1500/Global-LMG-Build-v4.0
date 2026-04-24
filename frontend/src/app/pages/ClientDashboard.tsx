@@ -78,14 +78,17 @@ export const ClientDashboard = () => {
     threads,
     messages,
     notifications,
+    packages,
     notificationPreferences,
     isLoading,
     isSendingMessage,
     isUploadingDocuments,
+    isSelectingPackage,
     errorMessage,
     reloadDashboard,
     submitRequest,
     sendMessage,
+    selectMatterPackage,
     uploadDocuments,
     markNotificationRead,
     dismissNotification,
@@ -237,6 +240,22 @@ export const ClientDashboard = () => {
     return matchSearch && matchFilter;
   });
 
+  useEffect(() => {
+    if (!selectedMatter) {
+      return;
+    }
+
+    const refreshedMatter = myMatters.find((matter) => matter.id === selectedMatter.id);
+    if (!refreshedMatter) {
+      setSelectedMatter(null);
+      return;
+    }
+
+    if (refreshedMatter !== selectedMatter) {
+      setSelectedMatter(refreshedMatter);
+    }
+  }, [myMatters, selectedMatter]);
+
   const handleSelectMatter = (matter: Matter) => {
     setSelectedMatter(matter);
   };
@@ -355,6 +374,19 @@ export const ClientDashboard = () => {
     handleOpenBilling();
   };
 
+  const handleSelectPackage = async (
+    matterId: string,
+    matterPackageId: string,
+    proposalVersion: number
+  ) => {
+    try {
+      const response = await selectMatterPackage(matterId, matterPackageId, proposalVersion);
+      handleOpenInvoice(response.generatedInvoiceId);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'We could not confirm that package.');
+    }
+  };
+
   const handleNotificationAction = async (
     notificationId: string,
     action: () => void | Promise<void>
@@ -428,6 +460,8 @@ export const ClientDashboard = () => {
       return (
         <MatterDetailSection
           activeTab={activeTab}
+          isSelectingPackage={isSelectingPackage}
+          matterPackages={packages.filter((entry) => entry.matterId === selectedMatter.id)}
           selectedMatter={selectedMatter}
           myInvoices={myInvoices}
           myDocs={myDocs}
@@ -438,6 +472,7 @@ export const ClientDashboard = () => {
           onOpenBilling={handleOpenBilling}
           onOpenInvoice={handleOpenInvoice}
           onOpenMessagesForMatter={handleOpenMessages}
+          onSelectPackage={handleSelectPackage}
           formatSize={formatSize}
         />
       );

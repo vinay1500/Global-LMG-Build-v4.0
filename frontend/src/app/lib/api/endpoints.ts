@@ -29,6 +29,8 @@ export const API_ENDPOINTS = {
     snapshot: () => joinApiPath('/v1/dashboard'),
     requests: () => joinApiPath('/v1/dashboard/requests'),
     messages: () => joinApiPath('/v1/dashboard/messages'),
+    matterPackageSelection: (matterId: string) =>
+      joinApiPath(`/v1/dashboard/matters/${matterId}/package-selection`),
   },
   me: {
     preferences: () => joinApiPath('/v1/me/preferences'),

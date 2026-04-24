@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Plus, X, Check, Save, FileText, Eye } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Plus, X, Check, Save, Eye } from 'lucide-react';
 import { formatCurrency } from '../data/seedData';
 
 export interface PackageTier {
@@ -15,18 +15,57 @@ interface PackageBuilderProps {
   matterId: string;
   onSave: (packages: PackageTier[]) => void;
   existingPackages?: PackageTier[];
+  isSaving?: boolean;
+  saveLabel?: string;
 }
 
-export const PackageBuilder: React.FC<PackageBuilderProps> = ({ matterId, onSave, existingPackages }) => {
+const DEFAULT_PACKAGES: PackageTier[] = [
+  {
+    id: 'tier-1',
+    name: 'Basic Consultation',
+    price: 15000,
+    points: ['Initial Document Review', '1-Hour Strategy Session', 'Written Case Summary'],
+    description: 'Standard representation for initial hearings.',
+    isRecommended: false,
+  },
+  {
+    id: 'tier-2',
+    name: 'Standard Representation',
+    price: 35000,
+    points: ['Everything in Basic', 'Legal Notice Drafting', 'Pre-litigation Mediation', 'Up to 2 Hearings'],
+    description: 'End-to-end management of the dispute.',
+    isRecommended: true,
+  },
+  {
+    id: 'tier-3',
+    name: 'Comprehensive Suite',
+    price: 75000,
+    points: ['Everything in Standard', 'Unlimited Hearings', 'Dedicated Case Manager', 'Priority Support'],
+    description: 'Premium end-to-end representation with high priority.',
+    isRecommended: false,
+  },
+];
+
+export const PackageBuilder: React.FC<PackageBuilderProps> = ({
+  matterId,
+  onSave,
+  existingPackages,
+  isSaving = false,
+  saveLabel = 'Save Draft',
+}) => {
   const [packages, setPackages] = useState<PackageTier[]>(
-    existingPackages?.length ? existingPackages : [
-      { id: 'tier-1', name: 'Basic Consultation', price: 15000, points: ['Initial Document Review', '1-Hour Strategy Session', 'Written Case Summary'], description: 'Standard representation for initial hearings.', isRecommended: false },
-      { id: 'tier-2', name: 'Standard Representation', price: 35000, points: ['Everything in Basic', 'Legal Notice Drafting', 'Pre-litigation Mediation', 'Up to 2 Hearings'], description: 'End-to-end management of the dispute.', isRecommended: true },
-      { id: 'tier-3', name: 'Comprehensive Suite', price: 75000, points: ['Everything in Standard', 'Unlimited Hearings', 'Dedicated Case Manager', 'Priority Support'], description: 'Premium end-to-end representation with high priority.', isRecommended: false }
-    ]
+    existingPackages?.length ? existingPackages : DEFAULT_PACKAGES
   );
-  
   const [previewMode, setPreviewMode] = useState(false);
+
+  useEffect(() => {
+    if (existingPackages?.length) {
+      setPackages(existingPackages);
+      return;
+    }
+
+    setPackages(DEFAULT_PACKAGES);
+  }, [existingPackages, matterId]);
 
   const addPackage = () => {
     setPackages([...packages, {
@@ -42,7 +81,15 @@ export const PackageBuilder: React.FC<PackageBuilderProps> = ({ matterId, onSave
   };
 
   const updatePackage = (id: string, field: keyof PackageTier, value: any) => {
-    setPackages(packages.map(p => p.id === id ? { ...p, [field]: value } : p));
+    setPackages(
+      packages.map((pkg) =>
+        pkg.id === id
+          ? { ...pkg, [field]: value }
+          : field === 'isRecommended' && value
+            ? { ...pkg, isRecommended: false }
+            : pkg
+      )
+    );
   };
 
   const updatePoint = (pkgId: string, pointIndex: number, value: string) => {
@@ -96,11 +143,12 @@ export const PackageBuilder: React.FC<PackageBuilderProps> = ({ matterId, onSave
           >
             <Eye className="w-4 h-4" /> {previewMode ? 'Exit Preview' : 'Preview Client View'}
           </button>
-          <button 
+          <button
             onClick={() => onSave(packages)}
-            className="flex items-center gap-1.5 px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition font-bold"
+            className="flex items-center gap-1.5 px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition font-bold disabled:opacity-60"
+            disabled={isSaving}
           >
-            <Save className="w-4 h-4" /> Publish to Client
+            <Save className="w-4 h-4" /> {isSaving ? 'Saving...' : saveLabel}
           </button>
         </div>
       </div>
