@@ -36,7 +36,7 @@ Run these before browser testing:
 
 - Symptom: `backend` exits before binding `3001`
 - Current observed failure during Phase 10 startup:
-  - `getaddrinfo ENOTFOUND mysql-272dc717-apachehelicopter.d.aivencloud.com`
+  - `getaddrinfo ENOTFOUND <configured-mysql-host>`
 - Impact:
   - Client login
   - client dashboard

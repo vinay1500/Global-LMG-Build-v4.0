@@ -12,3 +12,4 @@ yarn-debug.log*
 yarn-error.log*
 app (4)
 admin_panel (8)
+storage/glmg-uploads/

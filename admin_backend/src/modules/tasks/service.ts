@@ -90,7 +90,11 @@ const buildInvoiceTasks = (invoices: InvoiceItem[], today: Date): WorkspaceTask[
       };
     });
 
-const buildDocumentTasks = (documents: DocumentItem[], mattersById: Map<string, MatterItem>, today: Date) =>
+const buildDocumentTasks = (
+  documents: DocumentItem[],
+  mattersById: Map<string, MatterItem>,
+  today: Date
+): WorkspaceTask[] =>
   documents
     .filter((document) => document.reviewState !== 'reviewed')
     .map((document) => {
@@ -115,7 +119,7 @@ const buildDocumentTasks = (documents: DocumentItem[], mattersById: Map<string, 
       };
     });
 
-const buildThreadTasks = (threads: ThreadItem[], today: Date) =>
+const buildThreadTasks = (threads: ThreadItem[], today: Date): WorkspaceTask[] =>
   threads
     .filter((thread) => thread.unreadCount > 0)
     .map((thread) => {

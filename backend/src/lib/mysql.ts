@@ -1,7 +1,22 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import mysql from 'mysql2/promise';
 import { env } from '../config/env.js';
 
 let mysqlPool: mysql.Pool | undefined;
+
+const getMysqlSslConfig = () => {
+  if (env.MYSQL_SSL_MODE !== 'REQUIRED') {
+    return undefined;
+  }
+
+  return {
+    ca: env.MYSQL_SSL_CA
+      ? readFileSync(path.resolve(process.cwd(), env.MYSQL_SSL_CA), 'utf8')
+      : undefined,
+    rejectUnauthorized: true,
+  };
+};
 
 export const getMysqlPool = () => {
   if (!mysqlPool) {
@@ -12,6 +27,7 @@ export const getMysqlPool = () => {
       host: env.MYSQL_HOST,
       password: env.MYSQL_PASSWORD,
       port: env.MYSQL_PORT,
+      ssl: getMysqlSslConfig(),
       timezone: 'Z',
       user: env.MYSQL_USER,
       waitForConnections: true,

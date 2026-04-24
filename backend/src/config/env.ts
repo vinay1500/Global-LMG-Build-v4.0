@@ -7,6 +7,10 @@ if (!rawEnv.SMS_PROVIDER_MODE && rawEnv.PHONE_PROVIDER_MODE) {
   rawEnv.SMS_PROVIDER_MODE = rawEnv.PHONE_PROVIDER_MODE;
 }
 
+if (!rawEnv.MYSQL_SSL_CA && rawEnv.MYSQL_SSL_CA_PATH) {
+  rawEnv.MYSQL_SSL_CA = rawEnv.MYSQL_SSL_CA_PATH;
+}
+
 const optionalString = z.preprocess((value) => {
   if (typeof value !== 'string') {
     return value;
@@ -64,6 +68,14 @@ const googleAuthMode = z.preprocess((value) => {
   return normalized;
 }, z.enum(['preview', 'disabled', 'google-jwt']));
 
+const mysqlSslMode = z.preprocess((value) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  return value.trim().toUpperCase();
+}, z.enum(['DISABLED', 'REQUIRED']));
+
 const envSchema = z.object({
   APP_ENV: z.enum(['development', 'staging', 'production']).default('development'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
@@ -108,9 +120,11 @@ const envSchema = z.object({
   MYSQL_PORT: z.coerce.number().int().positive().default(3306),
   MYSQL_DATABASE: optionalString,
   MYSQL_PASSWORD: optionalString,
+  MYSQL_SSL_CA: optionalString,
+  MYSQL_SSL_MODE: mysqlSslMode.default('DISABLED'),
   MYSQL_USER: optionalString,
   DOCUMENT_STORAGE_DRIVER: z.enum(['local', 'disabled']).default('local'),
-  DOCUMENT_STORAGE_ROOT: z.string().min(1).default('var/uploads'),
+  DOCUMENT_STORAGE_ROOT: z.string().min(1).default('../storage/glmg-uploads'),
   DOCUMENT_UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(25 * 1024 * 1024),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
 });

@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import mysql, {
   type Pool,
   type PoolConnection,
@@ -9,6 +11,19 @@ import { env } from '../config/env.js';
 let pool: Pool | null = null;
 
 export type QueryExecutor = Pick<Pool | PoolConnection, 'execute' | 'query'>;
+
+const getMysqlSslConfig = () => {
+  if (env.MYSQL_SSL_MODE !== 'REQUIRED') {
+    return undefined;
+  }
+
+  return {
+    ca: env.MYSQL_SSL_CA
+      ? readFileSync(path.resolve(process.cwd(), env.MYSQL_SSL_CA), 'utf8')
+      : undefined,
+    rejectUnauthorized: true,
+  };
+};
 
 export const getMysqlPool = () => {
   if (!env.MYSQL_HOST || !env.MYSQL_DATABASE || !env.MYSQL_USER || !env.MYSQL_PASSWORD) {
@@ -25,6 +40,7 @@ export const getMysqlPool = () => {
       namedPlaceholders: false,
       password: env.MYSQL_PASSWORD,
       port: env.MYSQL_PORT,
+      ssl: getMysqlSslConfig(),
       user: env.MYSQL_USER,
       waitForConnections: true,
     });
