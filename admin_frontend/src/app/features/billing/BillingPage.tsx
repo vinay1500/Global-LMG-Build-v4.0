@@ -43,6 +43,11 @@ export const BillingPage = () => {
         await adminApi.createRefund(payload);
         await refresh();
       }}
+      onRecordPayment={async (payload) => {
+        const result = await adminApi.recordPayment(payload);
+        await refresh();
+        return result;
+      }}
       onSendInvoice={async (invoiceId) => {
         const result = await adminApi.sendInvoice(invoiceId);
         await refresh();

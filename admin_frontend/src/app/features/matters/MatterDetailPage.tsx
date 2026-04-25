@@ -117,6 +117,8 @@ export const MatterDetailPage = () => {
   return (
       <MatterDetailAdmin
       assignmentOptions={workspaceSnapshot?.assignmentOptions}
+      buildDocumentDownloadUrl={adminApi.buildDocumentDownloadUrl}
+      buildDocumentPreviewUrl={adminApi.buildDocumentPreviewUrl}
       isPackageLoading={isPackageLoading}
       matter={matter}
       myDocs={workspaceSnapshot?.documents || []}
@@ -178,8 +180,21 @@ export const MatterDetailPage = () => {
         setPackageWorkspaceState(nextPackageWorkspace);
       }}
       onUpdateFee={handleUpdateFee}
+      onUpdateDocumentControls={async (documentId, payload) => {
+        await adminApi.updateDocumentControls(documentId, payload);
+        const nextWorkspace = await refresh();
+        setWorkspace(nextWorkspace);
+      }}
       onUpdateStage={async (payload) => {
         await adminApi.updateMatterStage(matter.id, payload);
+        const nextWorkspace = await refresh();
+        setWorkspace(nextWorkspace);
+      }}
+      onUploadDocument={async (payload) => {
+        await adminApi.uploadDocument({
+          ...payload,
+          matterId: matter.id,
+        });
         const nextWorkspace = await refresh();
         setWorkspace(nextWorkspace);
       }}

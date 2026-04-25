@@ -65,6 +65,8 @@ export const dashboardApi = {
     ),
   sendMessage: (payload: DashboardMessageSubmissionPayload) =>
     postJson<DashboardSnapshotResponse>(API_ENDPOINTS.dashboard.messages(), payload),
+  markThreadRead: (threadId: string) =>
+    postJson<DashboardSnapshotResponse>(API_ENDPOINTS.dashboard.messageRead(threadId), {}),
   selectMatterPackage: (matterId: string, payload: { matterPackageId: string; proposalVersion: number }) =>
     postJson<DashboardPackageSelectionResponse>(
       API_ENDPOINTS.dashboard.matterPackageSelection(matterId),

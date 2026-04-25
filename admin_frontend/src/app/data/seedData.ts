@@ -172,6 +172,7 @@ export interface PlatformEvent {
   id: string;
   title: string;
   type: EventType;
+  calendarSyncStatus?: 'disabled' | 'failed' | 'local' | 'synced';
   clientId: string;
   clientName: string;
   matterId: string;
@@ -185,6 +186,8 @@ export interface PlatformEvent {
   visibleToClient: boolean;
   actionCTA: string;
   notes: string;
+  reminderCount?: number;
+  reminderStatus?: 'cancelled' | 'none' | 'scheduled';
   status: 'upcoming' | 'completed' | 'cancelled' | 'rescheduled';
   packages?: PackageTier[];
 }
@@ -222,6 +225,11 @@ export interface MessageThread {
   status: 'active' | 'waiting' | 'resolved';
 }
 
+export interface MessageAttachment {
+  documentId: string;
+  name: string;
+}
+
 export interface ChatMessage {
   id: string;
   threadId: string;
@@ -231,7 +239,7 @@ export interface ChatMessage {
   content: string;
   timestamp: string;
   read: boolean;
-  attachments?: string[];
+  attachments?: MessageAttachment[];
 }
 
 export interface Advocate {

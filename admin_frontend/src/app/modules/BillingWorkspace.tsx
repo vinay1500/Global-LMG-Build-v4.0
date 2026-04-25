@@ -5,11 +5,12 @@ import {
   Clock, AlertCircle, RefreshCcw, MoreVertical, 
   ArrowUpRight, FileCheck, Landmark, Copy, Printer
 } from 'lucide-react';
-import { INVOICES, MATTERS, PAYMENTS, formatCurrency, formatDate, Invoice, Matter, Payment } from '../data/seedData';
+import { formatCurrency, formatDate, Invoice, Matter, Payment } from '../data/seedData';
 import { StatusBadge } from '../components/dashboard/StatusBadge';
-import type { RefundRecord } from '../lib/api/contracts';
+import type { RecordPaymentResponse, RefundRecord } from '../lib/api/contracts';
 
 type FilterStatus = 'all' | 'paid' | 'pending' | 'overdue' | 'draft';
+type PaymentMethod = Payment['method'];
 
 export const BillingWorkspace: React.FC<{
   invoices?: Invoice[];
@@ -26,18 +27,27 @@ export const BillingWorkspace: React.FC<{
     paymentId: string;
     reasonText: string;
   }) => Promise<void>;
+  onRecordPayment?: (payload: {
+    amount: number;
+    invoiceId: string;
+    notes?: string;
+    paymentDate: string;
+    paymentMethod: PaymentMethod;
+    referenceNumber?: string;
+  }) => Promise<RecordPaymentResponse>;
   onSendInvoice?: (
     invoiceId: string
   ) => Promise<{ invoiceId: string; status: 'reminder_sent' | 'sent' }>;
   payments?: Payment[];
   refunds?: RefundRecord[];
 }> = ({
-  invoices = INVOICES,
-  matters = MATTERS,
+  invoices = [],
+  matters = [],
   onCreateInvoice,
   onCreateRefund,
+  onRecordPayment,
   onSendInvoice,
-  payments = PAYMENTS,
+  payments = [],
   refunds = [],
 }) => {
   const [showCreateInvoiceForm, setShowCreateInvoiceForm] = useState(false);
@@ -57,6 +67,14 @@ export const BillingWorkspace: React.FC<{
   const [refundReason, setRefundReason] = useState('');
   const [showRefundForm, setShowRefundForm] = useState(false);
   const [isSubmittingRefund, setIsSubmittingRefund] = useState(false);
+  const [showPaymentForm, setShowPaymentForm] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('bank-transfer');
+  const [paymentReference, setPaymentReference] = useState('');
+  const [paymentNotes, setPaymentNotes] = useState('');
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [isRecordingPayment, setIsRecordingPayment] = useState(false);
 
   useEffect(() => {
     if (!invoices.some((invoice) => invoice.id === selectedInvoiceId)) {
@@ -68,6 +86,13 @@ export const BillingWorkspace: React.FC<{
     setShowRefundForm(false);
     setRefundAmount('');
     setRefundReason('');
+    setShowPaymentForm(false);
+    setPaymentAmount('');
+    setPaymentDate(new Date().toISOString().slice(0, 10));
+    setPaymentMethod('bank-transfer');
+    setPaymentReference('');
+    setPaymentNotes('');
+    setPaymentError(null);
   }, [selectedInvoiceId]);
 
   useEffect(() => {
@@ -101,6 +126,37 @@ export const BillingWorkspace: React.FC<{
       .filter((refund) => refund.invoiceId === activeInvoice.id)
       .sort((a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime());
   }, [activeInvoice, refunds]);
+
+  const activePaidAmount = useMemo(
+    () =>
+      activePayments
+        .filter((payment) => payment.status === 'success')
+        .reduce((sum, payment) => sum + payment.amount, 0),
+    [activePayments]
+  );
+
+  const activeRefundAmount = useMemo(
+    () =>
+      activeRefunds
+        .filter((refund) => refund.status === 'completed')
+        .reduce((sum, refund) => sum + refund.amount, 0),
+    [activeRefunds]
+  );
+
+  const activeAmountDue = useMemo(() => {
+    if (!activeInvoice) {
+      return 0;
+    }
+
+    return Math.max(activeInvoice.totalAmount - activePaidAmount - activeRefundAmount, 0);
+  }, [activeInvoice, activePaidAmount, activeRefundAmount]);
+
+  const canRecordPayment = Boolean(
+    activeInvoice &&
+      onRecordPayment &&
+      activeAmountDue > 0 &&
+      !['draft', 'paid', 'refunded', 'void'].includes(activeInvoice.status)
+  );
 
   const filteredInvoices = useMemo(() => {
     return invoices.filter(inv => {
@@ -194,6 +250,59 @@ export const BillingWorkspace: React.FC<{
       setActionError(error instanceof Error ? error.message : 'Unable to send this invoice right now.');
     } finally {
       setIsSendingInvoice(false);
+    }
+  };
+
+  const handleOpenPaymentForm = () => {
+    if (!canRecordPayment) {
+      return;
+    }
+
+    setPaymentError(null);
+    setPaymentAmount(activeAmountDue ? activeAmountDue.toFixed(2) : '');
+    setShowPaymentForm((current) => !current);
+  };
+
+  const handleRecordPayment = async () => {
+    if (!activeInvoice || !onRecordPayment || !canRecordPayment) {
+      return;
+    }
+
+    const parsedAmount = Number(paymentAmount);
+
+    if (!paymentAmount || Number.isNaN(parsedAmount) || parsedAmount <= 0) {
+      setPaymentError('Enter a payment amount greater than zero.');
+      return;
+    }
+
+    if (parsedAmount > activeAmountDue) {
+      setPaymentError(`Payment cannot exceed the remaining balance of ${formatCurrency(activeAmountDue)}.`);
+      return;
+    }
+
+    setPaymentError(null);
+    setActionMessage(null);
+    setActionError(null);
+    setIsRecordingPayment(true);
+
+    try {
+      await onRecordPayment({
+        amount: parsedAmount,
+        invoiceId: activeInvoice.id,
+        notes: paymentNotes.trim() || undefined,
+        paymentDate,
+        paymentMethod,
+        referenceNumber: paymentReference.trim() || undefined,
+      });
+      setShowPaymentForm(false);
+      setPaymentAmount('');
+      setPaymentReference('');
+      setPaymentNotes('');
+      setActionMessage('Manual payment recorded and allocated to this invoice.');
+    } catch (error) {
+      setPaymentError(error instanceof Error ? error.message : 'Unable to record this payment.');
+    } finally {
+      setIsRecordingPayment(false);
     }
   };
 
@@ -705,13 +814,18 @@ export const BillingWorkspace: React.FC<{
                     <div className="flex justify-between items-end mb-3">
                       <div>
                         <p className="text-xs text-blue-600 font-medium mb-1">Amount Due</p>
-                        <p className="text-lg font-bold text-blue-900">{formatCurrency(activeInvoice.totalAmount)}</p>
+                        <p className="text-lg font-bold text-blue-900">{formatCurrency(activeAmountDue)}</p>
                       </div>
                       <AlertCircle className={`w-5 h-5 ${activeInvoice.status === 'overdue' ? 'text-red-500' : 'text-blue-400'}`} />
                     </div>
                     
                     <div className="space-y-2 mt-4">
-                      <button className="w-full py-2 bg-blue-600 text-white text-sm font-medium rounded-lg transition flex items-center justify-center gap-2 shadow-sm cursor-not-allowed opacity-60">
+                      <button
+                        className="w-full py-2 bg-blue-600 text-white text-sm font-medium rounded-lg transition flex items-center justify-center gap-2 shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={!canRecordPayment || isRecordingPayment}
+                        onClick={handleOpenPaymentForm}
+                        type="button"
+                      >
                         <DollarSign className="w-4 h-4" /> Record Payment
                       </button>
                       <button
@@ -723,6 +837,93 @@ export const BillingWorkspace: React.FC<{
                         <Mail className="w-4 h-4" /> {isSendingInvoice ? 'Sending...' : sendInvoiceLabel}
                       </button>
                     </div>
+
+                    {showPaymentForm ? (
+                      <div className="mt-4 space-y-3 rounded-lg border border-blue-100 bg-white p-3">
+                        <div className="grid grid-cols-2 gap-2">
+                          <label className="space-y-1">
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+                              Amount
+                            </span>
+                            <input
+                              className="w-full rounded border border-gray-200 px-3 py-2 text-xs outline-none"
+                              max={activeAmountDue}
+                              min="0.01"
+                              onChange={(event) => setPaymentAmount(event.target.value)}
+                              step="0.01"
+                              type="number"
+                              value={paymentAmount}
+                            />
+                          </label>
+                          <label className="space-y-1">
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+                              Payment Date
+                            </span>
+                            <input
+                              className="w-full rounded border border-gray-200 px-3 py-2 text-xs outline-none"
+                              onChange={(event) => setPaymentDate(event.target.value)}
+                              type="date"
+                              value={paymentDate}
+                            />
+                          </label>
+                        </div>
+                        <label className="space-y-1 block">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+                            Method
+                          </span>
+                          <select
+                            className="w-full rounded border border-gray-200 px-3 py-2 text-xs outline-none bg-white"
+                            onChange={(event) => setPaymentMethod(event.target.value as PaymentMethod)}
+                            value={paymentMethod}
+                          >
+                            <option value="bank-transfer">Bank transfer</option>
+                            <option value="online">Online/manual processor</option>
+                            <option value="cash">Cash</option>
+                            <option value="cheque">Cheque</option>
+                          </select>
+                        </label>
+                        <input
+                          className="w-full rounded border border-gray-200 px-3 py-2 text-xs outline-none"
+                          onChange={(event) => setPaymentReference(event.target.value)}
+                          placeholder="Reference or transaction ID"
+                          type="text"
+                          value={paymentReference}
+                        />
+                        <textarea
+                          className="w-full rounded border border-gray-200 px-3 py-2 text-xs outline-none"
+                          onChange={(event) => setPaymentNotes(event.target.value)}
+                          placeholder="Internal note"
+                          rows={3}
+                          value={paymentNotes}
+                        />
+                        {paymentError ? <p className="text-xs text-red-600">{paymentError}</p> : null}
+                        <div className="flex gap-2">
+                          <button
+                            className="px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 rounded border border-gray-200"
+                            onClick={() => {
+                              setShowPaymentForm(false);
+                              setPaymentError(null);
+                            }}
+                            type="button"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            className="px-3 py-1.5 text-xs bg-blue-700 text-white rounded disabled:opacity-50"
+                            disabled={
+                              isRecordingPayment ||
+                              !paymentAmount ||
+                              !paymentDate ||
+                              Number(paymentAmount) <= 0
+                            }
+                            onClick={() => void handleRecordPayment()}
+                            type="button"
+                          >
+                            {isRecordingPayment ? 'Recording...' : 'Save Payment'}
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </div>

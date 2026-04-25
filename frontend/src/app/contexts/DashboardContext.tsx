@@ -217,6 +217,26 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
     }
   };
 
+  const markThreadRead = useCallback(async (threadId: string) => {
+    try {
+      const [snapshot, nextNotifications] = await Promise.all([
+        dashboardApi.markThreadRead(threadId),
+        dashboardApi.getNotifications(),
+      ]);
+      setDashboardState(snapshot);
+      setNotifications(nextNotifications);
+    } catch (error) {
+      const authError = await resolveAuthExpiry(error);
+
+      if (authError) {
+        setErrorMessage(authError);
+        throw new Error(authError);
+      }
+
+      throw error;
+    }
+  }, [resolveAuthExpiry]);
+
   const uploadDocuments = async (files: File[]) => {
     const nextFiles = files.filter((file) => file.size > 0);
 
@@ -384,6 +404,7 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
         reloadDashboard,
         submitRequest,
         sendMessage,
+        markThreadRead,
         selectMatterPackage,
         uploadDocuments,
         markNotificationRead,

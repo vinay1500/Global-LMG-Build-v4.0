@@ -33,6 +33,7 @@ const mapEntityType = (entityTableName: string) => {
     case 'documents':
       return 'document';
     case 'events':
+    case 'event_reminders':
       return 'event';
     case 'client_accounts':
     case 'users':

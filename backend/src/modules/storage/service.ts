@@ -29,10 +29,44 @@ interface ClientDocumentDownloadRow extends RowDataPacket {
   mime_type: string;
   original_file_name: string;
   storage_path: string;
+  virus_scan_status_code: string;
 }
 
 const CHECKSUM_PATTERN = /^[a-f0-9]{64}$/i;
 const MIME_TYPE_PATTERN = /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/;
+const CLIENT_VISIBLE_SCOPES = ['client', 'client-portal', 'shared'];
+const SAFE_PREVIEW_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/gif',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'text/csv',
+  'text/plain',
+]);
+const UPLOAD_ALLOWED_MIME_TYPES = new Set([
+  ...SAFE_PREVIEW_MIME_TYPES,
+  'application/msword',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.document',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/zip',
+]);
+const UPLOAD_ALLOWED_EXTENSIONS = new Set([
+  'csv',
+  'doc',
+  'docx',
+  'gif',
+  'jpg',
+  'jpeg',
+  'pdf',
+  'png',
+  'txt',
+  'webp',
+  'xls',
+  'xlsx',
+  'zip',
+]);
 
 const isMysqlConfigured = Boolean(
   env.MYSQL_HOST && env.MYSQL_DATABASE && env.MYSQL_USER && env.MYSQL_PASSWORD
@@ -138,6 +172,8 @@ const validateIntentInput = (input: CreateStoredUploadInput) => {
   if (!MIME_TYPE_PATTERN.test(normalizeMimeType(input.mimeType))) {
     throw badRequest('upload_mime_invalid', 'mimeType must be a valid MIME type.');
   }
+
+  assertSupportedUploadType(input);
 };
 
 const buildRecord = (id: string, input: CreateStoredUploadInput): StoredUploadRecord => ({
@@ -163,6 +199,66 @@ const toFileExtension = (fileName: string) => {
   return extension || 'bin';
 };
 
+const assertSupportedUploadType = (
+  input: Pick<CreateStoredUploadInput, 'mimeType' | 'originalName'>
+) => {
+  const mimeType = normalizeMimeType(input.mimeType);
+  const extension = toFileExtension(input.originalName);
+
+  if (!UPLOAD_ALLOWED_MIME_TYPES.has(mimeType) || !UPLOAD_ALLOWED_EXTENSIONS.has(extension)) {
+    throw badRequest(
+      'upload_type_not_allowed',
+      'This file type is not supported for secure document upload.'
+    );
+  }
+};
+
+const isSafePreviewMimeType = (mimeType: string) =>
+  SAFE_PREVIEW_MIME_TYPES.has(normalizeMimeType(mimeType));
+
+const insertDocumentAuditEvent = async (
+  connection: PoolConnection,
+  input: {
+    actionCode: string;
+    actionLabel: string;
+    actorRoleCode: string;
+    actorUserId: number;
+    entityPk: number;
+    sourceModule: string;
+    summaryNewValue?: string | null;
+  }
+) => {
+  await connection.execute(
+    `INSERT INTO audit_events (
+       public_id,
+       actor_user_id,
+       actor_role_code_snapshot,
+       entity_table_name,
+       entity_pk,
+       action_code,
+       action_label,
+       source_module,
+       request_correlation_id,
+       ip_address,
+       user_agent,
+       summary_old_value,
+       summary_new_value,
+       occurred_at
+     ) VALUES (?, ?, ?, 'documents', ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)`,
+    [
+      createPublicId(),
+      input.actorUserId,
+      input.actorRoleCode,
+      input.entityPk,
+      input.actionCode,
+      input.actionLabel,
+      input.sourceModule,
+      input.summaryNewValue || null,
+      toMysqlDateTime(nowUtc()),
+    ]
+  );
+};
+
 const resolveOwnerContext = async (connection: PoolConnection, ownerPublicId: string) =>
   selectOne<RowDataPacket>(
     connection,
@@ -186,6 +282,7 @@ const linkStoredDocument = async (
   connection: PoolConnection,
   input: {
     documentId: number;
+    ownerClientAccountId: number;
     relatedEntityId?: string;
     relatedEntityType?: string;
   }
@@ -199,8 +296,8 @@ const linkStoredDocument = async (
   if (input.relatedEntityType === 'request') {
     const requestRow = await selectOne<RowDataPacket>(
       connection,
-      'SELECT id FROM service_requests WHERE public_id = ? LIMIT 1',
-      [input.relatedEntityId]
+      'SELECT id FROM service_requests WHERE public_id = ? AND client_account_id = ? LIMIT 1',
+      [input.relatedEntityId, input.ownerClientAccountId]
     );
 
     if (requestRow?.id) {
@@ -210,16 +307,17 @@ const linkStoredDocument = async (
         ) VALUES (?, ?, ?, ?)`,
         [Number(requestRow.id), input.documentId, 'attachment', createdAt]
       );
+      return;
     }
 
-    return;
+    throw forbidden('upload_relation_forbidden', 'The selected request is not available for this upload.');
   }
 
   if (input.relatedEntityType === 'matter') {
     const matterRow = await selectOne<RowDataPacket>(
       connection,
-      'SELECT id FROM matters WHERE public_id = ? LIMIT 1',
-      [input.relatedEntityId]
+      'SELECT id FROM matters WHERE public_id = ? AND client_account_id = ? AND archived_at IS NULL LIMIT 1',
+      [input.relatedEntityId, input.ownerClientAccountId]
     );
 
     if (matterRow?.id) {
@@ -229,16 +327,17 @@ const linkStoredDocument = async (
         ) VALUES (?, ?, ?, ?)`,
         [Number(matterRow.id), input.documentId, 'attachment', createdAt]
       );
+      return;
     }
 
-    return;
+    throw forbidden('upload_relation_forbidden', 'The selected matter is not available for this upload.');
   }
 
   if (input.relatedEntityType === 'invoice') {
     const invoiceRow = await selectOne<RowDataPacket>(
       connection,
-      'SELECT id FROM invoices WHERE public_id = ? LIMIT 1',
-      [input.relatedEntityId]
+      'SELECT id FROM invoices WHERE public_id = ? AND client_account_id = ? AND archived_at IS NULL LIMIT 1',
+      [input.relatedEntityId, input.ownerClientAccountId]
     );
 
     if (invoiceRow?.id) {
@@ -248,7 +347,10 @@ const linkStoredDocument = async (
         ) VALUES (?, ?, ?, ?)`,
         [Number(invoiceRow.id), input.documentId, 'attachment', createdAt]
       );
+      return;
     }
+
+    throw forbidden('upload_relation_forbidden', 'The selected invoice is not available for this upload.');
   }
 };
 
@@ -377,6 +479,7 @@ export const documentStorageService = {
 
       await linkStoredDocument(connection, {
         documentId,
+        ownerClientAccountId: Number(ownerContext.client_account_id),
         relatedEntityId: record.relatedEntityId,
         relatedEntityType: record.relatedEntityType,
       });
@@ -387,6 +490,16 @@ export const documentStorageService = {
          WHERE public_id = ?`,
         ['stored', documentId, documentVersionId, toMysqlDateTime(finalizedAt), record.id]
       );
+
+      await insertDocumentAuditEvent(connection, {
+        actionCode: 'document.uploaded',
+        actionLabel: 'Document uploaded',
+        actorRoleCode: 'client',
+        actorUserId: Number(ownerContext.user_id),
+        entityPk: documentId,
+        sourceModule: record.sourceModule,
+        summaryNewValue: `${documentNumber}: ${record.originalName}`,
+      });
     });
 
     const updatedRecord: StoredUploadRecord = {
@@ -430,14 +543,15 @@ export const documentStorageService = {
     };
   },
 
-  async getClientDocumentDownload(
+  async getClientDocumentFile(
     userPublicId: string,
     clientAccountId: number,
     documentPublicId: string,
     options: {
       ipAddress?: string | null;
+      mode: 'download' | 'preview';
       userAgent?: string | null;
-    } = {}
+    }
   ) {
     await requireUploadEnabled();
 
@@ -459,7 +573,8 @@ export const documentStorageService = {
            dv.id AS document_version_id,
            dv.storage_path,
            dv.mime_type,
-           dv.original_file_name
+           dv.original_file_name,
+           dv.virus_scan_status_code
          FROM documents d
          INNER JOIN document_versions dv
            ON dv.document_id = d.id
@@ -467,34 +582,87 @@ export const documentStorageService = {
          WHERE d.public_id = ?
            AND d.owner_client_account_id = ?
            AND d.archived_at IS NULL
-           AND d.visibility_scope_code IN ('client', 'shared')
+           AND d.visibility_scope_code IN (?, ?, ?)
          LIMIT 1`,
-        [documentPublicId, clientAccountId]
+        [documentPublicId, clientAccountId, ...CLIENT_VISIBLE_SCOPES]
       );
 
       if (!documentRow?.document_id) {
         throw notFound('document_not_found', 'Document could not be found.');
       }
 
-      await connection.execute(
-        `INSERT INTO document_download_logs (
-          document_id, document_version_id, downloaded_by_user_id, ip_address, user_agent, downloaded_at
-        ) VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          Number(documentRow.document_id),
-          Number(documentRow.document_version_id),
-          Number(userRow.id),
-          options.ipAddress || null,
-          options.userAgent || null,
-          toMysqlDateTime(nowUtc()),
-        ]
-      );
+      if (['blocked', 'infected', 'quarantined'].includes(documentRow.virus_scan_status_code)) {
+        throw forbidden('document_not_available', 'This document is not available for download.');
+      }
+
+      if (options.mode === 'preview' && !isSafePreviewMimeType(documentRow.mime_type)) {
+        throw badRequest(
+          'document_preview_unavailable',
+          'Preview is not available for this file type. Please download the file instead.'
+        );
+      }
+
+      if (options.mode === 'download') {
+        await connection.execute(
+          `INSERT INTO document_download_logs (
+            document_id, document_version_id, downloaded_by_user_id, ip_address, user_agent, downloaded_at
+          ) VALUES (?, ?, ?, ?, ?, ?)`,
+          [
+            Number(documentRow.document_id),
+            Number(documentRow.document_version_id),
+            Number(userRow.id),
+            options.ipAddress || null,
+            options.userAgent || null,
+            toMysqlDateTime(nowUtc()),
+          ]
+        );
+      }
+
+      await insertDocumentAuditEvent(connection, {
+        actionCode: options.mode === 'preview' ? 'document.previewed' : 'document.downloaded',
+        actionLabel: options.mode === 'preview' ? 'Document previewed' : 'Document downloaded',
+        actorRoleCode: 'client',
+        actorUserId: Number(userRow.id),
+        entityPk: Number(documentRow.document_id),
+        sourceModule: 'client_portal_documents',
+        summaryNewValue: documentRow.original_file_name,
+      });
 
       return {
         absolutePath: storageDriver.getAbsolutePath(documentRow.storage_path),
         mimeType: documentRow.mime_type,
         originalName: documentRow.original_file_name,
       };
+    });
+  },
+
+  async getClientDocumentDownload(
+    userPublicId: string,
+    clientAccountId: number,
+    documentPublicId: string,
+    options: {
+      ipAddress?: string | null;
+      userAgent?: string | null;
+    } = {}
+  ) {
+    return this.getClientDocumentFile(userPublicId, clientAccountId, documentPublicId, {
+      ...options,
+      mode: 'download',
+    });
+  },
+
+  async getClientDocumentPreview(
+    userPublicId: string,
+    clientAccountId: number,
+    documentPublicId: string,
+    options: {
+      ipAddress?: string | null;
+      userAgent?: string | null;
+    } = {}
+  ) {
+    return this.getClientDocumentFile(userPublicId, clientAccountId, documentPublicId, {
+      ...options,
+      mode: 'preview',
     });
   },
 

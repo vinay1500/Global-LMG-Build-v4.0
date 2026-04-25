@@ -81,6 +81,7 @@ type DocumentRow = RowDataPacket & {
 };
 
 type EventRow = RowDataPacket & {
+  calendarSyncStatus: 'disabled' | 'failed' | 'local' | 'synced';
   clientId: string;
   clientName: string;
   dateSource: string;
@@ -92,6 +93,8 @@ type EventRow = RowDataPacket & {
   matterTitle: string | null;
   mode: string;
   notes: string | null;
+  reminderCount: number;
+  reminderStatus: 'cancelled' | 'none' | 'scheduled';
   status: string;
   title: string;
   type: string;
@@ -110,10 +113,12 @@ type ThreadRow = RowDataPacket & {
   matterTitle: string | null;
   stage: string | null;
   status: string;
+  unreadCount: number;
   urgency: string | null;
 };
 
 type MessageRow = RowDataPacket & {
+  attachmentRefs: string | null;
   content: string;
   id: string;
   senderId: string | null;
@@ -149,6 +154,17 @@ type AuditRow = RowDataPacket & {
 };
 
 const buildInClause = (values: readonly unknown[]) => values.map(() => '?').join(', ');
+
+const parseAttachmentRefs = (value: string | null | undefined) =>
+  value
+    ? value
+        .split('\u001E')
+        .map((entry) => {
+          const [documentId, name] = entry.split('\u001F');
+          return documentId && name ? { documentId, name } : null;
+        })
+        .filter((entry): entry is { documentId: string; name: string } => Boolean(entry))
+    : undefined;
 
 export const fetchMatters = async (filters: {
   clientAccountIds?: string[];
@@ -448,8 +464,12 @@ export const fetchDocuments = async (filters: { clientAccountIds?: string[]; mat
   }));
 };
 
-export const fetchEvents = async (filters: { clientAccountIds?: string[]; matterIds?: string[] }) => {
-  const where: string[] = ['e.cancelled_at IS NULL'];
+export const fetchEvents = async (filters: {
+  clientAccountIds?: string[];
+  includeCancelled?: boolean;
+  matterIds?: string[];
+}) => {
+  const where: string[] = filters.includeCancelled ? ['1 = 1'] : ['e.cancelled_at IS NULL'];
   const params: unknown[] = [];
 
   if (filters.clientAccountIds?.length) {
@@ -478,7 +498,29 @@ export const fetchEvents = async (filters: { clientAccountIds?: string[]; matter
        e.join_url AS joinUrl,
        e.client_visible_flag AS visibleToClient,
        e.notes,
-       e.status_code AS status
+       e.status_code AS status,
+       CASE
+         WHEN e.external_meeting_id IS NOT NULL THEN 'synced'
+         WHEN e.meeting_provider_code = 'google-calendar-failed' THEN 'failed'
+         WHEN e.meeting_provider_code IN ('manual', 'none') THEN 'local'
+         ELSE 'disabled'
+       END AS calendarSyncStatus,
+       (
+         SELECT COUNT(*)
+         FROM event_reminders er
+         WHERE er.event_id = e.id
+           AND er.delivery_status_code = 'pending'
+       ) AS reminderCount,
+       CASE
+         WHEN e.status_code = 'cancelled' OR e.cancelled_at IS NOT NULL THEN 'cancelled'
+         WHEN (
+           SELECT COUNT(*)
+           FROM event_reminders er
+           WHERE er.event_id = e.id
+             AND er.delivery_status_code = 'pending'
+         ) > 0 THEN 'scheduled'
+         ELSE 'none'
+       END AS reminderStatus
      FROM events e
      JOIN client_accounts ca ON ca.id = e.client_account_id
      LEFT JOIN matters m ON m.id = e.matter_id
@@ -489,6 +531,7 @@ export const fetchEvents = async (filters: { clientAccountIds?: string[]; matter
 
   return rows.map((row) => ({
     actionCTA: row.joinUrl ? 'Join Call' : 'View Details',
+    calendarSyncStatus: row.calendarSyncStatus,
     clientId: row.clientId,
     clientName: row.clientName,
     date: toUiDate(row.dateSource),
@@ -501,6 +544,8 @@ export const fetchEvents = async (filters: { clientAccountIds?: string[]; matter
     meetLink: row.joinUrl || undefined,
     mode: row.mode,
     notes: row.notes || '',
+    reminderCount: Number(row.reminderCount || 0),
+    reminderStatus: row.reminderStatus,
     status: row.status,
     time: toUiTime(row.dateSource),
     title: row.title,
@@ -509,9 +554,14 @@ export const fetchEvents = async (filters: { clientAccountIds?: string[]; matter
   }));
 };
 
-export const fetchThreads = async (filters: { clientAccountIds?: string[]; matterIds?: string[] }) => {
+export const fetchThreads = async (filters: {
+  clientAccountIds?: string[];
+  matterIds?: string[];
+  viewerUserId?: number;
+}) => {
   const where: string[] = ['ct.archived_at IS NULL'];
   const params: unknown[] = [];
+  const unreadSelectParams: unknown[] = [];
 
   if (filters.clientAccountIds?.length) {
     where.push(`ca.public_id IN (${buildInClause(filters.clientAccountIds)})`);
@@ -521,6 +571,27 @@ export const fetchThreads = async (filters: { clientAccountIds?: string[]; matte
   if (filters.matterIds?.length) {
     where.push(`m.public_id IN (${buildInClause(filters.matterIds)})`);
     params.push(...filters.matterIds);
+  }
+
+  const unreadCountSelect = filters.viewerUserId
+    ? `(
+       SELECT COUNT(*)
+       FROM messages unread_msg
+       INNER JOIN users unread_sender
+         ON unread_sender.id = unread_msg.sender_user_id
+        AND unread_sender.actor_type_code = 'client'
+       LEFT JOIN message_reads unread_read
+         ON unread_read.message_id = unread_msg.id
+        AND unread_read.user_id = ?
+       WHERE unread_msg.thread_id = ct.id
+         AND unread_msg.deleted_at IS NULL
+         AND (unread_msg.sender_user_id IS NULL OR unread_msg.sender_user_id <> ?)
+         AND unread_read.id IS NULL
+     ) AS unreadCount`
+    : `CASE WHEN ct.status_code = 'waiting' THEN 1 ELSE 0 END AS unreadCount`;
+
+  if (filters.viewerUserId) {
+    unreadSelectParams.push(filters.viewerUserId, filters.viewerUserId);
   }
 
   const rows = await queryRows<ThreadRow>(
@@ -536,7 +607,8 @@ export const fetchThreads = async (filters: { clientAccountIds?: string[]; matte
        lm.body_text AS lastMessage,
        lm.sent_at AS lastMessageAt,
        owner.display_name AS assignedTo,
-       ct.status_code AS status
+       ct.status_code AS status,
+       ${unreadCountSelect}
      FROM conversation_threads ct
      JOIN client_accounts ca ON ca.id = ct.client_account_id
      LEFT JOIN matters m ON m.id = ct.matter_id
@@ -551,7 +623,7 @@ export const fetchThreads = async (filters: { clientAccountIds?: string[]; matte
      )
      WHERE ${where.join(' AND ')}
      ORDER BY COALESCE(lm.sent_at, ct.updated_at) DESC`,
-    params
+    [...unreadSelectParams, ...params]
   );
 
   return rows.map((row) => ({
@@ -566,7 +638,7 @@ export const fetchThreads = async (filters: { clientAccountIds?: string[]; matte
     matterTitle: row.matterTitle || '',
     stage: row.stage || 'request-received',
     status: row.status,
-    unreadCount: row.status === 'waiting' ? 1 : 0,
+    unreadCount: Number(row.unreadCount || 0),
     urgency: row.urgency || 'standard',
   }));
 };
@@ -588,19 +660,34 @@ export const fetchMessagesByThreadIds = async (threadIds: string[]) => {
          ELSE 'admin'
        END AS senderRole,
        msg.body_text AS content,
-       msg.sent_at AS timestamp
+       msg.sent_at AS timestamp,
+       GROUP_CONCAT(CONCAT(d.public_id, '\u001F', dv.original_file_name) ORDER BY mdv.sort_order ASC SEPARATOR '\u001E') AS attachmentRefs
      FROM messages msg
      JOIN conversation_threads ct ON ct.id = msg.thread_id
      LEFT JOIN users u ON u.id = msg.sender_user_id
      LEFT JOIN counsel_partners cp ON cp.id = msg.sender_counsel_partner_id
+     LEFT JOIN message_document_versions mdv ON mdv.message_id = msg.id
+     LEFT JOIN document_versions dv ON dv.id = mdv.document_version_id
+     LEFT JOIN documents d ON d.id = dv.document_id
      WHERE msg.deleted_at IS NULL
        AND ct.public_id IN (${buildInClause(threadIds)})
+     GROUP BY
+       msg.id,
+       msg.public_id,
+       ct.public_id,
+       u.public_id,
+       msg.sender_system_code,
+       u.display_name,
+       cp.full_name,
+       u.actor_type_code,
+       msg.body_text,
+       msg.sent_at
      ORDER BY msg.sent_at ASC, msg.id ASC`,
     threadIds
   );
 
   return rows.map((row) => ({
-    attachments: undefined,
+    attachments: parseAttachmentRefs(row.attachmentRefs),
     content: row.content,
     id: row.id,
     read: true,
@@ -622,6 +709,8 @@ export const fetchPayments = async () => {
        ca.display_name AS clientName,
        COALESCE(pa.amount_applied, pt.gross_amount) AS amount,
        CASE
+         WHEN pt.gateway_provider_code IN ('bank-transfer', 'cash', 'cheque', 'online')
+           THEN pt.gateway_provider_code
          WHEN LOWER(COALESCE(pm.method_type_code, '')) LIKE '%bank%' THEN 'bank-transfer'
          WHEN LOWER(COALESCE(pm.method_type_code, '')) LIKE '%cash%' THEN 'cash'
          WHEN LOWER(COALESCE(pm.method_type_code, '')) LIKE '%cheque%' THEN 'cheque'

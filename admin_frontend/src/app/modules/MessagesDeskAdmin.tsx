@@ -6,8 +6,15 @@ import {
   Phone, Video, ShieldAlert, Archive
 } from 'lucide-react';
 import { 
-  MESSAGE_THREADS, CHAT_MESSAGES, MATTERS, INVOICES, EVENTS, PLATFORM_USERS,
-  formatCurrency, formatDate, formatDateTime, MessageThread, ChatMessage, Matter, Invoice, PlatformEvent, PlatformUser
+  formatCurrency,
+  formatDate,
+  formatDateTime,
+  type ChatMessage,
+  type Invoice,
+  type Matter,
+  type MessageThread,
+  type PlatformEvent,
+  type PlatformUser,
 } from '../data/seedData';
 import { StatusBadge, UrgencyDot } from '../components/dashboard/StatusBadge';
 import { EmptyState } from './EmptyState';
@@ -18,6 +25,9 @@ interface MessagesDeskAdminProps {
   invoices?: Invoice[];
   matters?: Matter[];
   messages?: ChatMessage[];
+  onArchiveThread?: (threadId: string) => Promise<void>;
+  onDownloadAttachment?: (documentId: string) => void;
+  onMarkThreadRead?: (threadId: string) => Promise<void>;
   onSendReply?: (threadId: string, content: string) => Promise<void>;
   searchQuery: string;
   threads?: MessageThread[];
@@ -26,19 +36,25 @@ interface MessagesDeskAdminProps {
 type FilterType = 'all' | 'unread' | 'waiting' | 'high-priority';
 
 export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
-  clients = PLATFORM_USERS,
-  events = EVENTS,
-  invoices = INVOICES,
-  matters = MATTERS,
-  messages = CHAT_MESSAGES,
+  clients = [],
+  events = [],
+  invoices = [],
+  matters = [],
+  messages = [],
+  onArchiveThread,
+  onDownloadAttachment,
+  onMarkThreadRead,
   onSendReply,
   searchQuery,
-  threads = MESSAGE_THREADS,
+  threads = [],
 }) => {
   const [localSearch, setLocalSearch] = useState('');
   const [filterType, setFilterType] = useState<FilterType>('all');
   const [selectedThreadId, setSelectedThreadId] = useState<string>(threads[0]?.id || '');
   const [newMessage, setNewMessage] = useState('');
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [isArchiving, setIsArchiving] = useState(false);
+  const [markingThreadId, setMarkingThreadId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
 
   useEffect(() => {
@@ -51,6 +67,24 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
     () => threads.find((thread) => thread.id === selectedThreadId),
     [selectedThreadId, threads]
   );
+
+  useEffect(() => {
+    if (
+      !activeThread ||
+      activeThread.unreadCount <= 0 ||
+      !onMarkThreadRead ||
+      markingThreadId === activeThread.id
+    ) {
+      return;
+    }
+
+    setMarkingThreadId(activeThread.id);
+    void onMarkThreadRead(activeThread.id)
+      .catch((error) => {
+        setActionError(error instanceof Error ? error.message : 'Unable to mark thread as read.');
+      })
+      .finally(() => setMarkingThreadId(null));
+  }, [activeThread, markingThreadId, onMarkThreadRead]);
   
   const threadMessages = useMemo(() => {
     if (!activeThread) return [];
@@ -272,7 +306,35 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                 </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <button className="p-2 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition" title="Archive Thread"><Archive className="w-4 h-4" /></button>
+                <button
+                  className="p-2 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={!onArchiveThread || isArchiving}
+                  onClick={() => {
+                    if (!activeThread || !onArchiveThread || isArchiving) {
+                      return;
+                    }
+
+                    if (!window.confirm('Archive this conversation thread?')) {
+                      return;
+                    }
+
+                    setActionError(null);
+                    setIsArchiving(true);
+                    void onArchiveThread(activeThread.id)
+                      .catch((error) => {
+                        setActionError(
+                          error instanceof Error
+                            ? error.message
+                            : 'Unable to archive this conversation.'
+                        );
+                      })
+                      .finally(() => setIsArchiving(false));
+                  }}
+                  title="Archive thread"
+                  type="button"
+                >
+                  <Archive className="w-4 h-4" />
+                </button>
                 <button className="p-2 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"><MoreVertical className="w-4 h-4" /></button>
               </div>
             </div>
@@ -330,10 +392,19 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                                 {msg.attachments && msg.attachments.length > 0 && (
                                   <div className="mt-3 space-y-2">
                                     {msg.attachments.map((att, i) => (
-                                      <div key={i} className={`flex items-center gap-2 p-2 rounded border ${isClient ? 'bg-gray-50 border-gray-100' : 'bg-gray-800 border-gray-700'}`}>
+                                      <button
+                                        key={`${msg.id}-${att.documentId}-${i}`}
+                                        className={`flex items-center gap-2 p-2 rounded border text-left ${
+                                          isClient ? 'bg-gray-50 border-gray-100' : 'bg-gray-800 border-gray-700'
+                                        }`}
+                                        disabled={!onDownloadAttachment}
+                                        onClick={() => onDownloadAttachment?.(att.documentId)}
+                                        title="Download attachment"
+                                        type="button"
+                                      >
                                         <FileText className={`w-4 h-4 ${isClient ? 'text-blue-500' : 'text-gray-400'}`} />
-                                        <span className={`text-xs truncate ${isClient ? 'text-gray-700' : 'text-gray-300'}`}>{att}</span>
-                                      </div>
+                                        <span className={`text-xs truncate ${isClient ? 'text-gray-700' : 'text-gray-300'}`}>{att.name}</span>
+                                      </button>
                                     ))}
                                   </div>
                                 )}
@@ -361,25 +432,60 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                   rows={3}
                   value={newMessage}
                   onChange={(e) => setNewMessage(e.target.value)}
-                  placeholder={`Reply to ${activeThread.clientName}...`}
+                  disabled={activeThread.status === 'resolved' || isSending}
+                  placeholder={
+                    activeThread.status === 'resolved'
+                      ? 'This conversation is closed.'
+                      : `Reply to ${activeThread.clientName}...`
+                  }
                   className="w-full bg-transparent p-3 text-sm outline-none resize-none"
                 />
                 <div className="px-3 py-2 flex items-center justify-between border-t border-gray-200 bg-white">
                   <div className="flex items-center gap-1">
-                    <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition" title="Attach file"><Paperclip className="w-4 h-4" /></button>
-                    <button className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition text-xs font-medium px-3">Use Template</button>
+                    <button
+                      className="p-2 text-gray-300 rounded-lg cursor-not-allowed"
+                      disabled
+                      title="Reply attachments are handled through Documents Center for now."
+                      type="button"
+                    >
+                      <Paperclip className="w-4 h-4" />
+                    </button>
+                    <button
+                      className="p-2 text-gray-300 rounded-lg cursor-not-allowed text-xs font-medium px-3"
+                      disabled
+                      title="Message templates are not enabled yet."
+                      type="button"
+                    >
+                      Use Template
+                    </button>
                   </div>
                   <button
                     className="bg-gray-900 text-white px-4 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-gray-800 transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    disabled={!newMessage.trim() || isSending || !onSendReply}
+                    disabled={
+                      !newMessage.trim() ||
+                      isSending ||
+                      !onSendReply ||
+                      activeThread.status === 'resolved'
+                    }
                     onClick={() => {
-                      if (!activeThread || !newMessage.trim() || !onSendReply) {
+                      if (
+                        !activeThread ||
+                        !newMessage.trim() ||
+                        !onSendReply ||
+                        activeThread.status === 'resolved'
+                      ) {
                         return;
                       }
 
+                      setActionError(null);
                       setIsSending(true);
                       void onSendReply(activeThread.id, newMessage.trim())
                         .then(() => setNewMessage(''))
+                        .catch((error) => {
+                          setActionError(
+                            error instanceof Error ? error.message : 'Unable to send this reply.'
+                          );
+                        })
                         .finally(() => setIsSending(false));
                     }}
                     type="button"
@@ -388,6 +494,9 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                   </button>
                 </div>
               </div>
+              {actionError && (
+                <p className="mt-3 text-center text-xs text-red-600">{actionError}</p>
+              )}
               <div className="flex items-center justify-center gap-4 mt-3">
                 <span className="text-[10px] text-gray-400 flex items-center gap-1"><CheckCircle className="w-3 h-3" /> External communication securely logged</span>
               </div>

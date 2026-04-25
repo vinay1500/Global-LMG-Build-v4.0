@@ -21,6 +21,9 @@ export const unauthorized = (code: string, message: string) =>
 
 export const forbidden = (code: string, message: string) => new AppError(403, code, message);
 
+export const tooManyRequests = (code: string, message: string, issues?: unknown) =>
+  new AppError(429, code, message, issues);
+
 export const notFound = (code: string, message: string) => new AppError(404, code, message);
 
 export const asyncHandler =

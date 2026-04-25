@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Pool, PoolConnection, RowDataPacket } from 'mysql2/promise';
 import { addDaysUtc, fromMysqlDateTime, nowUtc, toMysqlDateTime } from '../../lib/datetime.js';
 import { createPublicId } from '../../lib/ids.js';
-import { conflict, forbidden, notFound } from '../../lib/httpErrors.js';
+import { badRequest, conflict, forbidden, notFound } from '../../lib/httpErrors.js';
 import { selectAll, selectOne, withConnection, withTransaction } from '../../lib/mysqlUtils.js';
 import { ensurePlatformReady } from '../platform/bootstrap.js';
 import { domainEventService } from '../domainEvents/service.js';
@@ -117,11 +117,6 @@ interface PackageSelectionCandidateRow extends RowDataPacket {
   total_price: string | number;
 }
 
-interface SelectedPackageSummaryRow extends RowDataPacket {
-  id: number;
-  proposal_version_no: number;
-}
-
 interface InvoiceRow extends RowDataPacket {
   amount_due: string | number;
   amount_paid: string | number;
@@ -160,10 +155,6 @@ interface ExistingPackageInvoiceRow extends RowDataPacket {
   id: number;
   public_id: string;
   status_code: string;
-}
-
-interface InvoicePaymentStateRow extends RowDataPacket {
-  captured_amount: string | number;
 }
 
 interface BillingSnapshotSeedRow extends RowDataPacket {
@@ -253,7 +244,7 @@ interface ThreadRow extends RowDataPacket {
 }
 
 interface MessageRow extends RowDataPacket {
-  attachment_names: string | null;
+  attachment_refs: string | null;
   body_text: string;
   is_read: number;
   message_public_id: string;
@@ -400,12 +391,15 @@ const documentReviewState = (value: string): PlatformDocument['reviewState'] => 
 const hashDocumentChecksum = (name: string, size: number) =>
   createHash('sha256').update(`${name}:${size}`).digest('hex');
 
-const splitAttachmentNames = (value: string | null | undefined) =>
+const parseAttachmentRefs = (value: string | null | undefined) =>
   value
     ? value
-        .split('|||')
-        .map((entry) => entry.trim())
-        .filter(Boolean)
+        .split('\u001E')
+        .map((entry) => {
+          const [documentId, name] = entry.split('\u001F');
+          return documentId && name ? { documentId, name } : null;
+        })
+        .filter((entry): entry is { documentId: string; name: string } => Boolean(entry))
     : undefined;
 
 export class NormalizedDashboardRepository {
@@ -1234,59 +1228,10 @@ export class NormalizedDashboardRepository {
       }
 
       if (matterRow.selected_matter_package_id) {
-        const selectedPackageRow = await selectOne<SelectedPackageSummaryRow>(
-          connection,
-          `SELECT id, proposal_version_no
-           FROM matter_packages
-           WHERE id = ?
-           LIMIT 1`,
-          [Number(matterRow.selected_matter_package_id)]
+        throw conflict(
+          'package_selection_locked',
+          'A package has already been selected for this matter. Ask the Global LMG team if it needs to be changed.'
         );
-
-        if (selectedPackageRow && Number(selectedPackageRow.proposal_version_no) === proposalVersion) {
-          throw conflict(
-            'proposal_already_selected',
-            'A package has already been selected for this proposal version.'
-          );
-        }
-
-        const currentInvoice = await this.findActiveInvoiceForPackage(
-          connection,
-          Number(matterRow.selected_matter_package_id)
-        );
-
-        if (currentInvoice?.id) {
-          const hasCapturedPayment = await this.invoiceHasCapturedPayment(
-            connection,
-            Number(currentInvoice.id)
-          );
-
-          if (hasCapturedPayment) {
-            throw conflict(
-              'package_selection_locked',
-              'This matter already has a paid package invoice. Ask support to reconcile billing before selecting a new package.'
-            );
-          }
-
-          await connection.execute(
-            `UPDATE invoices
-             SET status_code = 'void',
-                 amount_due = 0,
-                 archived_at = UTC_TIMESTAMP(6),
-                 updated_at = UTC_TIMESTAMP(6),
-                 row_version = row_version + 1
-             WHERE id = ?`,
-            [Number(currentInvoice.id)]
-          );
-
-          await connection.execute(
-            `UPDATE invoice_installments
-             SET status_code = 'void',
-                 amount_remaining = 0
-             WHERE invoice_id = ?`,
-            [Number(currentInvoice.id)]
-          );
-        }
       }
 
       const createdAt = toMysqlDateTime(nowUtc());
@@ -1339,6 +1284,14 @@ export class NormalizedDashboardRepository {
         priorityCode: 'normal',
         title: 'Invoice generated',
       });
+      await this.insertNotifications(connection, clientRecipients, {
+        bodyText: `You selected the ${packageRow.package_name} package for ${matterRow.matter_number}.`,
+        invoiceId: invoice.id,
+        matterId: Number(matterRow.id),
+        notificationTypeCode: 'proposal',
+        priorityCode: 'normal',
+        title: 'Package selected',
+      });
 
       const adminRecipients = await this.getMatterAdminRecipientUserIds(
         connection,
@@ -1354,7 +1307,7 @@ export class NormalizedDashboardRepository {
       });
 
       await this.insertAuditEvent(connection, {
-        actionCode: 'matter.package.selected',
+        actionCode: 'package.selected',
         actionLabel: 'Matter package selected',
         actorRoleCodeSnapshot: 'client',
         actorUserId: Number(userRow.id),
@@ -1404,18 +1357,26 @@ export class NormalizedDashboardRepository {
         connection,
         `SELECT
            ct.id,
+           ct.closed_at,
+           ct.status_code,
            ct.subject,
            m.title AS matter_title
          FROM conversation_threads ct
          LEFT JOIN matters m
            ON m.id = ct.matter_id
-         WHERE ct.public_id = ? AND ct.client_account_id = ?
+         WHERE ct.public_id = ?
+           AND ct.client_account_id = ?
+           AND ct.archived_at IS NULL
          LIMIT 1`,
         [threadPublicId, context.clientAccountId]
       );
 
       if (!threadRow?.id) {
         throw forbidden('thread_forbidden', 'You do not have access to this thread.');
+      }
+
+      if (threadRow.closed_at || threadRow.status_code === 'resolved') {
+        throw badRequest('thread_closed', 'This conversation is closed.');
       }
 
       let attachmentRows: AttachmentUploadRow[] = [];
@@ -1512,7 +1473,9 @@ export class NormalizedDashboardRepository {
 
       await connection.execute(
         `UPDATE conversation_threads
-         SET last_message_at = ?, updated_at = ?
+         SET status_code = 'waiting',
+             last_message_at = ?,
+             updated_at = ?
          WHERE id = ?`,
         [createdAt, createdAt, Number(threadRow.id)]
       );
@@ -1528,6 +1491,51 @@ export class NormalizedDashboardRepository {
         sourceModule: 'Client Dashboard',
         threadId: Number(threadRow.id),
       });
+    });
+
+    return this.getSnapshot(currentClient);
+  }
+
+  public async markThreadRead(currentClient: PlatformUser, threadPublicId: string) {
+    await this.initialize();
+
+    await withTransaction(this.pool, async (connection) => {
+      const context = await this.resolveClientContext(connection, currentClient.id);
+      const userRow = await selectOne<RowDataPacket>(
+        connection,
+        'SELECT id FROM users WHERE public_id = ? LIMIT 1',
+        [currentClient.id]
+      );
+
+      if (!userRow?.id) {
+        throw notFound('current_user_not_found', 'Current user could not be resolved.');
+      }
+
+      const threadRow = await selectOne<RowDataPacket>(
+        connection,
+        `SELECT id
+         FROM conversation_threads
+         WHERE public_id = ?
+           AND client_account_id = ?
+           AND archived_at IS NULL
+         LIMIT 1`,
+        [threadPublicId, context.clientAccountId]
+      );
+
+      if (!threadRow?.id) {
+        throw forbidden('thread_forbidden', 'You do not have access to this thread.');
+      }
+
+      await connection.execute(
+        `INSERT IGNORE INTO message_reads (message_id, user_id, read_at)
+         SELECT msg.id, ?, UTC_TIMESTAMP(6)
+         FROM messages msg
+         WHERE msg.thread_id = ?
+           AND msg.deleted_at IS NULL
+           AND msg.visible_to_client = 1
+           AND (msg.sender_user_id IS NULL OR msg.sender_user_id <> ?)`,
+        [Number(userRow.id), Number(threadRow.id), Number(userRow.id)]
+      );
     });
 
     return this.getSnapshot(currentClient);
@@ -1685,21 +1693,6 @@ export class NormalizedDashboardRepository {
        LIMIT 1`,
       [matterPackageId]
     );
-  }
-
-  private async invoiceHasCapturedPayment(connection: PoolConnection, invoiceId: number) {
-    const row = await selectOne<InvoicePaymentStateRow>(
-      connection,
-      `SELECT COALESCE(SUM(pa.amount_applied), 0) AS captured_amount
-       FROM payment_allocations pa
-       INNER JOIN payment_transactions pt
-         ON pt.id = pa.payment_transaction_id
-       WHERE pa.invoice_id = ?
-         AND pt.status_code = 'captured'`,
-      [invoiceId]
-    );
-
-    return toAmount(row?.captured_amount) > 0;
   }
 
   private async createPackageInvoice(
@@ -1967,6 +1960,7 @@ export class NormalizedDashboardRepository {
       `SELECT matter_id, body_text, visible_to_client
        FROM matter_updates
        WHERE matter_id IN (${matterIdPlaceholders})
+         AND visible_to_client = 1
        ORDER BY created_at ASC`,
       matterIds
     );
@@ -1990,11 +1984,13 @@ export class NormalizedDashboardRepository {
 
       return {
         assignedCounsel:
-          matterAssignments.find((entry) => entry.assignment_role_code === 'counsel')?.assigned_name ||
+          matterAssignments.find((entry) =>
+            ['counsel', 'lead_counsel'].includes(entry.assignment_role_code)
+          )?.assigned_name ||
           undefined,
         assignedStaff:
           matterAssignments.find((entry) =>
-            ['case_manager', 'staff', 'billing_owner'].includes(entry.assignment_role_code)
+            ['billing_owner', 'case_manager', 'internal_owner', 'staff'].includes(entry.assignment_role_code)
           )?.assigned_name || undefined,
         clientId: currentClient.id,
         clientName: currentClient.name,
@@ -2006,9 +2002,7 @@ export class NormalizedDashboardRepository {
         dueAmount: toAmount(matter.due_total_amount),
         expertiseArea: matter.legal_domain_name,
         id: matter.public_id,
-        internalNotes: matterNotes
-          .filter((entry) => !Boolean(entry.visible_to_client))
-          .map((entry) => entry.body_text),
+        internalNotes: [],
         issueSummary: matter.issue_summary,
         lastUpdated: toIso(matter.last_activity_at),
         lifecycleStage: matter.current_stage_code as Matter['lifecycleStage'],
@@ -2276,6 +2270,7 @@ export class NormalizedDashboardRepository {
        INNER JOIN client_accounts ca ON ca.id = e.client_account_id
        LEFT JOIN matters m ON m.id = e.matter_id
        WHERE e.client_account_id = ?
+         AND e.client_visible_flag = 1
        ORDER BY e.scheduled_start_at ASC`,
       [clientAccountId]
     );
@@ -2330,7 +2325,9 @@ export class NormalizedDashboardRepository {
        LEFT JOIN users uploader ON uploader.id = dv.uploaded_by_user_id
        LEFT JOIN matter_documents md ON md.document_id = d.id
        LEFT JOIN matters m ON m.id = md.matter_id
-       WHERE d.owner_client_account_id = ? AND d.archived_at IS NULL
+       WHERE d.owner_client_account_id = ?
+         AND d.archived_at IS NULL
+         AND d.visibility_scope_code IN ('client', 'client-portal', 'shared')
        ORDER BY dv.uploaded_at DESC`,
       [clientAccountId]
     );
@@ -2444,7 +2441,7 @@ export class NormalizedDashboardRepository {
            ELSE 'admin'
          END AS sender_role,
          CASE WHEN mr.id IS NOT NULL THEN 1 ELSE 0 END AS is_read,
-         GROUP_CONCAT(dv.original_file_name ORDER BY mdv.sort_order ASC SEPARATOR '|||') AS attachment_names
+         GROUP_CONCAT(CONCAT(d.public_id, '\u001F', dv.original_file_name) ORDER BY mdv.sort_order ASC SEPARATOR '\u001E') AS attachment_refs
       FROM messages msg
       INNER JOIN conversation_threads ct ON ct.id = msg.thread_id
       INNER JOIN client_accounts ca ON ca.id = ct.client_account_id
@@ -2452,6 +2449,7 @@ export class NormalizedDashboardRepository {
       LEFT JOIN counsel_partners cp ON cp.id = msg.sender_counsel_partner_id
       LEFT JOIN message_document_versions mdv ON mdv.message_id = msg.id
       LEFT JOIN document_versions dv ON dv.id = mdv.document_version_id
+      LEFT JOIN documents d ON d.id = dv.document_id
       LEFT JOIN users viewer_user ON viewer_user.public_id = ?
       LEFT JOIN message_reads mr
         ON mr.message_id = msg.id
@@ -2475,7 +2473,7 @@ export class NormalizedDashboardRepository {
     );
 
     return rows.map((row) => ({
-      attachments: splitAttachmentNames(row.attachment_names),
+      attachments: parseAttachmentRefs(row.attachment_refs),
       content: row.body_text,
       id: row.message_public_id,
       read: Boolean(row.is_read),

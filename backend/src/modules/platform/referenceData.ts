@@ -165,6 +165,7 @@ export const INVOICE_STATUS_SEEDS = [
   ['paid', 'Paid', 4, 1],
   ['overdue', 'Overdue', 5, 0],
   ['void', 'Void', 6, 1],
+  ['refunded', 'Refunded', 7, 1],
 ] as const;
 
 export const PAYMENT_STATUS_SEEDS = [

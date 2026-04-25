@@ -2,6 +2,7 @@ import React from 'react';
 import { Navigate, Route, Routes } from 'react-router';
 import { AccessDeniedPage } from './features/auth/AccessDeniedPage';
 import { LoginPage } from './features/auth/LoginPage';
+import { PasswordRotationPage } from './features/auth/PasswordRotationPage';
 import { AuditPage } from './features/audit/AuditPage';
 import { BillingPage } from './features/billing/BillingPage';
 import { ClientDetailPage } from './features/clients/ClientDetailPage';
@@ -25,6 +26,7 @@ export const AdminRoutes = () => {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/change-password" element={<PasswordRotationPage />} />
       <Route path="/forbidden" element={<AccessDeniedPage />} />
 
       <Route element={<RequireAdminAuth />}>

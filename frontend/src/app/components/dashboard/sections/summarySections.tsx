@@ -20,6 +20,7 @@ import type {
   Invoice,
   Matter,
   MessageThread,
+  Payment,
   PlatformDocument,
   PlatformEvent,
   PlatformUser,
@@ -195,7 +196,7 @@ export const DashboardOverviewSection = ({
                     onClick={onOpenBilling}
                     className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-100"
                   >
-                    Pay {formatCurrency(matter.dueAmount)}
+                    View Billing {formatCurrency(matter.dueAmount)}
                   </button>
                 )}
               </div>
@@ -404,8 +405,11 @@ interface DashboardDocumentsSectionProps {
   formatSize: (bytes: number) => string;
   isUploadingDocuments: boolean;
   onDownloadDocument: (documentId: string) => void;
+  onPreviewDocument: (documentId: string) => void;
   onUploadDocuments: (files: File[]) => void;
 }
+
+const SAFE_DOCUMENT_PREVIEW_TYPES = new Set(['CSV', 'GIF', 'JPG', 'JPEG', 'PDF', 'PNG', 'TXT', 'WEBP']);
 
 export const DashboardDocumentsSection = ({
   myDocs,
@@ -413,6 +417,7 @@ export const DashboardDocumentsSection = ({
   formatSize,
   isUploadingDocuments,
   onDownloadDocument,
+  onPreviewDocument,
   onUploadDocuments,
 }: DashboardDocumentsSectionProps) => {
   const uploadInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -435,6 +440,7 @@ export const DashboardDocumentsSection = ({
           Documents
         </h1>
         <input
+          accept=".csv,.doc,.docx,.gif,.jpg,.jpeg,.pdf,.png,.txt,.webp,.xls,.xlsx,.zip"
           ref={uploadInputRef}
           type="file"
           multiple
@@ -456,6 +462,12 @@ export const DashboardDocumentsSection = ({
           <Upload className="h-4 w-4" /> {isUploadingDocuments ? 'Uploading...' : 'Upload'}
         </button>
       </div>
+
+      {myDocs.length === 0 && (
+        <div className="rounded-xl border border-dashed border-gray-200 bg-white px-5 py-8 text-center text-sm text-gray-500">
+          Documents shared with you or uploaded by you will appear here after they are stored securely.
+        </div>
+      )}
 
       {Object.entries(groupedDocuments).map(([matterId, docs]) => {
         const matter = myMatters.find((entry) => entry.id === matterId);
@@ -484,13 +496,21 @@ export const DashboardDocumentsSection = ({
                     </p>
                   </div>
                   <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => onDownloadDocument(document.id)}
-                      className="rounded-lg p-2 text-gray-400 hover:bg-gray-50 hover:text-gray-600"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </button>
+                    {(() => {
+                      const canPreview = SAFE_DOCUMENT_PREVIEW_TYPES.has(document.type.toUpperCase());
+
+                      return (
+                        <button
+                          type="button"
+                          disabled={!canPreview}
+                          onClick={() => onPreviewDocument(document.id)}
+                          title={canPreview ? 'Preview document' : 'Preview unavailable for this file type'}
+                          className="rounded-lg p-2 text-gray-400 hover:bg-gray-50 hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                      );
+                    })()}
                     <button
                       type="button"
                       onClick={() => onDownloadDocument(document.id)}
@@ -511,6 +531,7 @@ export const DashboardDocumentsSection = ({
 
 interface DashboardBillingSectionProps {
   myInvoices: Invoice[];
+  myPayments: Payment[];
   onDownloadInvoice: (invoiceId: string) => void;
   onPayInvoice: (invoiceId: string) => void;
   onViewInvoice: (invoiceId: string) => void;
@@ -518,6 +539,7 @@ interface DashboardBillingSectionProps {
 
 export const DashboardBillingSection = ({
   myInvoices,
+  myPayments,
   onDownloadInvoice,
   onPayInvoice,
   onViewInvoice,
@@ -603,7 +625,7 @@ export const DashboardBillingSection = ({
                           onClick={() => onPayInvoice(invoice.id)}
                           className="rounded bg-gray-900 px-2.5 py-1 text-[11px] text-white hover:bg-gray-800"
                         >
-                          Pay
+                          Payment Info
                         </button>
                       )}
                     </div>
@@ -613,6 +635,35 @@ export const DashboardBillingSection = ({
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-gray-100 bg-white shadow-sm">
+        <div className="border-b border-gray-100 bg-gray-50/50 px-4 py-3">
+          <h2 className="text-sm text-gray-700">Payment History</h2>
+          <p className="text-xs text-gray-400">Payments are recorded by the Global LMG team after manual confirmation.</p>
+        </div>
+        {myPayments.length > 0 ? (
+          <div className="divide-y divide-gray-50">
+            {myPayments.map((payment) => (
+              <div key={payment.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm text-gray-900">{formatCurrency(payment.amount)}</p>
+                  <p className="text-xs text-gray-400">
+                    Invoice {payment.invoiceId} · {payment.method.replace('-', ' ')} · Ref {payment.reference}
+                  </p>
+                </div>
+                <div className="text-left sm:text-right">
+                  <StatusBadge status={payment.status} />
+                  <p className="mt-1 text-xs text-gray-400">{formatDate(payment.timestamp.split('T')[0])}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="px-4 py-6 text-sm text-gray-500">
+            No payment records have been posted to your account yet.
+          </div>
+        )}
       </div>
     </div>
   );

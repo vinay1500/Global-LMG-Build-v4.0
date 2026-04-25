@@ -1,10 +1,23 @@
 import type { Request, Response } from 'express';
-import type { RowDataPacket } from 'mysql2/promise';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { env } from '../../config/env.js';
-import { createPublicId, createRandomToken, hashOpaqueValue, verifyPassword } from '../../lib/authCrypto.js';
+import {
+  createPublicId,
+  createRandomToken,
+  hashOpaqueValue,
+  hashPassword,
+  verifyPassword,
+} from '../../lib/authCrypto.js';
 import { clearCookie, appendCookie, parseCookies } from '../../lib/httpCookies.js';
-import { queryRows } from '../../lib/mysql.js';
-import { forbidden, unauthorized } from '../../lib/httpErrors.js';
+import { executeStatement, queryRows, withTransaction } from '../../lib/mysql.js';
+import {
+  AppError,
+  badRequest,
+  forbidden,
+  tooManyRequests,
+  unauthorized,
+} from '../../lib/httpErrors.js';
+import { createAuditEvent } from '../writeSupport.js';
 
 const ADMIN_ROLE_CODES = new Set([
   'ops_admin',
@@ -43,20 +56,152 @@ type SessionRow = RowDataPacket & {
   user_id: number;
 };
 
+type CredentialRow = RowDataPacket & {
+  must_rotate_password: number;
+  password_hash: string;
+};
+
 export type AdminActor = {
   displayName: string;
   email: string;
   id: string;
+  mustRotatePassword: boolean;
   permissionCodes: string[];
   roleCodes: string[];
   sessionId?: number;
   userId: number;
 };
 
+const SIGN_IN_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const SIGN_IN_RATE_LIMIT_LOCK_MS = 10 * 60 * 1000;
+const SIGN_IN_RATE_LIMIT_MAX_FAILURES = 5;
+
+type SignInAttemptState = {
+  failureCount: number;
+  firstFailureAt: number;
+  lockedUntil?: number;
+};
+
+const signInAttempts = new Map<string, SignInAttemptState>();
+
 const COOKIE_OPTIONS = {
   path: '/',
   sameSite: 'lax' as const,
   secure: env.APP_ENV === 'production',
+};
+
+const toAdminSessionUser = (actor: AdminActor) => ({
+  displayName: actor.displayName,
+  email: actor.email,
+  id: actor.id,
+  mustRotatePassword: actor.mustRotatePassword,
+  permissionCodes: actor.permissionCodes,
+  roleCodes: actor.roleCodes,
+});
+
+const normalizeIdentifier = (identifier: string) => identifier.trim().toLowerCase();
+
+const getRateLimitKey = (identifier: string, request: Request) =>
+  `${request.ip || request.socket.remoteAddress || 'unknown'}:${normalizeIdentifier(identifier)}`;
+
+const assertSignInAllowed = (key: string) => {
+  const now = Date.now();
+  const state = signInAttempts.get(key);
+
+  if (!state) {
+    return;
+  }
+
+  if (state.lockedUntil && state.lockedUntil > now) {
+    const retryAfterSeconds = Math.ceil((state.lockedUntil - now) / 1000);
+    throw tooManyRequests(
+      'admin_sign_in_rate_limited',
+      `Too many failed sign-in attempts. Try again in ${retryAfterSeconds} seconds.`,
+      { retryAfterSeconds }
+    );
+  }
+
+  if (now - state.firstFailureAt > SIGN_IN_RATE_LIMIT_WINDOW_MS) {
+    signInAttempts.delete(key);
+  }
+};
+
+const recordSignInFailure = (key: string) => {
+  const now = Date.now();
+  const current = signInAttempts.get(key);
+  const next: SignInAttemptState =
+    current && now - current.firstFailureAt <= SIGN_IN_RATE_LIMIT_WINDOW_MS
+      ? {
+          failureCount: current.failureCount + 1,
+          firstFailureAt: current.firstFailureAt,
+        }
+      : {
+          failureCount: 1,
+          firstFailureAt: now,
+        };
+
+  if (next.failureCount >= SIGN_IN_RATE_LIMIT_MAX_FAILURES) {
+    next.lockedUntil = now + SIGN_IN_RATE_LIMIT_LOCK_MS;
+  }
+
+  signInAttempts.set(key, next);
+};
+
+const clearSignInFailures = (key: string) => {
+  signInAttempts.delete(key);
+};
+
+const shouldCountSignInFailure = (error: unknown) =>
+  error instanceof AppError &&
+  ['invalid_credentials', 'admin_access_required'].includes(error.code);
+
+const validateStrongPassword = (
+  newPassword: string,
+  actor: Pick<AdminActor, 'displayName' | 'email'>
+) => {
+  const issues: string[] = [];
+  const normalizedPassword = newPassword.toLowerCase();
+  const emailLocalPart = actor.email.split('@')[0]?.toLowerCase() || '';
+  const displayTokens = actor.displayName
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length >= 4);
+
+  if (newPassword.length < 12) {
+    issues.push('Use at least 12 characters.');
+  }
+
+  if (!/[a-z]/.test(newPassword)) {
+    issues.push('Include a lowercase letter.');
+  }
+
+  if (!/[A-Z]/.test(newPassword)) {
+    issues.push('Include an uppercase letter.');
+  }
+
+  if (!/[0-9]/.test(newPassword)) {
+    issues.push('Include a number.');
+  }
+
+  if (!/[^A-Za-z0-9]/.test(newPassword)) {
+    issues.push('Include a symbol.');
+  }
+
+  if (emailLocalPart.length >= 4 && normalizedPassword.includes(emailLocalPart)) {
+    issues.push('Do not include the email username.');
+  }
+
+  if (displayTokens.some((token) => normalizedPassword.includes(token))) {
+    issues.push('Do not include your display name.');
+  }
+
+  if (issues.length > 0) {
+    throw badRequest(
+      'password_strength_failed',
+      'The new password does not meet admin security requirements.',
+      issues
+    );
+  }
 };
 
 const collectActor = (rows: Array<ActorRow | SessionRow>) => {
@@ -83,6 +228,7 @@ const collectActor = (rows: Array<ActorRow | SessionRow>) => {
     displayName: first.display_name,
     email: first.email,
     id: first.public_id,
+    mustRotatePassword: Boolean(first.must_rotate_password),
     permissionCodes,
     roleCodes,
     sessionId: 'session_id' in first ? first.session_id : undefined,
@@ -148,21 +294,6 @@ const fetchActorByIdentifier = async (identifier: string) => {
     actor: collectActor(rows),
     firstRow: rows[0] || null,
   };
-};
-
-const grantDevelopmentOpsAdminRole = async (userId: number) => {
-  await queryRows(
-    `INSERT INTO user_roles (
-       user_id, role_code, granted_by_user_id, starts_at, ends_at, is_active, created_at, updated_at
-     ) VALUES (
-       ?, 'ops_admin', NULL, UTC_TIMESTAMP(6), NULL, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)
-     )
-     ON DUPLICATE KEY UPDATE
-       is_active = 1,
-       ends_at = NULL,
-       updated_at = UTC_TIMESTAMP(6)`,
-    [userId]
-  );
 };
 
 const fetchActorBySessionToken = async (rawSessionToken: string) => {
@@ -258,14 +389,7 @@ export const getSession = async (request: Request, response: Response) => {
   return {
     authenticated: true,
     csrfToken,
-    user: {
-      displayName: resolution.actor.displayName,
-      email: resolution.actor.email,
-      id: resolution.actor.id,
-      mustRotatePassword: false,
-      permissionCodes: resolution.actor.permissionCodes,
-      roleCodes: resolution.actor.roleCodes,
-    },
+    user: toAdminSessionUser(resolution.actor),
   };
 };
 
@@ -276,79 +400,81 @@ export const signIn = async (
   request: Request,
   response: Response
 ) => {
-  const initialResolution = await fetchActorByIdentifier(identifier);
+  const rateLimitKey = getRateLimitKey(identifier, request);
+  assertSignInAllowed(rateLimitKey);
 
-  if (!initialResolution.firstRow?.password_hash) {
-    throw unauthorized('invalid_credentials', 'Invalid email or password.');
-  }
+  try {
+    const initialResolution = await fetchActorByIdentifier(identifier);
 
-  const passwordMatches = await verifyPassword(password, initialResolution.firstRow.password_hash);
-  if (!passwordMatches) {
-    throw unauthorized('invalid_credentials', 'Invalid email or password.');
-  }
+    if (!initialResolution.firstRow?.password_hash) {
+      throw unauthorized('invalid_credentials', 'Invalid email or password.');
+    }
 
-  let actor = initialResolution.actor;
+    const passwordMatches = await verifyPassword(password, initialResolution.firstRow.password_hash);
+    if (!passwordMatches) {
+      throw unauthorized('invalid_credentials', 'Invalid email or password.');
+    }
 
-  if (!actor && env.APP_ENV === 'development') {
-    await grantDevelopmentOpsAdminRole(initialResolution.firstRow.user_id);
-    actor = (await fetchActorByIdentifier(identifier)).actor;
-  }
+    const actor = initialResolution.actor;
 
-  if (!actor) {
-    throw forbidden(
-      'admin_access_required',
-      'This account does not have admin access yet. Ask an existing admin to grant a role.'
+    if (!actor) {
+      throw forbidden(
+        'admin_access_required',
+        'This account does not have admin access yet. Ask an existing admin to grant a role.'
+      );
+    }
+
+    const sessionToken = createRandomToken();
+    const csrfToken = createRandomToken(18);
+    const sessionTokenHash = hashOpaqueValue(sessionToken, env.AUTH_SESSION_SECRET);
+    const csrfTokenHash = hashOpaqueValue(csrfToken, env.AUTH_SESSION_SECRET);
+
+    await queryRows(
+      `INSERT INTO user_sessions (
+         public_id, user_id, session_token_hash, csrf_secret_hash, remember_me, ip_address,
+         user_agent, device_label, expires_at, last_seen_at, revoked_at, created_at, updated_at
+       ) VALUES (
+         ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6) + INTERVAL ? HOUR, UTC_TIMESTAMP(6),
+         NULL, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)
+       )`,
+      [
+        createPublicId(),
+        actor.userId,
+        sessionTokenHash,
+        csrfTokenHash,
+        rememberMe ? 1 : 0,
+        request.ip,
+        request.header('user-agent')?.trim() || null,
+        null,
+        rememberMe ? env.REMEMBER_ME_TTL_DAYS * 24 : env.SESSION_TTL_HOURS,
+      ]
     );
+
+    await queryRows(
+      `UPDATE users SET last_login_at = UTC_TIMESTAMP(6), updated_at = UTC_TIMESTAMP(6) WHERE id = ?`,
+      [actor.userId]
+    );
+
+    clearSignInFailures(rateLimitKey);
+
+    setSessionCookies(response, {
+      csrfToken,
+      rememberMe,
+      sessionToken,
+    });
+
+    return {
+      authenticated: true,
+      csrfToken,
+      user: toAdminSessionUser(actor),
+    };
+  } catch (error) {
+    if (shouldCountSignInFailure(error)) {
+      recordSignInFailure(rateLimitKey);
+    }
+
+    throw error;
   }
-
-  const sessionToken = createRandomToken();
-  const csrfToken = createRandomToken(18);
-  const sessionTokenHash = hashOpaqueValue(sessionToken, env.AUTH_SESSION_SECRET);
-  const csrfTokenHash = hashOpaqueValue(csrfToken, env.AUTH_SESSION_SECRET);
-
-  await queryRows(
-    `INSERT INTO user_sessions (
-       public_id, user_id, session_token_hash, csrf_secret_hash, remember_me, ip_address,
-       user_agent, device_label, expires_at, last_seen_at, revoked_at, created_at, updated_at
-     ) VALUES (
-       ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6) + INTERVAL ? HOUR, UTC_TIMESTAMP(6),
-       NULL, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)
-     )`,
-    [
-      createPublicId(),
-      actor.userId,
-      sessionTokenHash,
-      csrfTokenHash,
-      rememberMe ? 1 : 0,
-      request.ip,
-      request.header('user-agent')?.trim() || null,
-      null,
-      rememberMe ? env.REMEMBER_ME_TTL_DAYS * 24 : env.SESSION_TTL_HOURS,
-    ]
-  );
-
-  await queryRows(`UPDATE users SET last_login_at = UTC_TIMESTAMP(6), updated_at = UTC_TIMESTAMP(6) WHERE id = ?`, [
-    actor.userId,
-  ]);
-
-  setSessionCookies(response, {
-    csrfToken,
-    rememberMe,
-    sessionToken,
-  });
-
-  return {
-    authenticated: true,
-    csrfToken,
-    user: {
-      displayName: actor.displayName,
-      email: actor.email,
-      id: actor.id,
-      mustRotatePassword: false,
-      permissionCodes: actor.permissionCodes,
-      roleCodes: actor.roleCodes,
-    },
-  };
 };
 
 export const signOut = async (request: Request, response: Response) => {
@@ -379,7 +505,103 @@ export const signOut = async (request: Request, response: Response) => {
   return { status: 'signed_out' as const };
 };
 
-export const requireAdminSession = async (request: Request, options?: { requireCsrf?: boolean }) => {
+export const changePassword = async (
+  request: Request,
+  currentPassword: string,
+  newPassword: string
+) => {
+  const actor = await requireAdminSession(request, {
+    allowPasswordRotationRequired: true,
+    requireCsrf: true,
+  });
+
+  if (newPassword === currentPassword) {
+    throw badRequest(
+      'password_reuse_not_allowed',
+      'The new password must be different from the current password.'
+    );
+  }
+
+  validateStrongPassword(newPassword, actor);
+
+  const credentialRows = await queryRows<CredentialRow>(
+    `SELECT password_hash, must_rotate_password
+     FROM user_credentials
+     WHERE user_id = ?
+     LIMIT 1`,
+    [actor.userId]
+  );
+  const credential = credentialRows[0] || null;
+
+  if (!credential) {
+    throw unauthorized('invalid_credentials', 'Invalid current password.');
+  }
+
+  const currentPasswordMatches = await verifyPassword(currentPassword, credential.password_hash);
+  if (!currentPasswordMatches) {
+    throw unauthorized('invalid_credentials', 'Invalid current password.');
+  }
+
+  const nextPasswordHash = await hashPassword(newPassword);
+
+  await withTransaction(async (connection) => {
+    await executeStatement<ResultSetHeader>(
+      `UPDATE user_credentials
+       SET password_hash = ?,
+           password_algo = 'scrypt',
+           password_changed_at = UTC_TIMESTAMP(6),
+           must_rotate_password = 0
+       WHERE user_id = ?`,
+      [nextPasswordHash, actor.userId],
+      connection
+    );
+
+    await executeStatement(
+      `UPDATE user_sessions
+       SET revoked_at = UTC_TIMESTAMP(6), updated_at = UTC_TIMESTAMP(6)
+       WHERE user_id = ?
+         AND id <> ?
+         AND revoked_at IS NULL`,
+      [actor.userId, actor.sessionId || 0],
+      connection
+    );
+
+    await createAuditEvent(
+      {
+        actionCode: 'admin.password_changed',
+        actionLabel: 'Admin password changed',
+        actorRoleCode: actor.roleCodes[0] || 'ops_admin',
+        actorUserId: actor.userId,
+        changes: [
+          {
+            fieldName: 'must_rotate_password',
+            newValue: false,
+            oldValue: Boolean(credential.must_rotate_password),
+          },
+        ],
+        entityPk: actor.userId,
+        entityTableName: 'users',
+        sourceModule: 'admin_auth',
+        summaryNewValue: { mustRotatePassword: false },
+        summaryOldValue: { mustRotatePassword: Boolean(credential.must_rotate_password) },
+      },
+      connection
+    );
+  });
+
+  return {
+    status: 'password_changed' as const,
+    user: toAdminSessionUser({
+      ...actor,
+      mustRotatePassword: false,
+    }),
+  };
+};
+
+export const requireAdminSession = async (
+  request: Request,
+  options?: { allowPasswordRotationRequired?: boolean; requireCsrf?: boolean }
+) => {
   const rawSessionToken = getSessionToken(request);
 
   if (!rawSessionToken) {
@@ -397,6 +619,13 @@ export const requireAdminSession = async (request: Request, options?: { requireC
     if (!csrfToken || hashOpaqueValue(csrfToken, env.AUTH_SESSION_SECRET) !== resolution.csrfHash) {
       throw forbidden('csrf_mismatch', 'CSRF validation failed.');
     }
+  }
+
+  if (resolution.actor.mustRotatePassword && !options?.allowPasswordRotationRequired) {
+    throw forbidden(
+      'password_rotation_required',
+      'Admin password rotation is required before accessing this resource.'
+    );
   }
 
   return resolution.actor;

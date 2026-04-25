@@ -29,7 +29,75 @@ type MatterUpdateRow = RowDataPacket & {
   issueSummary: string;
   operationalStatusCode: string;
   paidAmount: number;
+  priorityCode: string;
   quotedTotalAmount: number;
+};
+
+const CLOSED_MATTER_STATUSES = new Set(['archived', 'completed']);
+const VALID_PRIORITY_CODES = new Set([
+  'awaiting-client',
+  'awaiting-team',
+  'completed',
+  'immediate-6h',
+  'in-progress',
+  'on-hold',
+]);
+
+const firstRow = <TRow>(rows: TRow[]) => rows[0] || null;
+
+const assertMatterStageCode = async (stageCode: string, executor: Parameters<typeof queryRows>[2]) => {
+  const row = firstRow(
+    await queryRows<RowDataPacket & { code: string }>(
+      `SELECT code
+       FROM matter_stages
+       WHERE code = ?
+       LIMIT 1`,
+      [stageCode],
+      executor
+    )
+  );
+
+  if (!row) {
+    throw badRequest('invalid_matter_stage', 'The requested matter stage is not configured.');
+  }
+};
+
+const assertMatterStatusCode = async (statusCode: string, executor: Parameters<typeof queryRows>[2]) => {
+  const row = firstRow(
+    await queryRows<RowDataPacket & { code: string }>(
+      `SELECT code
+       FROM matter_operational_statuses
+       WHERE code = ?
+       LIMIT 1`,
+      [statusCode],
+      executor
+    )
+  );
+
+  if (!row) {
+    throw badRequest('invalid_matter_status', 'The requested matter status is not configured.');
+  }
+};
+
+const assertMatterPriorityCode = (priorityCode: string) => {
+  if (!VALID_PRIORITY_CODES.has(priorityCode)) {
+    throw badRequest('invalid_matter_priority', 'The requested matter priority is not supported.');
+  }
+};
+
+const assertMatterCanMutate = (
+  meta: Pick<MatterUpdateRow, 'operationalStatusCode'>,
+  nextStatusCode?: string
+) => {
+  if (
+    CLOSED_MATTER_STATUSES.has(meta.operationalStatusCode) &&
+    (!nextStatusCode || CLOSED_MATTER_STATUSES.has(nextStatusCode))
+  ) {
+    throw badRequest(
+      'matter_closed',
+      'This matter is closed. Reopen it before making lifecycle, assignment, note, or package changes.'
+    );
+  }
 };
 
 const getAssignmentOptions = async () => {
@@ -98,6 +166,7 @@ export const updateMatterStage = async (
          current_stage_code AS currentStageCode,
          operational_status_code AS operationalStatusCode,
          issue_summary AS issueSummary,
+         priority_code AS priorityCode,
          quoted_total_amount AS quotedTotalAmount,
          paid_total_amount AS paidAmount
        FROM matters
@@ -107,6 +176,20 @@ export const updateMatterStage = async (
       connection
     );
     const meta = metaRows[0];
+    const nextStatusCode = payload.operationalStatusCode || undefined;
+
+    if (!meta) {
+      throw notFound('matter_not_found', 'Matter not found.');
+    }
+
+    await assertMatterStageCode(payload.stageCode, connection);
+    if (nextStatusCode) {
+      await assertMatterStatusCode(nextStatusCode, connection);
+    }
+
+    assertMatterCanMutate(meta, nextStatusCode);
+    const statusChanged = Boolean(nextStatusCode && nextStatusCode !== meta.operationalStatusCode);
+    const stageChanged = payload.stageCode !== meta.currentStageCode;
 
     await executeStatement(
       `UPDATE matters
@@ -147,7 +230,7 @@ export const updateMatterStage = async (
 
     await createAuditEvent(
       {
-        actionCode: 'matter.stage.updated',
+        actionCode: 'matter.stage_updated',
         actionLabel: 'Matter stage updated',
         actorRoleCode: actor.roleCodes[0] || 'case_manager',
         actorUserId: actor.userId,
@@ -174,10 +257,38 @@ export const updateMatterStage = async (
       connection
     );
 
+    if (statusChanged) {
+      await createAuditEvent(
+        {
+          actionCode: 'matter.status_updated',
+          actionLabel: 'Matter status updated',
+          actorRoleCode: actor.roleCodes[0] || 'case_manager',
+          actorUserId: actor.userId,
+          changes: [
+            {
+              fieldName: 'operational_status_code',
+              oldValue: meta.operationalStatusCode,
+              newValue: nextStatusCode,
+            },
+          ],
+          entityPk: matter.id,
+          entityTableName: 'matters',
+          sourceModule: 'matter_detail',
+          summaryOldValue: meta.operationalStatusCode,
+          summaryNewValue: nextStatusCode,
+        },
+        connection
+      );
+    }
+
     if (payload.visibleToClient) {
       await createClientNotifications(
         {
-          bodyText: payload.changeNote || 'Your matter has moved to the next lifecycle stage.',
+          bodyText:
+            payload.changeNote ||
+            (stageChanged
+              ? 'Your matter has moved to the next lifecycle stage.'
+              : 'Your matter status has been updated.'),
           clientAccountId: meta.clientAccountId,
           matterId: matter.id,
           notificationTypeCode: 'matter_update',
@@ -204,7 +315,9 @@ export const addMatterNote = async (
   return withTransaction(async (connection) => {
     const matter = await resolveMatterByPublicId(matterId, connection);
     const metaRows = await queryRows<MatterUpdateRow>(
-      `SELECT client_account_id AS clientAccountId
+      `SELECT
+         client_account_id AS clientAccountId,
+         operational_status_code AS operationalStatusCode
        FROM matters
        WHERE id = ?
        LIMIT 1`,
@@ -212,6 +325,12 @@ export const addMatterNote = async (
       connection
     );
     const meta = metaRows[0];
+
+    if (!meta) {
+      throw notFound('matter_not_found', 'Matter not found.');
+    }
+
+    assertMatterCanMutate(meta);
 
     await executeStatement(
       `INSERT INTO matter_updates (
@@ -239,7 +358,7 @@ export const addMatterNote = async (
 
     await createAuditEvent(
       {
-        actionCode: payload.visibleToClient ? 'matter.client_note.created' : 'matter.internal_note.created',
+        actionCode: 'matter.update_created',
         actionLabel: payload.visibleToClient ? 'Client-visible update added' : 'Internal note added',
         actorRoleCode: actor.roleCodes[0] || 'case_manager',
         actorUserId: actor.userId,
@@ -286,6 +405,22 @@ export const createMatterAssignment = async (
 ) => {
   return withTransaction(async (connection) => {
     const matter = await resolveMatterByPublicId(matterId, connection);
+    const metaRows = await queryRows<MatterUpdateRow>(
+      `SELECT operational_status_code AS operationalStatusCode
+       FROM matters
+       WHERE id = ?
+       LIMIT 1`,
+      [matter.id],
+      connection
+    );
+    const meta = metaRows[0];
+
+    if (!meta) {
+      throw notFound('matter_not_found', 'Matter not found.');
+    }
+
+    assertMatterCanMutate(meta);
+
     const internalUser = payload.internalUserId
       ? await resolveInternalUserByPublicId(payload.internalUserId, connection)
       : null;
@@ -348,8 +483,8 @@ export const createMatterAssignment = async (
 
     await createAuditEvent(
       {
-        actionCode: 'matter.assignment.created',
-        actionLabel: 'Matter assignment created',
+        actionCode: 'matter.assignment_updated',
+        actionLabel: 'Matter assignment updated',
         actorRoleCode: actor.roleCodes[0] || 'case_manager',
         actorUserId: actor.userId,
         changes: [
@@ -375,6 +510,7 @@ export const updateMatterDetails = async (
   payload: {
     issueSummary?: string;
     operationalStatusCode?: string;
+    priorityCode?: string;
     quotedTotalAmount?: number;
     selectedServices?: string[];
   }
@@ -387,6 +523,7 @@ export const updateMatterDetails = async (
          current_stage_code AS currentStageCode,
          operational_status_code AS operationalStatusCode,
          issue_summary AS issueSummary,
+         priority_code AS priorityCode,
          quoted_total_amount AS quotedTotalAmount,
          paid_total_amount AS paidAmount
        FROM matters
@@ -397,13 +534,35 @@ export const updateMatterDetails = async (
     );
     const meta = metaRows[0];
 
+    if (!meta) {
+      throw notFound('matter_not_found', 'Matter not found.');
+    }
+
+    if (payload.operationalStatusCode) {
+      await assertMatterStatusCode(payload.operationalStatusCode, connection);
+    }
+
+    if (payload.priorityCode) {
+      assertMatterPriorityCode(payload.priorityCode);
+    }
+
+    if (payload.selectedServices && payload.selectedServices.length === 0) {
+      throw badRequest('matter_services_required', 'Select at least one service for the matter.');
+    }
+
+    assertMatterCanMutate(meta, payload.operationalStatusCode);
+
     const nextQuotedAmount = payload.quotedTotalAmount ?? meta.quotedTotalAmount;
     const nextDueAmount = Math.max(nextQuotedAmount - meta.paidAmount, 0);
+    const statusChanged = Boolean(
+      payload.operationalStatusCode && payload.operationalStatusCode !== meta.operationalStatusCode
+    );
 
     await executeStatement(
       `UPDATE matters
        SET issue_summary = COALESCE(?, issue_summary),
            operational_status_code = COALESCE(?, operational_status_code),
+           priority_code = COALESCE(?, priority_code),
            quoted_total_amount = ?,
            due_total_amount = ?,
            last_activity_at = UTC_TIMESTAMP(6),
@@ -413,6 +572,7 @@ export const updateMatterDetails = async (
       [
         payload.issueSummary ?? null,
         payload.operationalStatusCode ?? null,
+        payload.priorityCode ?? null,
         nextQuotedAmount,
         nextDueAmount,
         matter.id,
@@ -482,6 +642,13 @@ export const updateMatterDetails = async (
                 newValue: payload.quotedTotalAmount,
               }
             : null,
+          payload.priorityCode !== undefined
+            ? {
+                fieldName: 'priority_code',
+                oldValue: meta.priorityCode,
+                newValue: payload.priorityCode,
+              }
+            : null,
           payload.selectedServices !== undefined
             ? { fieldName: 'selected_services', newValue: payload.selectedServices }
             : null,
@@ -492,6 +659,42 @@ export const updateMatterDetails = async (
       },
       connection
     );
+
+    if (statusChanged) {
+      await createAuditEvent(
+        {
+          actionCode: 'matter.status_updated',
+          actionLabel: 'Matter status updated',
+          actorRoleCode: actor.roleCodes[0] || 'case_manager',
+          actorUserId: actor.userId,
+          changes: [
+            {
+              fieldName: 'operational_status_code',
+              oldValue: meta.operationalStatusCode,
+              newValue: payload.operationalStatusCode,
+            },
+          ],
+          entityPk: matter.id,
+          entityTableName: 'matters',
+          sourceModule: 'matter_detail',
+          summaryOldValue: meta.operationalStatusCode,
+          summaryNewValue: payload.operationalStatusCode,
+        },
+        connection
+      );
+
+      await createClientNotifications(
+        {
+          bodyText: 'Your matter status has been updated in your Global LMG dashboard.',
+          clientAccountId: meta.clientAccountId,
+          matterId: matter.id,
+          notificationTypeCode: 'matter_update',
+          priorityCode: 'normal',
+          title: 'Matter status updated',
+        },
+        connection
+      );
+    }
 
     return { status: 'updated' as const };
   });

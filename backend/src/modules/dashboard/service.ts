@@ -58,6 +58,11 @@ export const dashboardService = {
     return repository.sendMessage(currentClient, threadId, content, attachmentUploadIds);
   },
 
+  async markThreadRead(currentClient: PlatformUser, threadId: string) {
+    const repository = await getRepository();
+    return repository.markThreadRead(currentClient, threadId);
+  },
+
   async selectMatterPackage(
     currentClient: PlatformUser,
     matterId: string,

@@ -73,6 +73,7 @@ export const ClientDashboard = () => {
     currentClient: user,
     matters,
     invoices,
+    payments,
     documents,
     events,
     threads,
@@ -88,6 +89,7 @@ export const ClientDashboard = () => {
     reloadDashboard,
     submitRequest,
     sendMessage,
+    markThreadRead,
     selectMatterPackage,
     uploadDocuments,
     markNotificationRead,
@@ -103,6 +105,7 @@ export const ClientDashboard = () => {
   const [messageInput, setMessageInput] = useState('');
   const [messageThreadSearchQuery, setMessageThreadSearchQuery] = useState('');
   const [messageAttachments, setMessageAttachments] = useState<File[]>([]);
+  const [threadReadInFlight, setThreadReadInFlight] = useState<string | null>(null);
   const [showNewRequest, setShowNewRequest] = useState(false);
   const [invoiceDetail, setInvoiceDetail] = useState<InvoiceDetailResponse | null>(null);
   const [invoiceDetailError, setInvoiceDetailError] = useState<string | null>(null);
@@ -116,6 +119,7 @@ export const ClientDashboard = () => {
   // These filtered collections keep each dashboard panel focused on the signed-in client only.
   const myMatters = matters.filter((matter) => matter.clientId === user.id);
   const myInvoices = invoices.filter((invoice) => invoice.clientId === user.id);
+  const myPayments = payments.filter((payment) => payment.clientId === user.id);
   const myEvents = events.filter(
     (event) => event.clientId === user.id && event.visibleToClient && event.status === 'upcoming'
   );
@@ -127,7 +131,7 @@ export const ClientDashboard = () => {
     (matter) => matter.operationalStatus !== 'completed' && matter.operationalStatus !== 'archived'
   );
   const totalUnread = myThreads.reduce((sum, thread) => sum + thread.unreadCount, 0);
-  const totalNotifications = notifications.length;
+  const totalNotifications = notifications.filter((notification) => !notification.isRead).length;
   const hasDashboardData =
     matters.length > 0 ||
     invoices.length > 0 ||
@@ -269,6 +273,36 @@ export const ClientDashboard = () => {
     setMessageThreadSearchQuery('');
   };
 
+  const handleSelectThread = (threadId: string) => {
+    setSelectedThread(threadId);
+    const thread = myThreads.find((entry) => entry.id === threadId);
+
+    if (thread?.unreadCount && threadReadInFlight !== threadId) {
+      setThreadReadInFlight(threadId);
+      void markThreadRead(threadId)
+        .catch(() => undefined)
+        .finally(() => setThreadReadInFlight(null));
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== 'messages') {
+      return;
+    }
+
+    const activeThreadId = selectedThread || myThreads[0]?.id;
+    const activeThread = myThreads.find((thread) => thread.id === activeThreadId);
+
+    if (!activeThread || activeThread.unreadCount <= 0 || threadReadInFlight === activeThread.id) {
+      return;
+    }
+
+    setThreadReadInFlight(activeThread.id);
+    void markThreadRead(activeThread.id)
+      .catch(() => undefined)
+      .finally(() => setThreadReadInFlight(null));
+  }, [activeTab, selectedThread, myThreads, markThreadRead, threadReadInFlight]);
+
   const handleOpenBilling = () => {
     handleTabChange('billing');
   };
@@ -330,6 +364,11 @@ export const ClientDashboard = () => {
   const handleDownloadDocument = (documentId: string) => {
     const downloadUrl = uploadsApi.buildDocumentDownloadUrl(documentId);
     window.open(downloadUrl, '_blank', 'noopener');
+  };
+
+  const handlePreviewDocument = (documentId: string) => {
+    const previewUrl = uploadsApi.buildDocumentPreviewUrl(documentId);
+    window.open(previewUrl, '_blank', 'noopener');
   };
 
   const handleDownloadInvoice = (invoiceId: string) => {
@@ -469,6 +508,7 @@ export const ClientDashboard = () => {
           myThreads={myThreads}
           onBack={() => setSelectedMatter(null)}
           onDownloadDocument={handleDownloadDocument}
+          onPreviewDocument={handlePreviewDocument}
           onOpenBilling={handleOpenBilling}
           onOpenInvoice={handleOpenInvoice}
           onOpenMessagesForMatter={handleOpenMessages}
@@ -516,6 +556,7 @@ export const ClientDashboard = () => {
             formatSize={formatSize}
             isUploadingDocuments={isUploadingDocuments}
             onDownloadDocument={handleDownloadDocument}
+            onPreviewDocument={handlePreviewDocument}
             onUploadDocuments={(files) => {
               void handleUploadDocuments(files);
             }}
@@ -525,6 +566,7 @@ export const ClientDashboard = () => {
         return (
           <DashboardBillingSection
             myInvoices={myInvoices}
+            myPayments={myPayments}
             onDownloadInvoice={handleDownloadInvoice}
             onPayInvoice={handlePayInvoice}
             onViewInvoice={handleOpenInvoice}
@@ -541,12 +583,13 @@ export const ClientDashboard = () => {
             isUploadingAttachments={isUploadingDocuments}
             selectedAttachments={messageAttachments}
             threadSearchQuery={messageThreadSearchQuery}
-            onSelectThread={setSelectedThread}
+            onSelectThread={handleSelectThread}
             onMessageInputChange={setMessageInput}
             onThreadSearchQueryChange={setMessageThreadSearchQuery}
             onAttachmentSelect={(files) =>
               setMessageAttachments((current) => [...current, ...files])
             }
+            onDownloadAttachment={handleDownloadDocument}
             onRemoveAttachment={(index) =>
               setMessageAttachments((current) => current.filter((_, currentIndex) => currentIndex !== index))
             }

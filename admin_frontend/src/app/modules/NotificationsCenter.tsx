@@ -2,24 +2,39 @@ import React, { useState, useMemo } from 'react';
 import { 
   Bell, Filter, Search, CheckCircle, Clock, MoreVertical, ExternalLink, 
   Folder, CreditCard, FileText, MessageSquare, Briefcase, Info, RefreshCcw, 
-  AlertCircle, X, Users
+  AlertCircle, Loader2, RotateCcw, X, Users
 } from 'lucide-react';
 import { NOTIFICATIONS, SystemNotification, formatDate } from '../data/seedData';
+import type { ReminderWorkspaceResponse } from '../lib/api/contracts';
 import { EmptyState } from './EmptyState';
 
 type FilterType = 'all' | 'billing' | 'document' | 'event' | 'matter' | 'message' | 'system' | 'proposal';
 type FilterStatus = 'all' | 'unread' | 'read' | 'dismissed';
 
 export const NotificationsCenter: React.FC<{
+  actionError?: string | null;
+  actionStatus?: string | null;
+  isProcessingReminders?: boolean;
   notifications?: SystemNotification[];
   onDismiss?: (notificationId: string) => Promise<void>;
   onMarkAllRead?: (notificationIds: string[]) => Promise<void>;
   onMarkAsRead?: (notificationId: string) => Promise<void>;
+  onProcessReminders?: () => Promise<void>;
+  onRetryReminder?: (reminderId: string) => Promise<void>;
+  reminderWorkspace?: ReminderWorkspaceResponse;
+  retryingReminderId?: string | null;
 }> = ({
+  actionError,
+  actionStatus,
+  isProcessingReminders = false,
   notifications = NOTIFICATIONS,
   onDismiss,
   onMarkAllRead,
   onMarkAsRead,
+  onProcessReminders,
+  onRetryReminder,
+  reminderWorkspace,
+  retryingReminderId,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<FilterType>('all');
@@ -103,6 +118,18 @@ export const NotificationsCenter: React.FC<{
           </button>
         </div>
       </div>
+
+      {reminderWorkspace && (
+        <ReminderQueuePanel
+          actionError={actionError}
+          actionStatus={actionStatus}
+          isProcessing={isProcessingReminders}
+          onProcessDue={onProcessReminders}
+          onRetry={onRetryReminder}
+          retryingReminderId={retryingReminderId}
+          workspace={reminderWorkspace}
+        />
+      )}
 
       <div className="flex-1 flex flex-col lg:flex-row gap-6 min-h-0">
         <div className="w-full lg:w-64 flex-shrink-0 space-y-6 overflow-y-auto pr-2 no-scrollbar">
@@ -274,9 +301,18 @@ export const NotificationsCenter: React.FC<{
                                   <X className="w-3.5 h-3.5" /> Dismiss
                                 </button>
                               )}
-                              <button className="text-xs font-medium text-gray-500 hover:text-gray-900 flex items-center gap-1 ml-auto">
-                                View Details <ExternalLink className="w-3.5 h-3.5" />
-                              </button>
+                              {notif.actionUrl ? (
+                                <a
+                                  className="text-xs font-medium text-gray-500 hover:text-gray-900 flex items-center gap-1 ml-auto"
+                                  href={notif.actionUrl}
+                                >
+                                  View Details <ExternalLink className="w-3.5 h-3.5" />
+                                </a>
+                              ) : (
+                                <span className="text-xs font-medium text-gray-400 flex items-center gap-1 ml-auto">
+                                  Details in source workspace
+                                </span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -289,6 +325,149 @@ export const NotificationsCenter: React.FC<{
           </div>
         </div>
       </div>
+    </div>
+  );
+};
+
+const ReminderQueuePanel = ({
+  actionError,
+  actionStatus,
+  isProcessing,
+  onProcessDue,
+  onRetry,
+  retryingReminderId,
+  workspace,
+}: {
+  actionError?: string | null;
+  actionStatus?: string | null;
+  isProcessing: boolean;
+  onProcessDue?: () => Promise<void>;
+  onRetry?: (reminderId: string) => Promise<void>;
+  retryingReminderId?: string | null;
+  workspace: ReminderWorkspaceResponse;
+}) => {
+  const failedReminders = workspace.reminders.filter((reminder) => reminder.status === 'failed');
+  const dueReminders = workspace.reminders.filter(
+    (reminder) => reminder.status === 'pending' || reminder.status === 'processing'
+  );
+
+  return (
+    <div className="mb-6 flex-shrink-0 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <Clock className="h-4 w-4 text-amber-600" />
+            <h2 className="text-sm font-semibold text-gray-900">Reminder Queue</h2>
+            <span className="rounded-full border border-amber-100 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+              local/in-app mode
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-gray-500">
+            Email: {workspace.providerMode.email}. SMS: {workspace.providerMode.sms}. External sends are
+            not claimed here unless a real provider is implemented.
+          </p>
+        </div>
+
+        <button
+          className="inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={!onProcessDue || isProcessing || workspace.metrics.due === 0}
+          onClick={() => {
+            if (onProcessDue) {
+              void onProcessDue();
+            }
+          }}
+          type="button"
+        >
+          {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+          Process Due
+        </button>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <ReminderStat label="Pending" value={workspace.metrics.pending} />
+        <ReminderStat label="Due Now" tone="amber" value={workspace.metrics.due} />
+        <ReminderStat label="Failed" tone="rose" value={workspace.metrics.failed} />
+        <ReminderStat label="Processing" tone="blue" value={workspace.metrics.processing} />
+        <ReminderStat label="Sent 7d" tone="emerald" value={workspace.metrics.sentRecent} />
+      </div>
+
+      {(actionStatus || actionError) && (
+        <div
+          className={`mt-4 rounded-lg border px-3 py-2 text-xs ${
+            actionError
+              ? 'border-red-200 bg-red-50 text-red-700'
+              : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+          }`}
+        >
+          {actionError || actionStatus}
+        </div>
+      )}
+
+      {failedReminders.length > 0 ? (
+        <div className="mt-4 divide-y divide-gray-100 rounded-lg border border-gray-100">
+          {failedReminders.slice(0, 5).map((reminder) => (
+            <div className="flex flex-col gap-3 p-3 md:flex-row md:items-center md:justify-between" key={reminder.id}>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-gray-900">{reminder.eventTitle}</p>
+                <p className="mt-1 text-xs text-gray-500">
+                  {reminder.clientName || 'Client'} · {reminder.recipientName} · scheduled {reminder.scheduledAt}
+                </p>
+                <p className="mt-1 text-xs text-red-600">
+                  {reminder.failureReason || 'Reminder failed and is waiting for retry.'}
+                </p>
+              </div>
+              <button
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!onRetry || retryingReminderId === reminder.id}
+                onClick={() => {
+                  if (onRetry) {
+                    void onRetry(reminder.id);
+                  }
+                }}
+                type="button"
+              >
+                {retryingReminderId === reminder.id ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="h-3.5 w-3.5" />
+                )}
+                Retry
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : dueReminders.length > 0 ? (
+        <p className="mt-4 text-xs text-gray-500">
+          {dueReminders.length} due or processing reminder(s) are ready for local/in-app processing.
+        </p>
+      ) : (
+        <p className="mt-4 text-xs text-gray-500">No failed reminder jobs are waiting for retry.</p>
+      )}
+    </div>
+  );
+};
+
+const ReminderStat = ({
+  label,
+  tone = 'neutral',
+  value,
+}: {
+  label: string;
+  tone?: 'amber' | 'blue' | 'emerald' | 'neutral' | 'rose';
+  value: number;
+}) => {
+  const toneClasses: Record<typeof tone, string> = {
+    amber: 'bg-amber-50 text-amber-700 border-amber-100',
+    blue: 'bg-blue-50 text-blue-700 border-blue-100',
+    emerald: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+    neutral: 'bg-gray-50 text-gray-700 border-gray-100',
+    rose: 'bg-red-50 text-red-700 border-red-100',
+  };
+
+  return (
+    <div className={`rounded-lg border px-3 py-2 ${toneClasses[tone]}`}>
+      <p className="text-[10px] font-bold uppercase tracking-wider opacity-70">{label}</p>
+      <p className="mt-1 text-lg font-semibold">{value}</p>
     </div>
   );
 };

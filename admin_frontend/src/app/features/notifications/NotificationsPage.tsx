@@ -5,8 +5,22 @@ import { adminApi } from '../../lib/api/admin';
 import { NotificationsCenter } from '../../modules/NotificationsCenter';
 
 export const NotificationsPage = () => {
+  const [actionError, setActionError] = React.useState<string | null>(null);
+  const [actionStatus, setActionStatus] = React.useState<string | null>(null);
+  const [isProcessingReminders, setIsProcessingReminders] = React.useState(false);
+  const [retryingReminderId, setRetryingReminderId] = React.useState<string | null>(null);
   const { data, errorMessage, isLoading, refresh } = useAsyncResource(
-    () => adminApi.getNotifications(),
+    async () => {
+      const [notifications, reminderWorkspace] = await Promise.all([
+        adminApi.getNotifications(),
+        adminApi.getReminderWorkspace(),
+      ]);
+
+      return {
+        notifications,
+        reminderWorkspace,
+      };
+    },
     []
   );
 
@@ -32,7 +46,10 @@ export const NotificationsPage = () => {
 
   return (
     <NotificationsCenter
-      notifications={data?.notifications || []}
+      actionError={actionError}
+      actionStatus={actionStatus}
+      isProcessingReminders={isProcessingReminders}
+      notifications={data?.notifications.notifications || []}
       onDismiss={async (notificationId) => {
         await adminApi.dismissNotification(notificationId);
         await refresh();
@@ -45,6 +62,46 @@ export const NotificationsPage = () => {
         await adminApi.markNotificationRead(notificationId);
         await refresh();
       }}
+      onProcessReminders={async () => {
+        setActionError(null);
+        setActionStatus(null);
+        setIsProcessingReminders(true);
+
+        try {
+          const result = await adminApi.processReminders();
+          setActionStatus(
+            `Processed ${result.processed} reminder(s); ${result.failed} failed and ${result.skipped} skipped.`
+          );
+          await refresh();
+        } catch (error) {
+          setActionError(error instanceof Error ? error.message : 'Reminder processing failed.');
+        } finally {
+          setIsProcessingReminders(false);
+        }
+      }}
+      onRetryReminder={async (reminderId) => {
+        setActionError(null);
+        setActionStatus(null);
+        setRetryingReminderId(reminderId);
+
+        try {
+          const result = await adminApi.retryReminder(reminderId);
+          setActionStatus(
+            result.status === 'already_sent'
+              ? 'That reminder was already processed.'
+              : result.status === 'skipped'
+                ? 'That reminder is no longer client-visible and was skipped.'
+                : 'Reminder retried and processed in local/in-app mode.'
+          );
+          await refresh();
+        } catch (error) {
+          setActionError(error instanceof Error ? error.message : 'Reminder retry failed.');
+        } finally {
+          setRetryingReminderId(null);
+        }
+      }}
+      reminderWorkspace={data?.reminderWorkspace}
+      retryingReminderId={retryingReminderId}
     />
   );
 };

@@ -37,6 +37,17 @@ export const MessagesPage = () => {
       invoices={data?.invoices}
       matters={data?.matters}
       messages={data?.messages}
+      onArchiveThread={async (threadId) => {
+        await adminApi.archiveThread(threadId);
+        await refresh();
+      }}
+      onDownloadAttachment={(documentId) => {
+        window.open(adminApi.buildDocumentDownloadUrl(documentId), '_blank', 'noopener');
+      }}
+      onMarkThreadRead={async (threadId) => {
+        await adminApi.markThreadRead(threadId);
+        await refresh();
+      }}
       onSendReply={async (threadId, content) => {
         await adminApi.replyToThread(threadId, { content, visibleToClient: true });
         await refresh();

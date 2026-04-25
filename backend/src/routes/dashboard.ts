@@ -106,6 +106,20 @@ dashboardRouter.post(
 );
 
 dashboardRouter.post(
+  '/dashboard/messages/:threadId/read',
+  asyncHandler(async (request, response) => {
+    requireCsrf(request);
+    const authenticatedUser = await requireAuthenticatedUser(request, response);
+    const threadId = z.string().trim().min(1).max(96).parse(request.params.threadId);
+    const snapshot = await dashboardService.markThreadRead(
+      toDashboardUser(authenticatedUser),
+      threadId
+    );
+    respondWithSnapshot(response, snapshot);
+  })
+);
+
+dashboardRouter.post(
   '/dashboard/matters/:matterId/package-selection',
   asyncHandler(async (request, response) => {
     requireCsrf(request);

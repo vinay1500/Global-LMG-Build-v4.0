@@ -39,6 +39,14 @@ export const MeetingsPage = () => {
         await adminApi.createEvent(payload);
         await refresh();
       }}
+      onCancelEvent={async (eventId, reason) => {
+        await adminApi.cancelEvent(eventId, { reason });
+        await refresh();
+      }}
+      onUpdateEvent={async (eventId, payload) => {
+        await adminApi.updateEvent(eventId, payload);
+        await refresh();
+      }}
     />
   );
 };

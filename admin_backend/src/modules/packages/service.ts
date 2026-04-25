@@ -59,6 +59,7 @@ type MatterMetaRow = RowDataPacket & {
   line2: string | null;
   matterId: number;
   matterNumber: string;
+  operationalStatusCode: string;
   paidAmount: number;
   phone: string;
   postalCode: string | null;
@@ -90,12 +91,22 @@ type DraftPackageInput = {
 type ProposalStatus = 'archived' | 'draft' | 'published' | 'selected' | 'superseded';
 
 const PACKAGE_INVOICE_DUE_DAYS = 7;
+const CLOSED_MATTER_STATUSES = new Set(['archived', 'completed']);
 
 const toDateOnly = (value: Date) => value.toISOString().slice(0, 10);
 
 const firstRow = <TRow>(rows: TRow[]) => rows[0] || null;
 
 const uniqueStrings = (values: string[]) => [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+
+const assertMatterPackageMutable = (matter: Pick<MatterMetaRow, 'operationalStatusCode'>) => {
+  if (CLOSED_MATTER_STATUSES.has(matter.operationalStatusCode)) {
+    throw badRequest(
+      'matter_closed',
+      'This matter is closed. Reopen it before changing package proposals or selections.'
+    );
+  }
+};
 
 const allocateInvoiceNumber = async (connection: Parameters<typeof executeStatement>[2]) => {
   const year = new Date().getUTCFullYear();
@@ -248,6 +259,7 @@ const getMatterMeta = async (
        m.id AS matterId,
        m.title,
        m.matter_number AS matterNumber,
+       m.operational_status_code AS operationalStatusCode,
        m.client_account_id AS clientAccountId,
        m.selected_matter_package_id AS selectedPackageDbId,
        m.paid_total_amount AS paidAmount,
@@ -580,6 +592,7 @@ export const saveDraftProposal = async (
     const matter = await resolveMatterByPublicId(matterId, connection);
     const matterMeta = await getMatterMeta(matterId, connection);
     const packages = payload.packages;
+    assertMatterPackageMutable(matterMeta);
 
     if (packages.length === 0) {
       throw badRequest('proposal_packages_required', 'Add at least one package before saving the draft.');
@@ -622,6 +635,7 @@ export const saveDraftProposal = async (
     );
     const proposalVersion = payload.proposalVersion || draftRows[0]?.proposalVersion || highestVersion + 1;
     const targetRows = existingRows.filter((row) => row.proposalVersion === proposalVersion);
+    const isUpdatingDraft = targetRows.length > 0;
 
     if (
       targetRows.some((row) => Boolean(row.publishedAt) || Boolean(row.supersededAt) || Boolean(row.archivedAt))
@@ -729,12 +743,16 @@ export const saveDraftProposal = async (
     await touchMatterActivity(matter.id, connection);
     await createAuditEvent(
       {
-        actionCode: 'matter.package.draft.saved',
-        actionLabel: 'Package draft saved',
+        actionCode: isUpdatingDraft ? 'package.updated' : 'package.created',
+        actionLabel: isUpdatingDraft ? 'Package proposal draft updated' : 'Package proposal draft created',
         actorRoleCode: actor.roleCodes[0] || 'case_manager',
         actorUserId: actor.userId,
+        changes: [
+          { fieldName: 'proposal_version_no', newValue: proposalVersion },
+          { fieldName: 'package_count', newValue: packages.length },
+        ],
         entityPk: matter.id,
-        entityTableName: 'matters',
+        entityTableName: 'matter_packages',
         sourceModule: 'matter_package_studio',
         summaryNewValue: `Draft v${proposalVersion}`,
       },
@@ -755,6 +773,7 @@ export const publishProposal = async (
   withTransaction(async (connection) => {
     const matter = await resolveMatterByPublicId(matterId, connection);
     const matterMeta = await getMatterMeta(matterId, connection);
+    assertMatterPackageMutable(matterMeta);
     const targetRows = await queryRows<MatterPackageRow>(
       `SELECT
          mp.id AS dbId,
@@ -784,12 +803,23 @@ export const publishProposal = async (
       throw notFound('proposal_not_found', 'Proposal version not found.');
     }
 
+    if (targetRows.every((row) => Boolean(row.publishedAt) && !row.archivedAt && !row.supersededAt)) {
+      return loadMatterPackageWorkspace(matterId, connection);
+    }
+
     if (
       targetRows.some((row) => Boolean(row.archivedAt) || Boolean(row.supersededAt) || Boolean(row.publishedAt))
     ) {
       throw badRequest(
         'proposal_not_publishable',
         'Only a live draft proposal can be published.'
+      );
+    }
+
+    if (targetRows.some((row) => !row.packageName.trim() || Number(row.price) <= 0)) {
+      throw badRequest(
+        'proposal_incomplete',
+        'Every package must have a name and a positive price before publishing.'
       );
     }
 
@@ -848,12 +878,12 @@ export const publishProposal = async (
 
     await createAuditEvent(
       {
-        actionCode: 'matter.package.published',
+        actionCode: 'package.published',
         actionLabel: 'Package proposal published',
         actorRoleCode: actor.roleCodes[0] || 'case_manager',
         actorUserId: actor.userId,
         entityPk: matter.id,
-        entityTableName: 'matters',
+        entityTableName: 'matter_packages',
         sourceModule: 'matter_package_studio',
         summaryNewValue: `Published v${payload.proposalVersion}`,
       },
@@ -874,6 +904,7 @@ export const overridePackageSelection = async (
   withTransaction(async (connection) => {
     const matter = await resolveMatterByPublicId(matterId, connection);
     const matterMeta = await getMatterMeta(matterId, connection);
+    assertMatterPackageMutable(matterMeta);
     const packageRows = await queryRows<MatterPackageRow>(
       `SELECT
          mp.id AS dbId,
@@ -996,9 +1027,22 @@ export const overridePackageSelection = async (
       connection
     );
 
+    await createClientNotifications(
+      {
+        bodyText:
+          'Your selected service package has been updated by the Global LMG operations team.',
+        clientAccountId: matterMeta.clientAccountId,
+        matterId: matter.id,
+        notificationTypeCode: 'proposal',
+        priorityCode: 'normal',
+        title: 'Package selection updated',
+      },
+      connection
+    );
+
     await createAuditEvent(
       {
-        actionCode: 'matter.package.override',
+        actionCode: 'package.selection_overridden',
         actionLabel: 'Package selection overridden',
         actorRoleCode: actor.roleCodes[0] || 'case_manager',
         actorUserId: actor.userId,
@@ -1007,7 +1051,7 @@ export const overridePackageSelection = async (
           { fieldName: 'reason_text', newValue: payload.reasonText },
         ],
         entityPk: matter.id,
-        entityTableName: 'matters',
+        entityTableName: 'matter_packages',
         sourceModule: 'matter_package_studio',
         summaryNewValue: payload.reasonText,
       },
@@ -1031,6 +1075,7 @@ export const archiveProposal = async (
   withTransaction(async (connection) => {
     const matter = await resolveMatterByPublicId(matterId, connection);
     const matterMeta = await getMatterMeta(matterId, connection);
+    assertMatterPackageMutable(matterMeta);
     const rows = await queryRows<MatterPackageRow>(
       `SELECT
          mp.id AS dbId,
@@ -1060,6 +1105,13 @@ export const archiveProposal = async (
       throw notFound('proposal_not_found', 'Proposal version not found.');
     }
 
+    if (matterMeta.selectedPackageDbId && rows.some((row) => row.dbId === matterMeta.selectedPackageDbId)) {
+      throw badRequest(
+        'proposal_archive_blocked',
+        'The selected package proposal cannot be archived while it is the active matter selection.'
+      );
+    }
+
     const status = proposalStatusForRows(rows, matterMeta.selectedPackageDbId);
     if (status === 'published' || status === 'selected') {
       throw badRequest(
@@ -1082,12 +1134,12 @@ export const archiveProposal = async (
 
     await createAuditEvent(
       {
-        actionCode: 'matter.package.archived',
+        actionCode: 'package.archived',
         actionLabel: 'Proposal archived',
         actorRoleCode: actor.roleCodes[0] || 'case_manager',
         actorUserId: actor.userId,
         entityPk: matter.id,
-        entityTableName: 'matters',
+        entityTableName: 'matter_packages',
         sourceModule: 'matter_package_studio',
         summaryNewValue: `Archived v${proposalVersion}`,
       },

@@ -37,6 +37,7 @@ interface DashboardMessagesSectionProps {
   onMessageInputChange: (value: string) => void;
   onThreadSearchQueryChange: (value: string) => void;
   onAttachmentSelect: (files: File[]) => void;
+  onDownloadAttachment: (documentId: string) => void;
   onRemoveAttachment: (index: number) => void;
   onSendMessage: () => void;
 }
@@ -54,6 +55,7 @@ export const DashboardMessagesSection = ({
   onMessageInputChange,
   onThreadSearchQueryChange,
   onAttachmentSelect,
+  onDownloadAttachment,
   onRemoveAttachment,
   onSendMessage,
 }: DashboardMessagesSectionProps) => {
@@ -160,16 +162,18 @@ export const DashboardMessagesSection = ({
                       {message.attachments && message.attachments.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-2">
                           {message.attachments.map((attachment, index) => (
-                            <span
-                              key={`${message.id}-${attachment}-${index}`}
+                            <button
+                              key={`${message.id}-${attachment.documentId}-${index}`}
+                              type="button"
+                              onClick={() => onDownloadAttachment(attachment.documentId)}
                               className={`rounded-full px-2.5 py-1 text-[11px] ${
                                 message.senderRole === 'client'
                                   ? 'bg-white/15 text-white'
                                   : 'bg-white text-gray-600'
                               }`}
                             >
-                              {attachment}
-                            </span>
+                              {attachment.name}
+                            </button>
                           ))}
                         </div>
                       )}
@@ -202,6 +206,7 @@ export const DashboardMessagesSection = ({
                   ref={attachmentInputRef}
                   type="file"
                   multiple
+                  accept=".csv,.doc,.docx,.gif,.jpg,.jpeg,.pdf,.png,.txt,.webp,.xls,.xlsx,.zip"
                   className="hidden"
                   onChange={(event) => {
                     const files = event.target.files ? Array.from(event.target.files) : [];

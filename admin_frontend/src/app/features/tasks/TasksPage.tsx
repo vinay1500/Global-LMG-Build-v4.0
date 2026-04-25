@@ -59,6 +59,11 @@ export const TasksPage = () => {
           return;
         }
 
+        if (task.sourceType === 'reminder') {
+          navigate('/notifications');
+          return;
+        }
+
         navigate('/meetings');
       }}
       tasks={data?.tasks}

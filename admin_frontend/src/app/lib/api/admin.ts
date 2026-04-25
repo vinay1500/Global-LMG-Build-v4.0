@@ -1,9 +1,11 @@
 import type {
   AuditEntriesResponse,
+  AdminDocumentDetailResponse,
   BillingWorkspaceResponse,
   ClientWorkspaceResponse,
   ClientsListResponse,
   DashboardWorkspaceResponse,
+  DocumentUploadResponse,
   DocumentsListResponse,
   EventsWorkspaceResponse,
   MatterPackageProposalsResponse,
@@ -11,6 +13,11 @@ import type {
   MattersListResponse,
   MessagesWorkspaceResponse,
   NotificationsListResponse,
+  ReminderProcessResponse,
+  ReminderRetryResponse,
+  ReminderWorkspaceResponse,
+  RecordPaymentResponse,
+  AdminRequestDecisionResponse,
   ReportsWorkspaceResponse,
   RequestsWorkspaceResponse,
   RbacWorkspaceResponse,
@@ -34,6 +41,21 @@ const withQuery = (url: string, params: Record<string, string | number | undefin
 
   const query = searchParams.toString();
   return query ? `${url}?${query}` : url;
+};
+
+const toHex = (buffer: ArrayBuffer) =>
+  Array.from(new Uint8Array(buffer))
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('');
+
+const computeFileSha256 = async (file: File) => {
+  const content = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', content);
+
+  return {
+    checksumSha256: toHex(digest),
+    content,
+  };
 };
 
 export const adminApi = {
@@ -66,6 +88,36 @@ export const adminApi = {
       headers: { 'content-type': 'application/json' },
       method: 'POST',
     }),
+  updateEvent: (
+    eventId: string,
+    payload: {
+      clientAccountId?: string;
+      date?: string;
+      durationMinutes?: number;
+      matterId?: string | null;
+      meetLink?: string | null;
+      mode?: string;
+      notes?: string | null;
+      time?: string;
+      title?: string;
+      type?: string;
+      visibleToClient?: boolean;
+    }
+  ) =>
+    apiRequest<{ eventId: string; status: 'updated' }>(API_ENDPOINTS.admin.updateEvent(eventId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+    }),
+  cancelEvent: (eventId: string, payload: { reason?: string } = {}) =>
+    apiRequest<{ eventId: string; status: 'cancelled' }>(
+      API_ENDPOINTS.admin.cancelEvent(eventId),
+      {
+        body: JSON.stringify(payload),
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      }
+    ),
   createMatterAssignment: (
     matterId: string,
     payload: {
@@ -104,6 +156,19 @@ export const adminApi = {
       headers: { 'content-type': 'application/json' },
       method: 'POST',
     }),
+  recordPayment: (payload: {
+    amount: number;
+    invoiceId: string;
+    notes?: string;
+    paymentDate: string;
+    paymentMethod: 'bank-transfer' | 'cash' | 'cheque' | 'online';
+    referenceNumber?: string;
+  }) =>
+    apiRequest<RecordPaymentResponse>(API_ENDPOINTS.admin.recordPayment(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
   getAuditEntries: () => apiRequest<AuditEntriesResponse>(API_ENDPOINTS.admin.audit()),
   getBillingWorkspace: () =>
     apiRequest<BillingWorkspaceResponse>(API_ENDPOINTS.admin.billingWorkspace()),
@@ -111,6 +176,8 @@ export const adminApi = {
     apiRequest<ClientWorkspaceResponse>(API_ENDPOINTS.admin.clientWorkspace(clientId)),
   getDashboardWorkspace: () =>
     apiRequest<DashboardWorkspaceResponse>(API_ENDPOINTS.admin.dashboard()),
+  getDocumentDetail: (documentId: string) =>
+    apiRequest<AdminDocumentDetailResponse>(API_ENDPOINTS.admin.documentDetail(documentId)),
   getDocuments: () => apiRequest<DocumentsListResponse>(API_ENDPOINTS.admin.documents()),
   getEventsWorkspace: () => apiRequest<EventsWorkspaceResponse>(API_ENDPOINTS.admin.events()),
   getHealth: () =>
@@ -123,6 +190,8 @@ export const adminApi = {
     apiRequest<MessagesWorkspaceResponse>(API_ENDPOINTS.admin.messagesWorkspace()),
   getNotifications: () =>
     apiRequest<NotificationsListResponse>(API_ENDPOINTS.admin.notifications()),
+  getReminderWorkspace: () =>
+    apiRequest<ReminderWorkspaceResponse>(API_ENDPOINTS.admin.reminderWorkspace()),
   getReportsWorkspace: () =>
     apiRequest<ReportsWorkspaceResponse>(API_ENDPOINTS.admin.reportsWorkspace()),
   getRequestsWorkspace: () =>
@@ -156,11 +225,53 @@ export const adminApi = {
     apiRequest<{ status: 'dismissed' }>(API_ENDPOINTS.admin.notificationDismiss(notificationId), {
       method: 'POST',
     }),
+  processReminders: () =>
+    apiRequest<ReminderProcessResponse>(API_ENDPOINTS.admin.processReminders(), {
+      body: JSON.stringify({}),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  retryReminder: (reminderId: string) =>
+    apiRequest<ReminderRetryResponse>(API_ENDPOINTS.admin.reminderRetry(reminderId), {
+      method: 'POST',
+    }),
+  markThreadRead: (threadId: string) =>
+    apiRequest<{ status: 'read' }>(API_ENDPOINTS.admin.messageRead(threadId), {
+      method: 'POST',
+    }),
+  archiveThread: (threadId: string) =>
+    apiRequest<{ status: 'archived' }>(API_ENDPOINTS.admin.messageArchive(threadId), {
+      method: 'POST',
+    }),
   replyToThread: (
     threadId: string,
     payload: { content: string; visibleToClient?: boolean }
   ) =>
     apiRequest<{ status: 'created' }>(API_ENDPOINTS.admin.replyToThread(threadId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  approveRequest: (requestId: string, payload: { note?: string } = {}) =>
+    apiRequest<AdminRequestDecisionResponse>(API_ENDPOINTS.admin.requestApprove(requestId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  convertRequest: (requestId: string, payload: { note?: string } = {}) =>
+    apiRequest<AdminRequestDecisionResponse>(API_ENDPOINTS.admin.requestConvert(requestId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  declineRequest: (requestId: string, payload: { note?: string } = {}) =>
+    apiRequest<AdminRequestDecisionResponse>(API_ENDPOINTS.admin.requestDecline(requestId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  requestInformation: (requestId: string, payload: { note: string }) =>
+    apiRequest<AdminRequestDecisionResponse>(API_ENDPOINTS.admin.requestInformation(requestId), {
       body: JSON.stringify(payload),
       headers: { 'content-type': 'application/json' },
       method: 'POST',
@@ -236,11 +347,61 @@ export const adminApi = {
       headers: { 'content-type': 'application/json' },
       method: 'PATCH',
     }),
+  buildDocumentDownloadUrl: (documentId: string) => API_ENDPOINTS.admin.documentDownload(documentId),
+  buildDocumentPreviewUrl: (documentId: string) => API_ENDPOINTS.admin.documentPreview(documentId),
+  uploadDocument: async (payload: {
+    file: File;
+    matterId: string;
+    reviewState: 'reviewed' | 'unreviewed';
+    visibility: 'client' | 'internal';
+  }) => {
+    const { checksumSha256, content } = await computeFileSha256(payload.file);
+
+    return apiRequest<DocumentUploadResponse>(
+      withQuery(API_ENDPOINTS.admin.uploadDocument(), {
+        checksumSha256,
+        fileName: payload.file.name,
+        matterId: payload.matterId,
+        mimeType: payload.file.type || 'application/octet-stream',
+        reviewState: payload.reviewState,
+        visibility: payload.visibility,
+      }),
+      {
+        body: content,
+        headers: { 'content-type': 'application/octet-stream' },
+        method: 'POST',
+      }
+    );
+  },
+  uploadDocumentVersion: async (
+    documentId: string,
+    payload: {
+      file: File;
+      reviewState: 'reviewed' | 'unreviewed';
+    }
+  ) => {
+    const { checksumSha256, content } = await computeFileSha256(payload.file);
+
+    return apiRequest<DocumentUploadResponse>(
+      withQuery(API_ENDPOINTS.admin.documentVersionUpload(documentId), {
+        checksumSha256,
+        fileName: payload.file.name,
+        mimeType: payload.file.type || 'application/octet-stream',
+        reviewState: payload.reviewState,
+      }),
+      {
+        body: content,
+        headers: { 'content-type': 'application/octet-stream' },
+        method: 'POST',
+      }
+    );
+  },
   updateMatterDetails: (
     matterId: string,
     payload: {
       issueSummary?: string;
       operationalStatusCode?: string;
+      priorityCode?: string;
       quotedTotalAmount?: number;
       selectedServices?: string[];
     }

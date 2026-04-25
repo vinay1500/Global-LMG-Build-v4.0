@@ -48,6 +48,7 @@ export interface DashboardContextType {
   reloadDashboard: () => Promise<void>;
   submitRequest: (request: RequestData) => Promise<void>;
   sendMessage: (threadId: string, content: string, attachments?: File[]) => Promise<void>;
+  markThreadRead: (threadId: string) => Promise<void>;
   selectMatterPackage: (
     matterId: string,
     matterPackageId: string,

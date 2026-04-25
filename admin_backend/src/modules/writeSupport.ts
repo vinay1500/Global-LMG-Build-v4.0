@@ -215,7 +215,7 @@ export const createAuditEvent = async (
     actionCode: string;
     actionLabel: string;
     actorRoleCode: string;
-    actorUserId: number;
+    actorUserId: number | null;
     changes?: Array<{ fieldName: string; newValue?: unknown; oldValue?: unknown }>;
     entityPk?: number | null;
     entityTableName: string;

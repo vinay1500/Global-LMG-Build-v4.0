@@ -34,6 +34,11 @@ export interface AdminSessionResponse {
   user: AdminSessionUser | null;
 }
 
+export interface AdminPasswordChangeResponse {
+  status: 'password_changed';
+  user: AdminSessionUser;
+}
+
 export interface ClientListItem extends PlatformUser {
   activeMatters: number;
   hasUnread: boolean;
@@ -119,6 +124,43 @@ export interface MatterPackageProposalsResponse {
 
 export interface DocumentsListResponse {
   documents: PlatformDocument[];
+  matters: Matter[];
+}
+
+export interface AdminDocumentVersion {
+  checksumSha256: string;
+  fileExtension: string;
+  fileSizeBytes: number;
+  id: string;
+  isCurrent: boolean;
+  mimeType: string;
+  originalFileName: string;
+  retentionHold: boolean;
+  reviewState: 'reviewed' | 'unreviewed';
+  uploadedAt: string;
+  uploadedBy: string;
+  versionNo: number;
+  virusStatus: string;
+}
+
+export interface AdminDocumentDetailResponse {
+  categoryCode: string;
+  currentVersionNo: number;
+  documentNumber: string;
+  id: string;
+  latestVersion: AdminDocumentVersion | null;
+  ownerClientAccountId: string;
+  title: string;
+  versions: AdminDocumentVersion[];
+  visibility: 'client' | 'internal';
+  visibilityScopeCode: string;
+}
+
+export interface DocumentUploadResponse {
+  documentId: string;
+  status: 'uploaded' | 'version_uploaded';
+  versionId?: string;
+  versionNo?: number;
 }
 
 export interface AdminRequestRecord {
@@ -156,6 +198,24 @@ export interface RequestsWorkspaceResponse {
   requests: AdminRequestRecord[];
 }
 
+export interface AdminRequestDecisionResponse {
+  matterId?: string;
+  matterNumber?: string;
+  message: string;
+  requestId: string;
+  requestNumber: string;
+  status:
+    | 'already_approved'
+    | 'already_converted'
+    | 'already_declined'
+    | 'approved'
+    | 'converted'
+    | 'declined'
+    | 'information_requested';
+  statusCode: string;
+  statusLabel: string;
+}
+
 export interface MessagesWorkspaceResponse {
   clients: PlatformUser[];
   events: PlatformEvent[];
@@ -176,7 +236,7 @@ export interface AdminTaskRecord {
   note: string;
   priority: 'High' | 'Medium' | 'Low';
   sourceId: string;
-  sourceType: 'document' | 'event' | 'invoice' | 'matter' | 'message';
+  sourceType: 'document' | 'event' | 'invoice' | 'matter' | 'message' | 'reminder';
   status: 'completed' | 'in_progress' | 'todo' | 'waiting_client' | 'waiting_internal';
   title: string;
 }
@@ -197,6 +257,15 @@ export interface BillingWorkspaceResponse {
   matters: Matter[];
   payments: Payment[];
   refunds: RefundRecord[];
+}
+
+export interface RecordPaymentResponse {
+  amountDue: number;
+  amountPaid: number;
+  invoiceId: string;
+  invoiceStatus: string;
+  paymentId: string;
+  status: 'recorded';
 }
 
 export interface RefundRecord {
@@ -222,6 +291,57 @@ export interface EventsWorkspaceResponse {
 
 export interface NotificationsListResponse {
   notifications: SystemNotification[];
+}
+
+export interface ReminderQueueItem {
+  channelCode: string;
+  clientName?: string;
+  deliveryModeLabel: string;
+  eventId: string;
+  eventTitle: string;
+  failureReason?: string;
+  id: string;
+  lockedAt?: string;
+  maxAttempts: number;
+  nextAttemptAt?: string;
+  recipientName: string;
+  retryCount: number;
+  scheduledAt: string;
+  sentAt?: string;
+  status: 'cancelled' | 'failed' | 'pending' | 'processing' | 'sent';
+}
+
+export interface ReminderWorkspaceResponse {
+  metrics: {
+    due: number;
+    failed: number;
+    pending: number;
+    processing: number;
+    sentRecent: number;
+  };
+  providerMode: {
+    email: 'disabled' | 'preview' | 'resend';
+    inApp: 'local';
+    sms: 'disabled' | 'preview' | 'twilio-verify';
+  };
+  reminders: ReminderQueueItem[];
+  status: 'ok';
+}
+
+export interface ReminderProcessResponse {
+  alreadyNotified: number;
+  failed: number;
+  locked: number;
+  processed: number;
+  providerMode: ReminderWorkspaceResponse['providerMode'];
+  skipped: number;
+  status: 'processed';
+}
+
+export interface ReminderRetryResponse {
+  providerMode: ReminderWorkspaceResponse['providerMode'];
+  reminderId: string;
+  status: 'already_sent' | 'retried' | 'skipped';
 }
 
 export interface AuditEntriesResponse {
@@ -276,8 +396,10 @@ export interface DashboardWorkspaceResponse {
   };
   metrics: {
     docBacklog: number;
+    failedReminders?: number;
     openMatters: number;
     pendingInvoices: number;
+    pendingReminders?: number;
     unreadThreads: number;
   };
   recentAudit: AuditEntry[];

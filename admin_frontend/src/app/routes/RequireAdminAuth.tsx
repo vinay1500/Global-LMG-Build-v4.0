@@ -5,7 +5,7 @@ import { useAdminSession } from '../providers/AdminSessionProvider';
 
 export const RequireAdminAuth = () => {
   const location = useLocation();
-  const { isAuthenticated, isReady } = useAdminSession();
+  const { isAuthenticated, isReady, mustRotatePassword } = useAdminSession();
 
   if (!isReady) {
     return <SessionBootstrapPage />;
@@ -13,6 +13,10 @@ export const RequireAdminAuth = () => {
 
   if (!isAuthenticated) {
     return <Navigate replace state={{ from: location.pathname }} to="/login" />;
+  }
+
+  if (mustRotatePassword) {
+    return <Navigate replace state={{ from: location.pathname }} to="/change-password" />;
   }
 
   return <Outlet />;

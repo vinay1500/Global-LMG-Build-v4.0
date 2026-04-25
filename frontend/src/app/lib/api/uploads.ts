@@ -47,6 +47,7 @@ const storeContent = async (uploadId: string, content: ArrayBuffer) =>
 
 export const uploadsApi = {
   buildDocumentDownloadUrl: (documentId: string) => API_ENDPOINTS.me.documentDownload(documentId),
+  buildDocumentPreviewUrl: (documentId: string) => API_ENDPOINTS.me.documentPreview(documentId),
 
   async uploadFiles(files: File[], options: UploadFilesOptions) {
     const results: StoreUploadContentResponse[] = [];

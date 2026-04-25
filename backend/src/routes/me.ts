@@ -156,6 +156,48 @@ meRouter.get(
 );
 
 meRouter.get(
+  '/me/documents/:documentId/preview',
+  asyncHandler(async (request, response) => {
+    const actor = await requireClientActor(request, response);
+    assertPermission(actor.permissionCodes, 'document.view');
+    const result = await documentStorageService.getClientDocumentPreview(
+      actor.publicId,
+      actor.clientAccountId!,
+      getRouteParam(request.params.documentId),
+      {
+        ipAddress: request.ip,
+        userAgent: getUserAgent(request),
+      }
+    );
+
+    await new Promise<void>((resolve, reject) => {
+      response.sendFile(
+        result.absolutePath,
+        {
+          headers: {
+            'Cache-Control': 'no-store',
+            'Content-Disposition': `inline; filename="${sanitizeDownloadFilename(
+              result.originalName
+            )}"`,
+            'Content-Security-Policy': 'sandbox',
+            'Content-Type': result.mimeType,
+            'X-Content-Type-Options': 'nosniff',
+          },
+        },
+        (error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+
+          resolve();
+        }
+      );
+    });
+  })
+);
+
+meRouter.get(
   '/me/events',
   asyncHandler(async (request, response) => {
     const actor = await requireClientActor(request, response);

@@ -1,46 +1,60 @@
 import React, { useEffect, useState } from 'react';
-import { AlertCircle, ArrowRight, Scale } from 'lucide-react';
-import { useLocation, useNavigate } from 'react-router';
+import { AlertCircle, ArrowRight, KeyRound, Scale } from 'lucide-react';
+import { Navigate, useLocation, useNavigate } from 'react-router';
 import { ApiRequestError } from '../../lib/api/client';
 import { useAdminSession } from '../../providers/AdminSessionProvider';
+import { SessionBootstrapPage } from './SessionBootstrapPage';
 
-export const LoginPage = () => {
+export const PasswordRotationPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAuthenticated, mustRotatePassword, signIn } = useAdminSession();
-  const [identifier, setIdentifier] = useState('');
-  const [password, setPassword] = useState('');
-  const [rememberMe, setRememberMe] = useState(true);
+  const {
+    changePassword,
+    isAuthenticated,
+    isReady,
+    mustRotatePassword,
+  } = useAdminSession();
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const from = (location.state as { from?: string } | null)?.from || '/dashboard';
 
   useEffect(() => {
-    if (isAuthenticated) {
-      navigate(mustRotatePassword ? '/change-password' : from, {
-        replace: true,
-        state: { from },
-      });
+    if (isReady && isAuthenticated && !mustRotatePassword) {
+      navigate(from, { replace: true });
     }
-  }, [from, isAuthenticated, mustRotatePassword, navigate]);
+  }, [from, isAuthenticated, isReady, mustRotatePassword, navigate]);
+
+  if (!isReady) {
+    return <SessionBootstrapPage />;
+  }
+
+  if (!isAuthenticated) {
+    return <Navigate replace state={{ from }} to="/login" />;
+  }
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setIsSubmitting(true);
     setErrorMessage(null);
 
+    if (newPassword !== confirmPassword) {
+      setErrorMessage('New password and confirmation must match.');
+      return;
+    }
+
+    setIsSubmitting(true);
+
     try {
-      const result = await signIn({ identifier, password, rememberMe });
-      navigate(result.status === 'password_rotation_required' ? '/change-password' : from, {
-        replace: true,
-        state: { from },
-      });
+      await changePassword({ currentPassword, newPassword });
+      navigate(from, { replace: true });
     } catch (error) {
       if (error instanceof ApiRequestError) {
         setErrorMessage(error.message);
       } else {
-        setErrorMessage('Unable to sign in right now.');
+        setErrorMessage('Unable to update password right now.');
       }
     } finally {
       setIsSubmitting(false);
@@ -60,48 +74,50 @@ export const LoginPage = () => {
               className="text-2xl text-[#2C2B29]"
               style={{ fontFamily: "'Playfair Display', serif" }}
             >
-              Admin Sign In
+              Change Password
             </h1>
           </div>
         </div>
 
-        <p className="text-sm text-[#8C8981] mb-6">
-          Use your Global LMG admin credentials to continue.
-        </p>
+        <div className="mb-6 flex items-start gap-3 rounded-lg border border-[#E6E4DD] bg-[#FCFBF8] px-4 py-3 text-sm text-[#5A7C96]">
+          <KeyRound className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#C19A5B]" />
+          <p>Your temporary admin password must be replaced before you can use the console.</p>
+        </div>
 
         <form className="space-y-4" onSubmit={handleSubmit}>
           <label className="block">
-            <span className="text-sm font-medium text-[#2C2B29]">Email or phone</span>
+            <span className="text-sm font-medium text-[#2C2B29]">Current password</span>
             <input
               className="mt-2 w-full rounded-lg border border-[#E6E4DD] bg-[#FCFBF8] px-4 py-3 text-sm outline-none focus:border-[#C19A5B]"
-              onChange={(event) => setIdentifier(event.target.value)}
-              placeholder="you@example.com"
+              onChange={(event) => setCurrentPassword(event.target.value)}
               required
-              type="text"
-              value={identifier}
+              type="password"
+              value={currentPassword}
             />
           </label>
 
           <label className="block">
-            <span className="text-sm font-medium text-[#2C2B29]">Password</span>
+            <span className="text-sm font-medium text-[#2C2B29]">New password</span>
             <input
               className="mt-2 w-full rounded-lg border border-[#E6E4DD] bg-[#FCFBF8] px-4 py-3 text-sm outline-none focus:border-[#C19A5B]"
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Enter your password"
+              minLength={12}
+              onChange={(event) => setNewPassword(event.target.value)}
               required
               type="password"
-              value={password}
+              value={newPassword}
             />
           </label>
 
-          <label className="flex items-center gap-2 text-sm text-[#5A7C96]">
+          <label className="block">
+            <span className="text-sm font-medium text-[#2C2B29]">Confirm new password</span>
             <input
-              checked={rememberMe}
-              className="rounded border-[#E6E4DD]"
-              onChange={(event) => setRememberMe(event.target.checked)}
-              type="checkbox"
+              className="mt-2 w-full rounded-lg border border-[#E6E4DD] bg-[#FCFBF8] px-4 py-3 text-sm outline-none focus:border-[#C19A5B]"
+              minLength={12}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+              required
+              type="password"
+              value={confirmPassword}
             />
-            Keep me signed in on this device
           </label>
 
           {errorMessage ? (
@@ -116,7 +132,7 @@ export const LoginPage = () => {
             disabled={isSubmitting}
             type="submit"
           >
-            {isSubmitting ? 'Signing in...' : 'Sign In'}
+            {isSubmitting ? 'Updating...' : 'Update Password'}
             <ArrowRight className="w-4 h-4" />
           </button>
         </form>

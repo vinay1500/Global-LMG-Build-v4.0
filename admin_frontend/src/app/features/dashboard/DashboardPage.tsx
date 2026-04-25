@@ -44,6 +44,8 @@ export const DashboardPage = () => {
     { label: 'Pending Invoices', value: data?.metrics.pendingInvoices || 0, icon: FileText },
     { label: 'Unread Threads', value: data?.metrics.unreadThreads || 0, icon: MessageSquare },
     { label: 'Doc Backlog', value: data?.metrics.docBacklog || 0, icon: AlertCircle },
+    { label: 'Due Reminders', value: data?.metrics.pendingReminders || 0, icon: Calendar },
+    { label: 'Failed Reminders', value: data?.metrics.failedReminders || 0, icon: AlertCircle },
   ];
 
   return (
@@ -89,7 +91,7 @@ export const DashboardPage = () => {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
         {cards.map((card) => {
           const Icon = card.icon;
           return (

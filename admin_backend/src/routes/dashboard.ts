@@ -8,7 +8,7 @@ export const dashboardRouter = Router();
 dashboardRouter.get(
   '/dashboard',
   asyncHandler(async (request, response) => {
-    await requireReadPermission(request, 'dashboard.view');
-    response.json(await getWorkspace());
+    const actor = await requireReadPermission(request, 'dashboard.view');
+    response.json(await getWorkspace(actor.userId));
   })
 );

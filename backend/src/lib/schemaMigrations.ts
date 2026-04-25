@@ -2279,4 +2279,146 @@ export const NORMALIZED_MIGRATIONS: SchemaMigrationDefinition[] = [
        WHERE mp.selected_at IS NULL`
     ],
   },
+  {
+    id: '013-reminder-retry-lifecycle',
+    description:
+      'Add retry, locking, and completion metadata for reliable event reminder processing.',
+    statements: [
+      `SET @event_reminders_has_retry_count := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'event_reminders'
+          AND column_name = 'retry_count'
+      )`,
+      `SET @add_event_reminders_retry_count_sql := IF(
+        @event_reminders_has_retry_count = 0,
+        'ALTER TABLE event_reminders ADD COLUMN retry_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER failure_reason',
+        'DO 0'
+      )`,
+      `PREPARE add_event_reminders_retry_count_stmt FROM @add_event_reminders_retry_count_sql`,
+      `EXECUTE add_event_reminders_retry_count_stmt`,
+      `DEALLOCATE PREPARE add_event_reminders_retry_count_stmt`,
+      `SET @event_reminders_has_max_attempts := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'event_reminders'
+          AND column_name = 'max_attempts'
+      )`,
+      `SET @add_event_reminders_max_attempts_sql := IF(
+        @event_reminders_has_max_attempts = 0,
+        'ALTER TABLE event_reminders ADD COLUMN max_attempts INT UNSIGNED NOT NULL DEFAULT 3 AFTER retry_count',
+        'DO 0'
+      )`,
+      `PREPARE add_event_reminders_max_attempts_stmt FROM @add_event_reminders_max_attempts_sql`,
+      `EXECUTE add_event_reminders_max_attempts_stmt`,
+      `DEALLOCATE PREPARE add_event_reminders_max_attempts_stmt`,
+      `SET @event_reminders_has_next_attempt_at := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'event_reminders'
+          AND column_name = 'next_attempt_at'
+      )`,
+      `SET @add_event_reminders_next_attempt_at_sql := IF(
+        @event_reminders_has_next_attempt_at = 0,
+        'ALTER TABLE event_reminders ADD COLUMN next_attempt_at DATETIME(6) NULL AFTER max_attempts',
+        'DO 0'
+      )`,
+      `PREPARE add_event_reminders_next_attempt_at_stmt FROM @add_event_reminders_next_attempt_at_sql`,
+      `EXECUTE add_event_reminders_next_attempt_at_stmt`,
+      `DEALLOCATE PREPARE add_event_reminders_next_attempt_at_stmt`,
+      `SET @event_reminders_has_locked_at := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'event_reminders'
+          AND column_name = 'locked_at'
+      )`,
+      `SET @add_event_reminders_locked_at_sql := IF(
+        @event_reminders_has_locked_at = 0,
+        'ALTER TABLE event_reminders ADD COLUMN locked_at DATETIME(6) NULL AFTER next_attempt_at',
+        'DO 0'
+      )`,
+      `PREPARE add_event_reminders_locked_at_stmt FROM @add_event_reminders_locked_at_sql`,
+      `EXECUTE add_event_reminders_locked_at_stmt`,
+      `DEALLOCATE PREPARE add_event_reminders_locked_at_stmt`,
+      `SET @event_reminders_has_locked_by := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'event_reminders'
+          AND column_name = 'locked_by'
+      )`,
+      `SET @add_event_reminders_locked_by_sql := IF(
+        @event_reminders_has_locked_by = 0,
+        'ALTER TABLE event_reminders ADD COLUMN locked_by VARCHAR(96) NULL AFTER locked_at',
+        'DO 0'
+      )`,
+      `PREPARE add_event_reminders_locked_by_stmt FROM @add_event_reminders_locked_by_sql`,
+      `EXECUTE add_event_reminders_locked_by_stmt`,
+      `DEALLOCATE PREPARE add_event_reminders_locked_by_stmt`,
+      `SET @event_reminders_has_processed_at := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'event_reminders'
+          AND column_name = 'processed_at'
+      )`,
+      `SET @add_event_reminders_processed_at_sql := IF(
+        @event_reminders_has_processed_at = 0,
+        'ALTER TABLE event_reminders ADD COLUMN processed_at DATETIME(6) NULL AFTER locked_by',
+        'DO 0'
+      )`,
+      `PREPARE add_event_reminders_processed_at_stmt FROM @add_event_reminders_processed_at_sql`,
+      `EXECUTE add_event_reminders_processed_at_stmt`,
+      `DEALLOCATE PREPARE add_event_reminders_processed_at_stmt`,
+      `SET @event_reminders_has_status_due_index := (
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'event_reminders'
+          AND index_name = 'idx_event_reminders_status_due'
+      )`,
+      `SET @add_event_reminders_status_due_index_sql := IF(
+        @event_reminders_has_status_due_index = 0,
+        'ALTER TABLE event_reminders ADD INDEX idx_event_reminders_status_due (delivery_status_code, scheduled_at, next_attempt_at)',
+        'DO 0'
+      )`,
+      `PREPARE add_event_reminders_status_due_index_stmt FROM @add_event_reminders_status_due_index_sql`,
+      `EXECUTE add_event_reminders_status_due_index_stmt`,
+      `DEALLOCATE PREPARE add_event_reminders_status_due_index_stmt`,
+      `SET @event_reminders_has_lock_index := (
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'event_reminders'
+          AND index_name = 'idx_event_reminders_lock'
+      )`,
+      `SET @add_event_reminders_lock_index_sql := IF(
+        @event_reminders_has_lock_index = 0,
+        'ALTER TABLE event_reminders ADD INDEX idx_event_reminders_lock (locked_by, delivery_status_code)',
+        'DO 0'
+      )`,
+      `PREPARE add_event_reminders_lock_index_stmt FROM @add_event_reminders_lock_index_sql`,
+      `EXECUTE add_event_reminders_lock_index_stmt`,
+      `DEALLOCATE PREPARE add_event_reminders_lock_index_stmt`,
+      `SET @notifications_has_event_type_index := (
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'notifications'
+          AND index_name = 'idx_notifications_event_type_recipient'
+      )`,
+      `SET @add_notifications_event_type_index_sql := IF(
+        @notifications_has_event_type_index = 0,
+        'ALTER TABLE notifications ADD INDEX idx_notifications_event_type_recipient (recipient_user_id, event_id, notification_type_code, created_at)',
+        'DO 0'
+      )`,
+      `PREPARE add_notifications_event_type_index_stmt FROM @add_notifications_event_type_index_sql`,
+      `EXECUTE add_notifications_event_type_index_stmt`,
+      `DEALLOCATE PREPARE add_notifications_event_type_index_stmt`
+    ],
+  },
 ];

@@ -4,16 +4,21 @@ import { ApiRequestError } from '../lib/api/client';
 import type { AdminSessionUser } from '../lib/api/contracts';
 
 type AdminSessionContextValue = {
+  changePassword: (payload: {
+    currentPassword: string;
+    newPassword: string;
+  }) => Promise<void>;
   currentUser: AdminSessionUser | null;
   errorMessage: string | null;
   isAuthenticated: boolean;
   isReady: boolean;
+  mustRotatePassword: boolean;
   refreshSession: () => Promise<void>;
   signIn: (payload: {
     identifier: string;
     password: string;
     rememberMe: boolean;
-  }) => Promise<{ status: string }>;
+  }) => Promise<{ status: 'authenticated' | 'password_rotation_required' }>;
   signOut: () => Promise<void>;
 };
 
@@ -48,13 +53,26 @@ export const AdminSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
       if (response.authenticated) {
         setCurrentUser(response.user ?? null);
-        return { status: 'authenticated' };
+        return {
+          status: response.user?.mustRotatePassword
+            ? 'password_rotation_required'
+            : 'authenticated',
+        } as const;
       }
 
       throw new ApiRequestError(
         'admin_auth_incomplete',
         'This account needs an additional auth step before admin access.'
       );
+    },
+    []
+  );
+
+  const changePassword = useCallback(
+    async (payload: { currentPassword: string; newPassword: string }) => {
+      setErrorMessage(null);
+      const response = await authApi.changePassword(payload);
+      setCurrentUser(response.user);
     },
     []
   );
@@ -69,15 +87,17 @@ export const AdminSessionProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   const value = useMemo<AdminSessionContextValue>(
     () => ({
+      changePassword,
       currentUser,
       errorMessage,
       isAuthenticated: Boolean(currentUser),
       isReady,
+      mustRotatePassword: Boolean(currentUser?.mustRotatePassword),
       refreshSession,
       signIn,
       signOut,
     }),
-    [currentUser, errorMessage, isReady, refreshSession, signIn, signOut]
+    [changePassword, currentUser, errorMessage, isReady, refreshSession, signIn, signOut]
   );
 
   return <AdminSessionContext.Provider value={value}>{children}</AdminSessionContext.Provider>;

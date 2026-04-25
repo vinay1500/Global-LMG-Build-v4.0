@@ -177,6 +177,7 @@ export interface Payment {
 
 export interface PlatformEvent {
   actionCTA: string;
+  calendarSyncStatus?: 'disabled' | 'failed' | 'local' | 'synced';
   clientId: string;
   clientName: string;
   date: string;
@@ -188,6 +189,8 @@ export interface PlatformEvent {
   meetLink?: string;
   mode: ConsultationMode | 'court' | 'office';
   notes: string;
+  reminderCount?: number;
+  reminderStatus?: 'cancelled' | 'none' | 'scheduled';
   status: 'upcoming' | 'completed' | 'cancelled' | 'rescheduled';
   time: string;
   title: string;
@@ -227,8 +230,13 @@ export interface MessageThread {
   urgency: UrgencyLevel;
 }
 
+export interface MessageAttachment {
+  documentId: string;
+  name: string;
+}
+
 export interface ChatMessage {
-  attachments?: string[];
+  attachments?: MessageAttachment[];
   content: string;
   id: string;
   read: boolean;

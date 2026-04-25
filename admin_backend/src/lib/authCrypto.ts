@@ -23,6 +23,12 @@ export const createRandomToken = (size = 32) => toBase64Url(randomBytes(size));
 export const hashOpaqueValue = (value: string, secret: string) =>
   createHmac('sha256', secret).update(value).digest('hex');
 
+export const hashPassword = async (password: string) => {
+  const salt = randomBytes(16);
+  const derivedKey = (await scrypt(password, salt, SCRYPT_KEY_LENGTH)) as Buffer;
+  return `scrypt$${toBase64Url(salt)}$${toBase64Url(derivedKey)}`;
+};
+
 export const verifyPassword = async (password: string, storedHash: string) => {
   const [algorithm, encodedSalt, encodedHash] = storedHash.split('$');
 

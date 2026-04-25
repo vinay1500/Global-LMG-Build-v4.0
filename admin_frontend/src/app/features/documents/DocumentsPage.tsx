@@ -33,8 +33,20 @@ export const DocumentsPage = () => {
   return (
     <DocumentsCenterAdmin
       documents={data?.documents || []}
+      matters={data?.matters || []}
+      buildDownloadUrl={adminApi.buildDocumentDownloadUrl}
+      buildPreviewUrl={adminApi.buildDocumentPreviewUrl}
+      onFetchDocumentDetail={adminApi.getDocumentDetail}
       onUpdateDocument={async (documentId, payload) => {
         await adminApi.updateDocumentControls(documentId, payload);
+        await refresh();
+      }}
+      onUploadDocument={async (payload) => {
+        await adminApi.uploadDocument(payload);
+        await refresh();
+      }}
+      onUploadVersion={async (documentId, payload) => {
+        await adminApi.uploadDocumentVersion(documentId, payload);
         await refresh();
       }}
       searchQuery=""

@@ -29,6 +29,7 @@ export const API_ENDPOINTS = {
     snapshot: () => joinApiPath('/v1/dashboard'),
     requests: () => joinApiPath('/v1/dashboard/requests'),
     messages: () => joinApiPath('/v1/dashboard/messages'),
+    messageRead: (threadId: string) => joinApiPath(`/v1/dashboard/messages/${threadId}/read`),
     matterPackageSelection: (matterId: string) =>
       joinApiPath(`/v1/dashboard/matters/${matterId}/package-selection`),
   },
@@ -36,6 +37,8 @@ export const API_ENDPOINTS = {
     preferences: () => joinApiPath('/v1/me/preferences'),
     documentDownload: (documentId: string) =>
       joinApiPath(`/v1/me/documents/${documentId}/download`),
+    documentPreview: (documentId: string) =>
+      joinApiPath(`/v1/me/documents/${documentId}/preview`),
     invoiceDetail: (invoiceId: string) => joinApiPath(`/v1/me/invoices/${invoiceId}`),
     invoiceDownload: (invoiceId: string) =>
       joinApiPath(`/v1/me/invoices/${invoiceId}/download`),

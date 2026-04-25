@@ -1846,12 +1846,13 @@ export class DomainRepository {
          d.category_code,
          d.visibility_scope_code,
          d.current_version_no
-       FROM documents d
-       INNER JOIN client_accounts owner
-         ON owner.id = d.owner_client_account_id
-       WHERE d.archived_at IS NULL
+      FROM documents d
+      INNER JOIN client_accounts owner
+        ON owner.id = d.owner_client_account_id
+      WHERE d.archived_at IS NULL
          ${clientAccountId ? 'AND d.owner_client_account_id = ?' : ''}
-       ORDER BY d.updated_at DESC`,
+         ${clientAccountId ? "AND d.visibility_scope_code IN ('client', 'client-portal', 'shared')" : ''}
+      ORDER BY d.updated_at DESC`,
       clientAccountId ? [clientAccountId] : []
     );
 
@@ -1919,10 +1920,11 @@ export class DomainRepository {
        FROM documents d
        INNER JOIN client_accounts owner
          ON owner.id = d.owner_client_account_id
-       WHERE d.public_id = ?
-         AND d.archived_at IS NULL
-         ${clientAccountId ? 'AND d.owner_client_account_id = ?' : ''}
-       LIMIT 1`,
+      WHERE d.public_id = ?
+        AND d.archived_at IS NULL
+        ${clientAccountId ? 'AND d.owner_client_account_id = ?' : ''}
+        ${clientAccountId ? "AND d.visibility_scope_code IN ('client', 'client-portal', 'shared')" : ''}
+      LIMIT 1`,
       clientAccountId ? [documentPublicId, clientAccountId] : [documentPublicId]
     );
 
@@ -2067,6 +2069,7 @@ export class DomainRepository {
          ON cancelled_by.id = e.cancelled_by_user_id
        WHERE 1 = 1
          ${clientAccountId ? 'AND e.client_account_id = ?' : ''}
+         ${clientAccountId ? 'AND e.client_visible_flag = 1' : ''}
        ORDER BY e.scheduled_start_at DESC`,
       clientAccountId ? [clientAccountId] : []
     );

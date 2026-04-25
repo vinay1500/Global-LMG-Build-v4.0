@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { 
-  ArrowLeft, Video, MessageSquare, FileText, Download, 
-  Edit2, Clock, Check,
-  Package, Save, Calendar
+import {
+  ArrowLeft, Video, MessageSquare, FileText, Download,
+  Edit2, Clock, Check, Eye,
+  Package, Save, Calendar, Upload
 } from 'lucide-react';
 import { StatusBadge, UrgencyDot } from '../components/dashboard/StatusBadge';
 import { LifecycleStepper } from '../components/dashboard/LifecycleStepper';
@@ -20,6 +20,9 @@ const formatSize = (bytes: number) => {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 };
+
+const SAFE_DOCUMENT_PREVIEW_TYPES = new Set(['CSV', 'GIF', 'JPG', 'JPEG', 'PDF', 'PNG', 'TXT', 'WEBP']);
+const ACCEPTED_UPLOAD_TYPES = '.csv,.doc,.docx,.gif,.jpg,.jpeg,.pdf,.png,.txt,.webp,.xls,.xlsx,.zip';
 
 interface MatterDetailAdminProps {
   assignmentOptions?: {
@@ -57,6 +60,7 @@ interface MatterDetailAdminProps {
   onSaveMatterDetails?: (payload: {
     issueSummary?: string;
     operationalStatusCode?: string;
+    priorityCode?: string;
     quotedTotalAmount?: number;
     selectedServices?: string[];
   }) => Promise<void>;
@@ -69,15 +73,28 @@ interface MatterDetailAdminProps {
     stageCode: string;
     visibleToClient?: boolean;
   }) => Promise<void>;
+  buildDocumentDownloadUrl?: (documentId: string) => string;
+  buildDocumentPreviewUrl?: (documentId: string) => string;
   myInvoices: Invoice[];
   myDocs: PlatformDocument[];
   myEvents: PlatformEvent[];
   myThreads: MessageThread[];
+  onUpdateDocumentControls?: (
+    documentId: string,
+    payload: { reviewState: 'reviewed' | 'unreviewed'; visibility: 'client' | 'internal' }
+  ) => Promise<void>;
   onUpdateFee: (matterId: string, newFee: number) => Promise<void> | void;
+  onUploadDocument?: (payload: {
+    file: File;
+    reviewState: 'reviewed' | 'unreviewed';
+    visibility: 'client' | 'internal';
+  }) => Promise<void>;
 }
 
 export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({ 
   assignmentOptions,
+  buildDocumentDownloadUrl,
+  buildDocumentPreviewUrl,
   isPackageLoading = false,
   matter: initialMatter,
   onAddMatterNote,
@@ -91,7 +108,9 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
   onSaveMatterDetails,
   onSavePackageDraft,
   onUpdateFee,
+  onUpdateDocumentControls,
   onUpdateStage,
+  onUploadDocument,
   packageErrorMessage,
   packageWorkspace,
   myInvoices,
@@ -108,6 +127,13 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
   const [isPublishingProposal, setIsPublishingProposal] = useState(false);
   const [isOverridingPackage, setIsOverridingPackage] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'events' | 'documents'>('overview');
+  const [documentUploadFile, setDocumentUploadFile] = useState<File | null>(null);
+  const [documentUploadVisibility, setDocumentUploadVisibility] = useState<'client' | 'internal'>('internal');
+  const [documentUploadReviewState, setDocumentUploadReviewState] = useState<'reviewed' | 'unreviewed'>('unreviewed');
+  const [documentActionError, setDocumentActionError] = useState<string | null>(null);
+  const [documentActionMessage, setDocumentActionMessage] = useState<string | null>(null);
+  const [isUploadingDocument, setIsUploadingDocument] = useState(false);
+  const [updatingDocumentId, setUpdatingDocumentId] = useState<string | null>(null);
   
   const [showEventForm, setShowEventForm] = useState(false);
   const [isEditingSummary, setIsEditingSummary] = useState(false);
@@ -251,12 +277,64 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
       await onSaveMatterDetails({
         issueSummary: matter.issueSummary,
         operationalStatusCode: matter.operationalStatus,
+        priorityCode: matter.priority,
         quotedTotalAmount: matter.totalFee,
         selectedServices: matter.selectedServices,
       });
       setIsEditingMatter(false);
     } finally {
       setIsSavingMatter(false);
+    }
+  };
+
+  const openDocumentUrl = (url?: string) => {
+    if (!url) return;
+    window.open(url, '_blank', 'noopener');
+  };
+
+  const handleUploadMatterDocument = async () => {
+    if (!documentUploadFile || !onUploadDocument) {
+      return;
+    }
+
+    setIsUploadingDocument(true);
+    setDocumentActionError(null);
+    setDocumentActionMessage(null);
+
+    try {
+      await onUploadDocument({
+        file: documentUploadFile,
+        reviewState: documentUploadReviewState,
+        visibility: documentUploadVisibility,
+      });
+      setDocumentUploadFile(null);
+      setDocumentActionMessage('Document uploaded for this matter.');
+    } catch (error) {
+      setDocumentActionError(error instanceof Error ? error.message : 'Document upload failed.');
+    } finally {
+      setIsUploadingDocument(false);
+    }
+  };
+
+  const handleUpdateDocumentControls = async (
+    documentId: string,
+    payload: { reviewState: 'reviewed' | 'unreviewed'; visibility: 'client' | 'internal' }
+  ) => {
+    if (!onUpdateDocumentControls) {
+      return;
+    }
+
+    setUpdatingDocumentId(documentId);
+    setDocumentActionError(null);
+    setDocumentActionMessage(null);
+
+    try {
+      await onUpdateDocumentControls(documentId, payload);
+      setDocumentActionMessage('Document controls updated.');
+    } catch (error) {
+      setDocumentActionError(error instanceof Error ? error.message : 'Document controls could not be updated.');
+    } finally {
+      setUpdatingDocumentId(null);
     }
   };
 
@@ -320,10 +398,10 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                 disabled={!isEditingMatter}
               >
                 {[
-                  'new-lead', 'awaiting-verification', 'verification-scheduled', 'verification-done',
-                  'consultation-scheduled', 'consultation-completed', 'fee-pending', 'package-ready',
-                  'invoice-sent', 'awaiting-payment', 'paid', 'work-in-progress', 'awaiting-client',
-                  'awaiting-team', 'immediate', 'completed', 'archived', 'lost-closed'
+                  'new-lead', 'awaiting-verification', 'verification-scheduled',
+                  'consultation-completed', 'fee-pending', 'package-ready',
+                  'awaiting-payment', 'paid', 'work-in-progress',
+                  'immediate', 'completed', 'archived'
                 ].map(status => (
                   <option key={status} value={status}>{status.replace(/-/g, ' ')}</option>
                 ))}
@@ -570,7 +648,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                                   ))}
                                 </div>
 
-                                {!pkg.isSelected && packageWorkspace.active?.status === 'selected' && onOverridePackageSelection ? (
+                                {!pkg.isSelected && selectedPackage && onOverridePackageSelection ? (
                                   <button
                                     className="mt-5 rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:opacity-60"
                                     disabled={isOverridingPackage}
@@ -880,9 +958,47 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                     <h3 className="text-lg font-medium" style={{ fontFamily: "'Playfair Display', serif" }}>Matter Documents</h3>
                     <p className="text-sm text-gray-500">Manage case files and adjust client visibility.</p>
                   </div>
-                  <button className="bg-gray-100 text-gray-400 px-4 py-2 rounded-lg text-sm flex items-center gap-2 cursor-not-allowed">
-                    Upload Later
+                  <button
+                    className="bg-gray-900 text-white px-4 py-2 rounded-lg text-sm flex items-center gap-2 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-400"
+                    disabled={!documentUploadFile || isUploadingDocument || !onUploadDocument}
+                    onClick={() => void handleUploadMatterDocument()}
+                    type="button"
+                  >
+                    <Upload className="h-4 w-4" />
+                    {isUploadingDocument ? 'Uploading...' : 'Upload'}
                   </button>
+                </div>
+
+                <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+                  <div className="grid gap-3 md:grid-cols-[1.5fr_1fr_1fr] md:items-center">
+                    <input
+                      accept={ACCEPTED_UPLOAD_TYPES}
+                      className="text-sm text-gray-700 file:mr-3 file:rounded-lg file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:text-sm file:text-gray-700"
+                      onChange={(event) => setDocumentUploadFile(event.target.files?.[0] || null)}
+                      type="file"
+                    />
+                    <select
+                      className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm"
+                      onChange={(event) => setDocumentUploadVisibility(event.target.value as 'client' | 'internal')}
+                      value={documentUploadVisibility}
+                    >
+                      <option value="internal">Internal Only</option>
+                      <option value="client">Client Visible</option>
+                    </select>
+                    <select
+                      className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm"
+                      onChange={(event) => setDocumentUploadReviewState(event.target.value as 'reviewed' | 'unreviewed')}
+                      value={documentUploadReviewState}
+                    >
+                      <option value="unreviewed">Needs Review</option>
+                      <option value="reviewed">Reviewed</option>
+                    </select>
+                  </div>
+                  {(documentActionMessage || documentActionError) && (
+                    <p className={`mt-3 text-sm ${documentActionError ? 'text-red-600' : 'text-emerald-600'}`}>
+                      {documentActionError || documentActionMessage}
+                    </p>
+                  )}
                 </div>
 
                 <div className="space-y-3">
@@ -899,9 +1015,56 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                           <span className={`${doc.visibility === 'client' ? 'text-blue-600' : 'text-amber-600'}`}>{doc.visibility === 'client' ? 'Visible to Client' : 'Internal Only'}</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <button className="p-1.5 text-gray-400 hover:text-gray-900 transition"><Edit2 className="w-4 h-4" /></button>
-                        <button className="p-1.5 text-gray-400 hover:text-blue-600 transition"><Download className="w-4 h-4" /></button>
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <select
+                          className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs"
+                          disabled={updatingDocumentId === doc.id || !onUpdateDocumentControls}
+                          onChange={(event) =>
+                            void handleUpdateDocumentControls(doc.id, {
+                              reviewState: doc.reviewState,
+                              visibility: event.target.value as 'client' | 'internal',
+                            })
+                          }
+                          value={doc.visibility}
+                        >
+                          <option value="internal">Internal</option>
+                          <option value="client">Client</option>
+                        </select>
+                        <select
+                          className="rounded-md border border-gray-200 bg-white px-2 py-1 text-xs"
+                          disabled={updatingDocumentId === doc.id || !onUpdateDocumentControls}
+                          onChange={(event) =>
+                            void handleUpdateDocumentControls(doc.id, {
+                              reviewState: event.target.value as 'reviewed' | 'unreviewed',
+                              visibility: doc.visibility,
+                            })
+                          }
+                          value={doc.reviewState}
+                        >
+                          <option value="unreviewed">Needs Review</option>
+                          <option value="reviewed">Reviewed</option>
+                        </select>
+                        <button
+                          className="p-1.5 text-gray-400 hover:text-gray-900 transition disabled:cursor-not-allowed disabled:opacity-40"
+                          disabled={!buildDocumentPreviewUrl || !SAFE_DOCUMENT_PREVIEW_TYPES.has(doc.type.toUpperCase())}
+                          onClick={() => openDocumentUrl(buildDocumentPreviewUrl?.(doc.id))}
+                          title={
+                            SAFE_DOCUMENT_PREVIEW_TYPES.has(doc.type.toUpperCase())
+                              ? 'Preview document'
+                              : 'Preview unavailable for this file type'
+                          }
+                          type="button"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </button>
+                        <button
+                          className="p-1.5 text-gray-400 hover:text-blue-600 transition disabled:cursor-not-allowed disabled:opacity-40"
+                          disabled={!buildDocumentDownloadUrl}
+                          onClick={() => openDocumentUrl(buildDocumentDownloadUrl?.(doc.id))}
+                          type="button"
+                        >
+                          <Download className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
                   ))}

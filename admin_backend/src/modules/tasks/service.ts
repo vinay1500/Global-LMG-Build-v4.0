@@ -1,10 +1,21 @@
+import type { RowDataPacket } from 'mysql2/promise';
 import { fetchDocuments, fetchEvents, fetchInvoices, fetchMatters, fetchThreads } from '../shared.js';
+import { queryRows } from '../../lib/mysql.js';
 
 type MatterItem = Awaited<ReturnType<typeof fetchMatters>>[number];
 type InvoiceItem = Awaited<ReturnType<typeof fetchInvoices>>[number];
 type DocumentItem = Awaited<ReturnType<typeof fetchDocuments>>[number];
 type ThreadItem = Awaited<ReturnType<typeof fetchThreads>>[number];
 type EventItem = Awaited<ReturnType<typeof fetchEvents>>[number];
+type ReminderTaskRow = RowDataPacket & {
+  clientName: string | null;
+  deliveryStatusCode: 'failed' | 'pending' | 'processing' | 'sent' | 'cancelled';
+  eventId: string;
+  eventTitle: string;
+  failureReason: string | null;
+  id: number;
+  scheduledAt: string;
+};
 
 type TaskStatus = 'completed' | 'in_progress' | 'todo' | 'waiting_client' | 'waiting_internal';
 type TaskPriority = 'High' | 'Low' | 'Medium';
@@ -20,7 +31,7 @@ type WorkspaceTask = {
   note: string;
   priority: TaskPriority;
   sourceId: string;
-  sourceType: 'document' | 'event' | 'invoice' | 'matter' | 'message';
+  sourceType: 'document' | 'event' | 'invoice' | 'matter' | 'message' | 'reminder';
   status: TaskStatus;
   title: string;
 };
@@ -201,6 +212,56 @@ const buildEventTasks = (events: EventItem[], today: Date): WorkspaceTask[] =>
       };
     });
 
+const fetchReminderTasks = () =>
+  queryRows<ReminderTaskRow>(
+    `SELECT
+       er.id,
+       er.scheduled_at AS scheduledAt,
+       er.delivery_status_code AS deliveryStatusCode,
+       er.failure_reason AS failureReason,
+       evt.public_id AS eventId,
+       evt.title AS eventTitle,
+       client.display_name AS clientName
+     FROM event_reminders er
+     INNER JOIN events evt ON evt.id = er.event_id
+     LEFT JOIN client_accounts client ON client.id = evt.client_account_id
+     WHERE er.sent_at IS NULL
+       AND er.delivery_status_code IN ('failed', 'pending', 'processing')
+       AND (
+         er.delivery_status_code IN ('failed', 'processing')
+         OR er.scheduled_at <= UTC_TIMESTAMP(6)
+       )
+     ORDER BY
+       FIELD(er.delivery_status_code, 'failed', 'processing', 'pending'),
+       er.scheduled_at ASC,
+       er.id ASC
+     LIMIT 20`
+  );
+
+const buildReminderTasks = (reminders: ReminderTaskRow[], today: Date): WorkspaceTask[] =>
+  reminders.map((reminder) => {
+    const dueDate = parseDate(reminder.scheduledAt) || today;
+    const isFailed = reminder.deliveryStatusCode === 'failed';
+
+    return {
+      assignee: 'Ops Reliability',
+      client: reminder.clientName || 'Client portal user',
+      dueDate: toDateOnly(dueDate),
+      id: `reminder-${reminder.id}`,
+      isOverdue: dueDate.getTime() < today.getTime() || isFailed,
+      isToday: isSameUtcDate(dueDate, today),
+      matter: reminder.eventTitle,
+      note: isFailed
+        ? reminder.failureReason || 'Reminder failed and is waiting for retry.'
+        : 'Due reminder is waiting for local/in-app processing.',
+      priority: isFailed ? 'High' : 'Medium',
+      sourceId: String(reminder.id),
+      sourceType: 'reminder',
+      status: isFailed ? 'waiting_internal' : 'todo',
+      title: isFailed ? `Retry reminder for ${reminder.eventTitle}` : `Process reminder for ${reminder.eventTitle}`,
+    };
+  });
+
 const buildCompletedTasks = (
   invoices: InvoiceItem[],
   events: EventItem[],
@@ -255,12 +316,13 @@ const buildCompletedTasks = (
 
 export const getWorkspace = async () => {
   const today = new Date();
-  const [matters, invoices, documents, threads, events] = await Promise.all([
+  const [matters, invoices, documents, threads, events, reminders] = await Promise.all([
     fetchMatters({}),
     fetchInvoices({}),
     fetchDocuments({}),
     fetchThreads({}),
     fetchEvents({}),
+    fetchReminderTasks(),
   ]);
 
   const mattersById = new Map(matters.map((matter) => [matter.id, matter]));
@@ -271,6 +333,7 @@ export const getWorkspace = async () => {
     ...buildThreadTasks(threads, today),
     ...buildMatterTasks(matters, today),
     ...buildEventTasks(events, today),
+    ...buildReminderTasks(reminders, today),
     ...buildCompletedTasks(invoices, events, today),
   ]).slice(0, 60);
 

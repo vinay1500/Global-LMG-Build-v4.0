@@ -47,6 +47,7 @@ const assignmentSchema = z.object({
 const updateMatterDetailsSchema = z.object({
   issueSummary: z.string().trim().min(2).max(4000).optional(),
   operationalStatusCode: z.string().trim().min(2).max(64).optional(),
+  priorityCode: z.string().trim().min(2).max(64).optional(),
   quotedTotalAmount: z.number().nonnegative().optional(),
   selectedServices: z.array(z.string().trim().min(2).max(64)).max(20).optional(),
 });

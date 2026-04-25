@@ -10,6 +10,7 @@ import {
   FileText,
   LayoutList,
   MessageSquare,
+  RotateCcw,
   Search,
   User,
   Users,
@@ -39,6 +40,7 @@ const sourceMeta: Record<AdminTaskRecord['sourceType'], { icon: React.ComponentT
   invoice: { icon: CreditCard, label: 'Invoice' },
   matter: { icon: Briefcase, label: 'Matter' },
   message: { icon: MessageSquare, label: 'Message' },
+  reminder: { icon: RotateCcw, label: 'Reminder' },
 };
 
 const formatStatus = (status: AdminTaskRecord['status']) =>

@@ -6,8 +6,10 @@ import { getWorkspace as getRbacWorkspace } from '../rbac/service.js';
 
 type MetricRow = RowDataPacket & {
   docBacklog: number;
+  failedReminders: number;
   openMatters: number;
   pendingInvoices: number;
+  pendingReminders: number;
   unreadThreads: number;
 };
 
@@ -16,21 +18,51 @@ type RevenueRow = RowDataPacket & { monthLabel: string; revenue: number };
 type AgingRow = RowDataPacket & { amount: number; bucket: string };
 type AlertRow = RowDataPacket & { staleMatters: number };
 
-export const getWorkspace = async () => {
+export const getWorkspace = async (viewerUserId?: number) => {
+  const unreadThreadsSql = viewerUserId
+    ? `(SELECT COUNT(DISTINCT ct.id)
+        FROM conversation_threads ct
+        JOIN messages msg
+          ON msg.thread_id = ct.id
+         AND msg.deleted_at IS NULL
+        JOIN users sender
+          ON sender.id = msg.sender_user_id
+         AND sender.actor_type_code = 'client'
+        LEFT JOIN message_reads mr
+          ON mr.message_id = msg.id
+         AND mr.user_id = ?
+        WHERE ct.archived_at IS NULL
+          AND (msg.sender_user_id IS NULL OR msg.sender_user_id <> ?)
+          AND mr.id IS NULL) AS unreadThreads`
+    : `(SELECT COUNT(*) FROM conversation_threads WHERE archived_at IS NULL AND status_code = 'waiting') AS unreadThreads`;
+  const unreadThreadsParams = viewerUserId ? [viewerUserId, viewerUserId] : [];
+
   const [metricRows, stageRows, revenueRows, agingRows, alertRows, audit, notifications, rbac] =
     await Promise.all([
       queryRows<MetricRow>(
         `SELECT
            (SELECT COUNT(*) FROM matters WHERE archived_at IS NULL AND operational_status_code NOT IN ('completed', 'archived')) AS openMatters,
            (SELECT COUNT(*) FROM invoices WHERE archived_at IS NULL AND status_code NOT IN ('paid', 'refunded')) AS pendingInvoices,
-           (SELECT COUNT(*) FROM conversation_threads WHERE archived_at IS NULL AND status_code = 'waiting') AS unreadThreads,
+           ${unreadThreadsSql},
            (
              SELECT COUNT(*)
              FROM documents d
              LEFT JOIN document_versions dv ON dv.document_id = d.id AND dv.is_current = 1
              WHERE d.archived_at IS NULL
                AND COALESCE(dv.virus_scan_status_code, 'pending') <> 'clean'
-           ) AS docBacklog`
+           ) AS docBacklog,
+           (
+             SELECT COUNT(*)
+             FROM event_reminders
+             WHERE delivery_status_code = 'failed'
+           ) AS failedReminders,
+           (
+             SELECT COUNT(*)
+             FROM event_reminders
+             WHERE delivery_status_code = 'pending'
+               AND scheduled_at <= UTC_TIMESTAMP(6)
+           ) AS pendingReminders`,
+        unreadThreadsParams
       ),
       queryRows<StageRow>(
         `SELECT
@@ -97,8 +129,10 @@ export const getWorkspace = async () => {
 
   const metrics = metricRows[0] || {
     docBacklog: 0,
+    failedReminders: 0,
     openMatters: 0,
     pendingInvoices: 0,
+    pendingReminders: 0,
     unreadThreads: 0,
   };
 
@@ -122,8 +156,10 @@ export const getWorkspace = async () => {
     })),
     metrics: {
       docBacklog: metrics.docBacklog,
+      failedReminders: metrics.failedReminders,
       openMatters: metrics.openMatters,
       pendingInvoices: metrics.pendingInvoices,
+      pendingReminders: metrics.pendingReminders,
       unreadThreads: metrics.unreadThreads,
     },
     recentAudit: audit.entries,
