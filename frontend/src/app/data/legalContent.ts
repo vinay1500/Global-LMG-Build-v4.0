@@ -19,7 +19,7 @@ export const PRIVACY_POLICY_DOCUMENT: LegalDocument = {
   eyebrow: 'Privacy',
   title: 'Privacy Policy',
   lastUpdated: 'March 31, 2026',
-  intro: `${BRAND_NAME} currently operates as a public brochure site with a temporary Google Form for intake. This policy explains what data the current site handles, what is processed by third parties, and how the future portal will change those boundaries.`,
+  intro: `${BRAND_NAME} operates a public site and authenticated client portal for intake, coordination, documents, billing, messages, and related support workflows. This policy explains what data the current site and portal handle, and where third-party services may process information independently.`,
   sections: [
     {
       heading: 'What this site collects today',
@@ -29,30 +29,30 @@ export const PRIVACY_POLICY_DOCUMENT: LegalDocument = {
       ],
     },
     {
-      heading: 'Temporary intake via Google Forms',
+      heading: 'Client intake and portal workflows',
       paragraphs: [
-        'During the first release phase, client intake is routed to a Google Form instead of an internal dashboard. When you leave this site and submit that form, your responses are processed by Google under Google’s own terms and privacy controls.',
-        'Do not submit privileged documents, government IDs, payment card data, health records, passwords, or other highly sensitive information through the temporary form. A secured document workflow will be introduced later with the Express-backed portal.',
+        'Client intake and follow-up workflows may be handled through the authenticated portal or, when separately configured, an external intake form. External forms are processed by their provider under that provider’s own terms and privacy controls.',
+        'Use the authenticated portal for sensitive document and account workflows. Do not send payment card data, passwords, or unnecessary highly sensitive information through public forms or unsecured channels.',
       ],
     },
     {
       heading: 'How contact data is used',
       paragraphs: [
-        'If you voluntarily contact the firm or submit the temporary intake form, the submitted details may be used to respond to your request, assess whether a follow-up conversation is appropriate, and coordinate next steps with the relevant practice team.',
+        'If you voluntarily contact Global LMG or submit an intake request, the submitted details may be used to respond to your request, assess whether a follow-up conversation is appropriate, and coordinate next steps with relevant internal teams or independently engaged professionals.',
         'Submitting an enquiry does not, by itself, create an attorney-client relationship.',
       ],
     },
     {
       heading: 'Cookies and local storage',
       paragraphs: [
-        'The current public site does not intentionally set marketing or profiling cookies in the shipped front-end code. Essential hosting or third-party services may still use their own technical cookies when you interact with them after leaving the site.',
-        'If a future authenticated portal introduces login sessions, preference storage, or anti-spam controls, this policy and the cookie notice will be updated before launch.',
+        'The public site does not intentionally set marketing or profiling cookies in the shipped front-end code. Essential hosting or third-party services may still use their own technical cookies when you interact with them after leaving the site.',
+        'The authenticated portal uses essential session and CSRF cookies for login state, security, and abuse prevention.',
       ],
     },
     {
       heading: 'Security and retention',
       paragraphs: [
-        'Reasonable administrative and technical safeguards should be applied at the hosting, proxy, and application layers. For the current temporary intake phase, sensitive workflows should stay off the Google Form and be handled offline or through a secured channel.',
+        'Reasonable administrative and technical safeguards should be applied at the hosting, proxy, and application layers. Sensitive workflows should use authenticated portal routes or another approved secure channel.',
         'Operational logs and enquiry records should only be retained for as long as they are needed for security, compliance, or legitimate business follow-up.',
       ],
     },
@@ -60,19 +60,19 @@ export const PRIVACY_POLICY_DOCUMENT: LegalDocument = {
       heading: 'Contact and requests',
       paragraphs: [
         `For privacy or data-handling questions, contact ${CONTACT_EMAIL} or ${SECURITY_EMAIL}.`,
-        'Any region-specific rights handling, retention schedules, or future portal account controls should be documented once the Express and MySQL stack is introduced.',
+        'Region-specific rights handling, retention schedules, and portal account controls should be reviewed before each production release.',
       ],
     },
   ],
   footerNote:
-    'This document reflects the current brochure-site and temporary Google Form phase. It should be reviewed again before the authenticated portal goes live.',
+    'This document reflects the current public-site and authenticated portal beta. It should be reviewed again before production launch.',
 };
 
 export const COOKIE_POLICY_DOCUMENT: LegalDocument = {
   eyebrow: 'Cookies',
   title: 'Cookie Notice',
   lastUpdated: 'March 31, 2026',
-  intro: `${BRAND_NAME} currently uses a minimal public front end. This notice explains the current cookie footprint and the expected changes once the future client portal is introduced.`,
+  intro: `${BRAND_NAME} uses a public front end and authenticated portal. This notice explains the current cookie footprint for public pages, portal sessions, and security controls.`,
   sections: [
     {
       heading: 'Current public-site behavior',
@@ -84,15 +84,15 @@ export const COOKIE_POLICY_DOCUMENT: LegalDocument = {
     {
       heading: 'Third-party services',
       paragraphs: [
-        'If you follow a link to Google Forms or other third-party platforms, those services may set their own cookies and process information independently.',
+        'If you follow a link to an external form, calendar provider, meeting provider, or other third-party platform, those services may set their own cookies and process information independently.',
         'Those cookies are governed by the third party, not by this site.',
       ],
     },
     {
-      heading: 'Future portal changes',
+      heading: 'Portal session cookies',
       paragraphs: [
-        'A future Express-backed client portal may require essential cookies or token-based session storage for login state, multi-factor verification, CSRF defense, and abuse prevention.',
-        'If that happens, the site should publish a revised cookie notice before those features are enabled in production.',
+        'The authenticated portal requires essential cookies for login state, verification flows, CSRF defense, and abuse prevention.',
+        'Any optional analytics, marketing, or profiling cookies should remain disabled unless separately reviewed and disclosed.',
       ],
       bullets: [
         'Security cookies should be marked HttpOnly, Secure, and SameSite as tightly as possible.',
@@ -102,7 +102,7 @@ export const COOKIE_POLICY_DOCUMENT: LegalDocument = {
     },
   ],
   footerNote:
-    'This notice is intentionally conservative because the authenticated portal and any optional analytics stack have not launched yet.',
+    'This notice is intentionally conservative because optional analytics and marketing cookies are not required for the beta portal.',
 };
 
 export const LEGAL_DISCLAIMER_DOCUMENT: LegalDocument = {
@@ -126,10 +126,10 @@ export const LEGAL_DISCLAIMER_DOCUMENT: LegalDocument = {
       ],
     },
     {
-      heading: 'Temporary intake warning',
+      heading: 'Secure intake and document handling',
       paragraphs: [
-        'The current intake route uses a temporary Google Form in place of a secured dashboard. That form should not be used for highly confidential, privileged, export-controlled, regulated, or otherwise sensitive documents.',
-        'If a matter requires confidential handling, request a secure channel before sending substantive materials.',
+        'Use authenticated portal workflows or another approved secure channel for documents and substantive matter materials.',
+        'Public forms and public email should not be used for highly confidential, export-controlled, regulated, or otherwise sensitive documents.',
       ],
     },
     {
@@ -157,7 +157,7 @@ export const LEGAL_SEARCH_ENTRIES = [
     type: 'Legal' as const,
     route: '/privacy',
     subtitle: 'Legal',
-    keywords: ['privacy', 'policy', 'data protection', 'google form', 'security'],
+    keywords: ['privacy', 'policy', 'data protection', 'portal', 'security'],
   },
   {
     id: 'legal:cookies',

@@ -1,27 +1,59 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDownRight,
   ArrowUpRight,
   BarChart3,
   CreditCard,
   Download,
+  ExternalLink,
   FileText,
   Filter,
   Layers,
+  Loader2,
   Printer,
   Users,
   Zap,
 } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router';
 import { formatCurrency } from '../data/seedData';
-import type { ReportsWorkspaceResponse } from '../lib/api/contracts';
+import { adminApi } from '../lib/api/admin';
+import type {
+  ReportDrilldownItem,
+  ReportDrilldownKind,
+  ReportDrilldownResponse,
+  ReportsWorkspaceResponse,
+} from '../lib/api/contracts';
 import { EmptyState } from './EmptyState';
 
 type ReportsWorkspaceProps = {
   workspace: ReportsWorkspaceResponse;
 };
 
+const REPORT_DRILLDOWN_KINDS = new Set<ReportDrilldownKind>([
+  'active-matters',
+  'closed-matters',
+  'converted-requests',
+  'declined-requests',
+  'failed-reminders',
+  'open-requests',
+  'outstanding-invoices',
+  'overdue-invoices',
+  'paid-invoices',
+  'pending-documents',
+  'pending-reminders',
+  'recent-notifications',
+  'stale-matters',
+  'upcoming-events',
+  'waiting-threads',
+]);
+
 export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ workspace }) => {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [range, setRange] = useState<'Custom' | 'Q2' | 'Q3' | 'YTD'>('YTD');
+  const [activeDrilldown, setActiveDrilldown] = useState<ReportDrilldownResponse | null>(null);
+  const [drilldownError, setDrilldownError] = useState<string | null>(null);
+  const [isLoadingDrilldown, setIsLoadingDrilldown] = useState(false);
 
   const maxRevenue = useMemo(
     () =>
@@ -32,29 +64,96 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ workspace })
     [workspace.revenueTrend]
   );
 
-  const handleExportCsv = () => {
-    const rows = [
-      ['Metric', 'Value'],
-      ['Total Collections', String(workspace.summary.totalCollections)],
-      ['Client Conversion Rate', String(workspace.summary.clientConversionRate)],
-      ['Refunds & Write-offs', String(workspace.summary.refundsWriteOffs)],
-      ['Average Resolution Days', String(workspace.summary.averageResolutionDays)],
-      ...workspace.revenueTrend.map((point) => [
-        `Revenue ${point.month}`,
-        `Current ${point.currentRevenue} | Previous ${point.previousRevenue}`,
-      ]),
-    ];
+  const loadDrilldown = async (kind: ReportDrilldownKind) => {
+    setDrilldownError(null);
+    setIsLoadingDrilldown(true);
 
-    const csv = `data:text/csv;charset=utf-8,${rows
-      .map((row) => row.map((cell) => `"${cell}"`).join(','))
-      .join('\n')}`;
-    const link = document.createElement('a');
-    link.href = encodeURI(csv);
-    link.download = `glmg-firm-performance-${range.toLowerCase()}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+    try {
+      setActiveDrilldown(await adminApi.getReportDrilldown(kind));
+    } catch (error) {
+      setDrilldownError(error instanceof Error ? error.message : 'Unable to load report drilldown.');
+    } finally {
+      setIsLoadingDrilldown(false);
+    }
   };
+
+  useEffect(() => {
+    const requestedKind = searchParams.get('drilldown');
+
+    if (!requestedKind || !REPORT_DRILLDOWN_KINDS.has(requestedKind as ReportDrilldownKind)) {
+      return;
+    }
+
+    if (activeDrilldown?.kind === requestedKind || isLoadingDrilldown) {
+      return;
+    }
+
+    void loadDrilldown(requestedKind as ReportDrilldownKind);
+  }, [activeDrilldown?.kind, isLoadingDrilldown, searchParams]);
+
+  const selectDrilldown = (kind: ReportDrilldownKind) => {
+    setSearchParams({ drilldown: kind });
+    void loadDrilldown(kind);
+  };
+
+  const handleExportCsv = (kind: ReportDrilldownKind) => {
+    window.open(adminApi.buildReportDrilldownExportUrl(kind), '_blank', 'noopener');
+  };
+
+  const openRecord = (item: ReportDrilldownItem) => {
+    switch (item.routeType) {
+      case 'matter':
+        if (item.routeId) {
+          navigate(`/matters/${item.routeId}`);
+        }
+        return;
+      case 'request':
+        navigate('/requests');
+        return;
+      case 'invoice':
+        navigate('/billing');
+        return;
+      case 'message':
+        navigate('/messages');
+        return;
+      case 'document':
+        navigate('/documents');
+        return;
+      case 'event':
+        navigate('/meetings');
+        return;
+      case 'reminder':
+      case 'notification':
+        navigate('/notifications');
+        return;
+      default:
+        return;
+    }
+  };
+
+  const kpiCards: Array<{
+    amount?: boolean;
+    kind: ReportDrilldownKind;
+    label: string;
+    tone: 'amber' | 'blue' | 'emerald' | 'neutral' | 'rose' | 'violet';
+    value: number;
+  }> = [
+    { kind: 'open-requests', label: 'Open Requests', tone: 'blue', value: workspace.kpis.openRequests },
+    { kind: 'converted-requests', label: 'Converted Requests', tone: 'emerald', value: workspace.kpis.convertedRequests },
+    { kind: 'declined-requests', label: 'Declined Requests', tone: 'rose', value: workspace.kpis.declinedRequests },
+    { kind: 'active-matters', label: 'Active Matters', tone: 'blue', value: workspace.kpis.activeMatters },
+    { kind: 'stale-matters', label: 'Stale Matters', tone: 'amber', value: workspace.kpis.staleMatters },
+    { kind: 'closed-matters', label: 'Closed Matters', tone: 'neutral', value: workspace.kpis.closedMatters },
+    { kind: 'overdue-invoices', label: 'Overdue Invoices', tone: 'rose', value: workspace.kpis.overdueInvoices },
+    { amount: true, kind: 'outstanding-invoices', label: 'Outstanding Amount', tone: 'amber', value: workspace.kpis.outstandingInvoiceAmount },
+    { amount: true, kind: 'paid-invoices', label: 'Paid Invoice Amount', tone: 'emerald', value: workspace.kpis.paidInvoiceAmount },
+    { kind: 'waiting-threads', label: 'Waiting Threads', tone: 'violet', value: workspace.kpis.waitingThreads },
+    { kind: 'pending-documents', label: 'Pending Documents', tone: 'amber', value: workspace.kpis.pendingDocumentReviews },
+    { kind: 'upcoming-events', label: 'Upcoming Events', tone: 'blue', value: workspace.kpis.upcomingEvents },
+    { kind: 'pending-reminders', label: 'Pending Reminders', tone: 'neutral', value: workspace.kpis.pendingReminders },
+    { kind: 'failed-reminders', label: 'Failed Reminders', tone: 'rose', value: workspace.kpis.failedReminders },
+    { kind: 'recent-notifications', label: 'Recent Client Activity', tone: 'violet', value: workspace.kpis.recentClientActivity },
+  ];
 
   if (!workspace.revenueTrend.length && !workspace.stageMix.length) {
     return (
@@ -98,12 +197,12 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ workspace })
               </button>
             ))}
           </div>
-          <button className="px-4 py-2 bg-white border border-[#E6E4DD] rounded-lg shadow-sm text-sm font-medium text-[#2C2B29] hover:bg-[#F4F1EA] transition flex items-center gap-2" type="button">
-            <Filter className="w-4 h-4 text-[#8C8981]" /> Filters
+          <button className="px-4 py-2 bg-white border border-dashed border-[#E6E4DD] rounded-lg shadow-sm text-sm font-medium text-[#8C8981] cursor-not-allowed flex items-center gap-2" disabled type="button">
+            <Filter className="w-4 h-4 text-[#8C8981]" /> Filters Later
           </button>
           <button
             className="px-4 py-2 bg-white border border-[#E6E4DD] rounded-lg shadow-sm text-sm font-medium text-[#2C2B29] hover:bg-[#F4F1EA] transition flex items-center gap-2"
-            onClick={handleExportCsv}
+            onClick={() => handleExportCsv(activeDrilldown?.kind || 'paid-invoices')}
             type="button"
           >
             <Download className="w-4 h-4" /> CSV
@@ -151,6 +250,121 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ workspace })
           trendLabel="closed matters"
           value={`${workspace.summary.averageResolutionDays} days`}
         />
+      </div>
+
+      <div className="bg-white border border-[#E6E4DD] rounded-xl shadow-sm overflow-hidden">
+        <div className="p-5 border-b border-[#E6E4DD] flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h3 className="font-medium text-[#2C2B29]">KPI Drilldowns</h3>
+            <p className="text-xs text-[#8C8981] mt-0.5">
+              Each card opens the same DB-backed records used for its count.
+            </p>
+          </div>
+          {activeDrilldown ? (
+            <button
+              className="inline-flex items-center gap-2 rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29] hover:bg-[#F4F1EA]"
+              onClick={() => handleExportCsv(activeDrilldown.kind)}
+              type="button"
+            >
+              <Download className="w-4 h-4" /> Export {activeDrilldown.label}
+            </button>
+          ) : null}
+        </div>
+
+        <div className="p-5 grid grid-cols-1 md:grid-cols-3 xl:grid-cols-5 gap-3">
+          {kpiCards.map((card) => (
+            <button
+              className="text-left"
+              key={card.kind}
+              onClick={() => selectDrilldown(card.kind)}
+              type="button"
+            >
+              <DrilldownKpiCard
+                active={activeDrilldown?.kind === card.kind}
+                label={card.label}
+                tone={card.tone}
+                value={card.amount ? formatCurrency(card.value) : String(card.value)}
+              />
+            </button>
+          ))}
+        </div>
+
+        <div className="border-t border-[#E6E4DD] p-5">
+          {isLoadingDrilldown ? (
+            <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-[#E6E4DD] bg-[#FCFBF8] p-8 text-sm text-[#8C8981]">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading drilldown
+            </div>
+          ) : drilldownError ? (
+            <div className="rounded-xl border border-[#F5C2C7] bg-[#FDE8EC] p-4 text-sm text-[#d4183d]">
+              {drilldownError}
+            </div>
+          ) : activeDrilldown ? (
+            <div className="space-y-4">
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-sm font-medium text-[#2C2B29]">
+                    {activeDrilldown.label} · {activeDrilldown.total} record{activeDrilldown.total === 1 ? '' : 's'}
+                  </p>
+                  <p className="text-xs text-[#8C8981] mt-0.5">{activeDrilldown.description}</p>
+                </div>
+              </div>
+
+              {activeDrilldown.items.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-[#E6E4DD] bg-[#FCFBF8] p-8 text-center text-sm text-[#8C8981]">
+                  No records match this KPI right now.
+                </div>
+              ) : (
+                <div className="overflow-x-auto rounded-xl border border-[#E6E4DD]">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-[#F4F1EA] text-xs uppercase tracking-[0.18em] text-[#8C8981]">
+                      <tr>
+                        <th className="px-4 py-3 font-semibold">Record</th>
+                        <th className="px-4 py-3 font-semibold">Client</th>
+                        <th className="px-4 py-3 font-semibold">Status</th>
+                        <th className="px-4 py-3 font-semibold">Amount</th>
+                        <th className="px-4 py-3 font-semibold">Date</th>
+                        <th className="px-4 py-3 font-semibold text-right">Open</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E6E4DD]">
+                      {activeDrilldown.items.map((item) => (
+                        <tr className="hover:bg-[#FCFBF8]" key={`${item.routeType}-${item.id}`}>
+                          <td className="px-4 py-3">
+                            <p className="font-medium text-[#2C2B29]">{item.title}</p>
+                            <p className="text-xs text-[#8C8981] mt-0.5">{item.subtitle || item.matterTitle || item.id}</p>
+                          </td>
+                          <td className="px-4 py-3 text-[#5A7C96]">{item.clientName || '—'}</td>
+                          <td className="px-4 py-3">
+                            <span className="rounded-full bg-[#F4F1EA] px-2.5 py-1 text-xs text-[#2C2B29]">
+                              {item.status || 'open'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-[#2C2B29]">
+                            {typeof item.amount === 'number' ? formatCurrency(item.amount) : '—'}
+                          </td>
+                          <td className="px-4 py-3 text-[#8C8981]">{item.date ? String(item.date).slice(0, 10) : '—'}</td>
+                          <td className="px-4 py-3 text-right">
+                            <button
+                              className="inline-flex items-center gap-1 text-sm text-[#2C2B29] hover:text-[#997A48]"
+                              onClick={() => openRecord(item)}
+                              type="button"
+                            >
+                              Open <ExternalLink className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="rounded-xl border border-dashed border-[#E6E4DD] bg-[#FCFBF8] p-8 text-center text-sm text-[#8C8981]">
+              Select a KPI card to view its matching records.
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
@@ -399,6 +613,43 @@ const ReportMetricCard = ({
       <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-[#A8A69F]">{label}</p>
       <p
         className="text-2xl mt-3 text-[#2C2B29]"
+        style={{ fontFamily: "'Playfair Display', serif" }}
+      >
+        {value}
+      </p>
+    </div>
+  );
+};
+
+const DrilldownKpiCard = ({
+  active,
+  label,
+  tone,
+  value,
+}: {
+  active: boolean;
+  label: string;
+  tone: 'amber' | 'blue' | 'emerald' | 'neutral' | 'rose' | 'violet';
+  value: string;
+}) => {
+  const toneClasses: Record<typeof tone, string> = {
+    amber: 'bg-[#FDF8EF] border-[#EAD2A8] text-[#997A48]',
+    blue: 'bg-[#EFF3F6] border-[#D6E4EE] text-[#5A7C96]',
+    emerald: 'bg-[#EEF9F1] border-[#CFE8D5] text-[#2e7d32]',
+    neutral: 'bg-[#FCFBF8] border-[#E6E4DD] text-[#2C2B29]',
+    rose: 'bg-[#FDE8EC] border-[#F5C2C7] text-[#d4183d]',
+    violet: 'bg-[#F3F0FF] border-[#DDD6FE] text-[#7C3AED]',
+  };
+
+  return (
+    <div
+      className={`rounded-xl border p-4 shadow-sm transition hover:shadow-md ${
+        active ? 'ring-2 ring-[#C19A5B] ring-offset-2' : ''
+      } ${toneClasses[tone]}`}
+    >
+      <p className="text-[10px] font-bold uppercase tracking-[0.22em] opacity-70">{label}</p>
+      <p
+        className="mt-3 text-xl text-[#2C2B29]"
         style={{ fontFamily: "'Playfair Display', serif" }}
       >
         {value}

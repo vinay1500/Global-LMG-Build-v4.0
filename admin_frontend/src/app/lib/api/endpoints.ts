@@ -63,6 +63,9 @@ export const API_ENDPOINTS = {
     processReminders: () => joinApiPath('/v1/admin/reminders/process'),
     reminderRetry: (reminderId: string) => joinApiPath(`/v1/admin/reminders/${reminderId}/retry`),
     reminderWorkspace: () => joinApiPath('/v1/admin/reminders/workspace'),
+    reportDrilldown: (kind: string) => joinApiPath(`/v1/admin/reports/drilldowns/${kind}`),
+    reportDrilldownExport: (kind: string) =>
+      joinApiPath(`/v1/admin/reports/drilldowns/${kind}/export.csv`),
     reportsWorkspace: () => joinApiPath('/v1/admin/reports/workspace'),
     requestApprove: (requestId: string) => joinApiPath(`/v1/admin/requests/${requestId}/approve`),
     requestConvert: (requestId: string) => joinApiPath(`/v1/admin/requests/${requestId}/convert`),

@@ -2,18 +2,19 @@ import React from 'react';
 import {
   AlertCircle,
   Calendar,
-  Download,
   FileText,
   MessageSquare,
   Shield,
   Users,
 } from 'lucide-react';
+import { useNavigate } from 'react-router';
 import { WorkspaceState } from '../../components/shared/WorkspaceState';
 import { useAsyncResource } from '../../hooks/useAsyncResource';
 import { adminApi } from '../../lib/api/admin';
 import { formatCurrency } from '../../data/seedData';
 
 export const DashboardPage = () => {
+  const navigate = useNavigate();
   const { data, errorMessage, isLoading, refresh } = useAsyncResource(
     () => adminApi.getDashboardWorkspace(),
     []
@@ -40,12 +41,12 @@ export const DashboardPage = () => {
   }
 
   const cards = [
-    { label: 'Open Matters', value: data?.metrics.openMatters || 0, icon: Users },
-    { label: 'Pending Invoices', value: data?.metrics.pendingInvoices || 0, icon: FileText },
-    { label: 'Unread Threads', value: data?.metrics.unreadThreads || 0, icon: MessageSquare },
-    { label: 'Doc Backlog', value: data?.metrics.docBacklog || 0, icon: AlertCircle },
-    { label: 'Due Reminders', value: data?.metrics.pendingReminders || 0, icon: Calendar },
-    { label: 'Failed Reminders', value: data?.metrics.failedReminders || 0, icon: AlertCircle },
+    { drilldown: 'active-matters', label: 'Open Matters', value: data?.metrics.openMatters || 0, icon: Users },
+    { drilldown: 'outstanding-invoices', label: 'Pending Invoices', value: data?.metrics.pendingInvoices || 0, icon: FileText },
+    { drilldown: 'waiting-threads', label: 'Waiting Threads', value: data?.metrics.unreadThreads || 0, icon: MessageSquare },
+    { drilldown: 'pending-documents', label: 'Doc Backlog', value: data?.metrics.docBacklog || 0, icon: AlertCircle },
+    { drilldown: 'pending-reminders', label: 'Pending Reminders', value: data?.metrics.pendingReminders || 0, icon: Calendar },
+    { drilldown: 'failed-reminders', label: 'Failed Reminders', value: data?.metrics.failedReminders || 0, icon: AlertCircle },
   ];
 
   return (
@@ -63,11 +64,15 @@ export const DashboardPage = () => {
           </p>
         </div>
         <div className="flex gap-2">
-          <button className="px-3 py-1.5 text-sm bg-white border border-[#E6E4DD] text-[#2C2B29] rounded-md shadow-sm flex items-center gap-2">
+          <div className="px-3 py-1.5 text-sm bg-white border border-[#E6E4DD] text-[#2C2B29] rounded-md shadow-sm flex items-center gap-2">
             <Calendar className="w-4 h-4 text-[#8C8981]" /> Last 6 Months
-          </button>
-          <button className="px-3 py-1.5 text-sm bg-[#2C2B29] text-[#F4F1EA] rounded-md shadow-sm flex items-center gap-2">
-            <Download className="w-4 h-4" /> Export Later
+          </div>
+          <button
+            className="px-3 py-1.5 text-sm bg-[#2C2B29] text-[#F4F1EA] rounded-md shadow-sm flex items-center gap-2"
+            onClick={() => navigate('/reports')}
+            type="button"
+          >
+            Open Reports
           </button>
         </div>
       </div>
@@ -95,7 +100,12 @@ export const DashboardPage = () => {
         {cards.map((card) => {
           const Icon = card.icon;
           return (
-            <div className="bg-white border border-[#E6E4DD] rounded-xl p-5 shadow-sm" key={card.label}>
+            <button
+              className="bg-white border border-[#E6E4DD] rounded-xl p-5 shadow-sm text-left transition hover:border-[#D8C7A4] hover:shadow-md"
+              key={card.label}
+              onClick={() => navigate(`/reports?drilldown=${card.drilldown}`)}
+              type="button"
+            >
               <div className="flex items-center justify-between">
                 <p className="text-xs font-bold text-[#A8A69F] uppercase tracking-wider">{card.label}</p>
                 <div className="w-9 h-9 rounded-full bg-[#F4F1EA] flex items-center justify-center">
@@ -108,7 +118,7 @@ export const DashboardPage = () => {
               >
                 {card.value}
               </p>
-            </div>
+            </button>
           );
         })}
       </div>

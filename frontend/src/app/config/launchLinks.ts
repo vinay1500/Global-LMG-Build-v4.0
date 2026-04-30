@@ -4,7 +4,7 @@ import { RUNTIME_GOOGLE_FORM_URL } from './runtime';
 export const TEMP_GOOGLE_FORM_URL = RUNTIME_GOOGLE_FORM_URL;
 
 export const CLIENT_INTAKE_WARNING =
-  'Do not submit privileged, highly sensitive, regulated, or payment-related information through the temporary Google Form.';
+  'Use the authenticated portal or another approved secure channel for sensitive, regulated, or payment-related information.';
 
 const TRUSTED_GOOGLE_FORM_HOSTS = new Set(['docs.google.com', 'forms.gle']);
 

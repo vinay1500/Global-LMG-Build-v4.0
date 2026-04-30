@@ -56,7 +56,7 @@ export const CAREER_CATEGORIES: CareerCategory[] = [
     color: 'bg-purple-50 text-purple-600',
     heroTitle: 'Operational and specialist roles',
     heroDescription:
-      'Support the legal team through technology, documentation, research, and workflow excellence across the firm.',
+      'Support the Global LMG team through technology, documentation, research, and workflow excellence across the platform.',
   },
 ];
 

@@ -1,7 +1,7 @@
 import { BRAND_NAME } from '../config/brand';
 import { selfHostedUnsplashImage } from '../utils/assets';
 
-export const NEWSROOM_TYPES = ['All', 'Press Release', 'Award', 'Firm News', 'Event'] as const;
+export const NEWSROOM_TYPES = ['All', 'Press Release', 'Award', 'Platform News', 'Event'] as const;
 
 export type NewsroomFilterType = (typeof NEWSROOM_TYPES)[number];
 export type NewsroomItemType = Exclude<NewsroomFilterType, 'All'>;
@@ -19,7 +19,7 @@ export interface NewsroomItem {
 export const NEWSROOM_TYPE_COLORS: Record<NewsroomItemType, string> = {
   Award: 'bg-yellow-600',
   Event: 'bg-purple-600',
-  'Firm News': 'bg-green-600',
+  'Platform News': 'bg-green-600',
   'Press Release': 'bg-blue-600',
 };
 
@@ -38,19 +38,19 @@ export const NEWSROOM_ITEMS: NewsroomItem[] = [
     id: 2,
     type: 'Award',
     date: 'March 5, 2026',
-    title: `${BRAND_NAME} Named "Law Firm of the Year" for M&A`,
+    title: `${BRAND_NAME} Recognized for Cross-Border M&A Coordination`,
     excerpt:
-      'Recognized for outstanding achievement in cross-border mergers and acquisitions across multiple jurisdictions.',
+      'Recognized for client coordination, lawyer-matching support, and operational execution across multiple jurisdictions.',
     image: selfHostedUnsplashImage('photo-1559827260-dc66d52bef19'),
     featured: true,
   },
   {
     id: 3,
-    type: 'Firm News',
+    type: 'Platform News',
     date: 'March 1, 2026',
-    title: 'New Partners Appointed Across Global Offices',
+    title: 'New Specialist Advisors Added Across Global Coverage Areas',
     excerpt:
-      'We are proud to announce the promotion of 12 new partners across our Corporate, Finance, and Technology practices.',
+      'We are expanding our advisory network and internal operations support across corporate, finance, and technology workflows.',
     image: selfHostedUnsplashImage('photo-1521737711867-e3b97375f902'),
     featured: false,
   },

@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke:beta": "node scripts/beta-smoke.mjs",
+    "smoke:deployment": "node scripts/deployment-smoke.mjs"
+  }
+}

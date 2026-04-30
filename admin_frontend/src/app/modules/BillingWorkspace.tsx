@@ -315,8 +315,12 @@ export const BillingWorkspace: React.FC<{
           <p className="text-sm text-gray-500 mt-1">Finance operations, invoice tracking, and revenue management.</p>
         </div>
         <div className="flex items-center gap-3">
-          <button className="px-4 py-2 bg-white border border-dashed border-gray-200 text-gray-400 text-sm font-medium rounded-lg flex items-center gap-2 cursor-not-allowed">
-            <Download className="w-4 h-4" /> Export Later
+          <button
+            className="px-4 py-2 bg-white border border-dashed border-gray-200 text-gray-400 text-sm font-medium rounded-lg flex items-center gap-2 cursor-not-allowed"
+            disabled
+            type="button"
+          >
+            <Download className="w-4 h-4" /> Export in Reports
           </button>
           <button
             className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg flex items-center gap-2 transition hover:bg-gray-800 disabled:opacity-50"

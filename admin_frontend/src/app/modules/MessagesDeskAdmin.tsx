@@ -172,10 +172,14 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
           <p className="text-sm text-gray-500 mt-1">Manage client correspondence and internal thread routing.</p>
         </div>
         <div className="flex items-center gap-3">
-          <button className="px-4 py-2 bg-white border border-dashed border-gray-200 text-gray-400 text-sm font-medium rounded-lg cursor-not-allowed">
-            Export Later
+          <button
+            className="px-4 py-2 bg-white border border-dashed border-gray-200 text-gray-400 text-sm font-medium rounded-lg cursor-not-allowed"
+            disabled
+            type="button"
+          >
+            Export in Reports
           </button>
-          <button className="px-4 py-2 bg-gray-100 text-gray-400 text-sm font-medium rounded-lg cursor-not-allowed flex items-center gap-2">
+          <button className="px-4 py-2 bg-gray-100 text-gray-400 text-sm font-medium rounded-lg cursor-not-allowed flex items-center gap-2" disabled type="button">
             <MessageSquare className="w-4 h-4" /> New Message Later
           </button>
         </div>

@@ -16,6 +16,8 @@ import type {
   ReminderProcessResponse,
   ReminderRetryResponse,
   ReminderWorkspaceResponse,
+  ReportDrilldownKind,
+  ReportDrilldownResponse,
   RecordPaymentResponse,
   AdminRequestDecisionResponse,
   ReportsWorkspaceResponse,
@@ -194,6 +196,16 @@ export const adminApi = {
     apiRequest<ReminderWorkspaceResponse>(API_ENDPOINTS.admin.reminderWorkspace()),
   getReportsWorkspace: () =>
     apiRequest<ReportsWorkspaceResponse>(API_ENDPOINTS.admin.reportsWorkspace()),
+  getReportDrilldown: (
+    kind: ReportDrilldownKind,
+    params: { limit?: number; offset?: number } = {}
+  ) =>
+    apiRequest<ReportDrilldownResponse>(
+      withQuery(API_ENDPOINTS.admin.reportDrilldown(kind), {
+        limit: params.limit ?? 50,
+        offset: params.offset ?? 0,
+      })
+    ),
   getRequestsWorkspace: () =>
     apiRequest<RequestsWorkspaceResponse>(API_ENDPOINTS.admin.requestsWorkspace()),
   getRbacWorkspace: () =>
@@ -349,6 +361,8 @@ export const adminApi = {
     }),
   buildDocumentDownloadUrl: (documentId: string) => API_ENDPOINTS.admin.documentDownload(documentId),
   buildDocumentPreviewUrl: (documentId: string) => API_ENDPOINTS.admin.documentPreview(documentId),
+  buildReportDrilldownExportUrl: (kind: ReportDrilldownKind) =>
+    API_ENDPOINTS.admin.reportDrilldownExport(kind),
   uploadDocument: async (payload: {
     file: File;
     matterId: string;

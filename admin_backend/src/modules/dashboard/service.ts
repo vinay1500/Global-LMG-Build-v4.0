@@ -19,30 +19,22 @@ type AgingRow = RowDataPacket & { amount: number; bucket: string };
 type AlertRow = RowDataPacket & { staleMatters: number };
 
 export const getWorkspace = async (viewerUserId?: number) => {
-  const unreadThreadsSql = viewerUserId
-    ? `(SELECT COUNT(DISTINCT ct.id)
-        FROM conversation_threads ct
-        JOIN messages msg
-          ON msg.thread_id = ct.id
-         AND msg.deleted_at IS NULL
-        JOIN users sender
-          ON sender.id = msg.sender_user_id
-         AND sender.actor_type_code = 'client'
-        LEFT JOIN message_reads mr
-          ON mr.message_id = msg.id
-         AND mr.user_id = ?
-        WHERE ct.archived_at IS NULL
-          AND (msg.sender_user_id IS NULL OR msg.sender_user_id <> ?)
-          AND mr.id IS NULL) AS unreadThreads`
-    : `(SELECT COUNT(*) FROM conversation_threads WHERE archived_at IS NULL AND status_code = 'waiting') AS unreadThreads`;
-  const unreadThreadsParams = viewerUserId ? [viewerUserId, viewerUserId] : [];
+  void viewerUserId;
+  const unreadThreadsSql = `(SELECT COUNT(*) FROM conversation_threads WHERE archived_at IS NULL AND status_code = 'waiting') AS unreadThreads`;
+  const unreadThreadsParams: unknown[] = [];
 
   const [metricRows, stageRows, revenueRows, agingRows, alertRows, audit, notifications, rbac] =
     await Promise.all([
       queryRows<MetricRow>(
         `SELECT
            (SELECT COUNT(*) FROM matters WHERE archived_at IS NULL AND operational_status_code NOT IN ('completed', 'archived')) AS openMatters,
-           (SELECT COUNT(*) FROM invoices WHERE archived_at IS NULL AND status_code NOT IN ('paid', 'refunded')) AS pendingInvoices,
+           (
+             SELECT COUNT(*)
+             FROM invoices
+             WHERE archived_at IS NULL
+               AND amount_due > 0
+               AND status_code NOT IN ('paid', 'refunded', 'void')
+           ) AS pendingInvoices,
            ${unreadThreadsSql},
            (
              SELECT COUNT(*)
@@ -60,7 +52,6 @@ export const getWorkspace = async (viewerUserId?: number) => {
              SELECT COUNT(*)
              FROM event_reminders
              WHERE delivery_status_code = 'pending'
-               AND scheduled_at <= UTC_TIMESTAMP(6)
            ) AS pendingReminders`,
         unreadThreadsParams
       ),

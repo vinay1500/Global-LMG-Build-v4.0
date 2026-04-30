@@ -412,6 +412,24 @@ export interface ReportsWorkspaceResponse {
   documentActivity: Array<{ label: string; value: number }>;
   intakeTrend: Array<{ converted: number; leads: number; month: string }>;
   invoiceAging: Array<{ amount: number; bucket: string }>;
+  kpis: {
+    activeMatters: number;
+    closedMatters: number;
+    convertedRequests: number;
+    declinedRequests: number;
+    failedOperationalTasks: number;
+    failedReminders: number;
+    openRequests: number;
+    outstandingInvoiceAmount: number;
+    overdueInvoices: number;
+    paidInvoiceAmount: number;
+    pendingDocumentReviews: number;
+    pendingReminders: number;
+    recentClientActivity: number;
+    staleMatters: number;
+    upcomingEvents: number;
+    waitingThreads: number;
+  };
   resolutionTimes: Array<{ days: number; label: string }>;
   revenueTrend: Array<{ currentRevenue: number; month: string; previousRevenue: number }>;
   stageMix: Array<{ label: string; value: number }>;
@@ -428,6 +446,54 @@ export interface ReportsWorkspaceResponse {
     utilizationRate: number;
     waitingThreads: number;
   }>;
+}
+
+export type ReportDrilldownKind =
+  | 'active-matters'
+  | 'closed-matters'
+  | 'converted-requests'
+  | 'declined-requests'
+  | 'failed-reminders'
+  | 'open-requests'
+  | 'outstanding-invoices'
+  | 'overdue-invoices'
+  | 'paid-invoices'
+  | 'pending-documents'
+  | 'pending-reminders'
+  | 'recent-notifications'
+  | 'stale-matters'
+  | 'upcoming-events'
+  | 'waiting-threads';
+
+export interface ReportDrilldownItem {
+  amount?: number;
+  clientName?: string;
+  date?: string;
+  id: string;
+  matterTitle?: string;
+  routeId?: string;
+  routeType:
+    | 'document'
+    | 'event'
+    | 'invoice'
+    | 'matter'
+    | 'message'
+    | 'notification'
+    | 'reminder'
+    | 'request';
+  status?: string;
+  subtitle?: string;
+  title: string;
+}
+
+export interface ReportDrilldownResponse {
+  description: string;
+  items: ReportDrilldownItem[];
+  kind: ReportDrilldownKind;
+  label: string;
+  limit: number;
+  offset: number;
+  total: number;
 }
 
 export interface SettingsWorkspaceResponse {
