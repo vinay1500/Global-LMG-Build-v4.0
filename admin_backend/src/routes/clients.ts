@@ -1,9 +1,22 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { asyncHandler } from '../lib/httpErrors.js';
-import { getClientWorkspace, listClients } from '../modules/clients/service.js';
-import { requireReadPermission } from './shared.js';
+import { createClient, getClientWorkspace, listClients } from '../modules/clients/service.js';
+import { requireMutationPermission, requireReadPermission } from './shared.js';
 
 export const clientsRouter = Router();
+
+const createClientSchema = z.object({
+  city: z.string().trim().max(100).optional(),
+  clientType: z.enum(['individual', 'organization']).optional(),
+  displayName: z.string().trim().min(2).max(200),
+  email: z.string().trim().email().max(255),
+  notes: z.string().trim().max(2000).optional(),
+  phone: z.string().trim().max(40).optional(),
+  portalAccessEnabled: z.boolean().optional(),
+  primaryContactName: z.string().trim().min(2).max(160),
+  state: z.string().trim().max(100).optional(),
+});
 
 clientsRouter.get(
   '/clients',
@@ -16,6 +29,14 @@ clientsRouter.get(
         search: typeof request.query.search === 'string' ? request.query.search : undefined,
       })
     );
+  })
+);
+
+clientsRouter.post(
+  '/clients',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'client_account.manage');
+    response.status(201).json(await createClient(actor, createClientSchema.parse(request.body)));
   })
 );
 

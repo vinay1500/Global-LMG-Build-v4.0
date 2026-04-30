@@ -1,7 +1,7 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { createPublicId } from '../../lib/authCrypto.js';
 import { badRequest, notFound } from '../../lib/httpErrors.js';
-import { executeStatement, queryRows, withTransaction } from '../../lib/mysql.js';
+import { executeStatement, queryRows, withTransaction, type QueryExecutor } from '../../lib/mysql.js';
 import { toUiDateTime } from '../../lib/viewModels.js';
 import type { AdminActor } from '../auth/service.js';
 import {
@@ -10,6 +10,8 @@ import {
   resolveMatterByPublicId,
   touchMatterActivity,
 } from '../writeSupport.js';
+import { getInvoiceSettings } from '../settings/invoiceSettings.js';
+import { calculateInvoiceTax, insertInvoiceLineTaxes } from '../billing/tax.js';
 
 type MatterPackageRow = RowDataPacket & {
   archivedAt: string | null;
@@ -90,7 +92,6 @@ type DraftPackageInput = {
 
 type ProposalStatus = 'archived' | 'draft' | 'published' | 'selected' | 'superseded';
 
-const PACKAGE_INVOICE_DUE_DAYS = 7;
 const CLOSED_MATTER_STATUSES = new Set(['archived', 'completed']);
 
 const toDateOnly = (value: Date) => value.toISOString().slice(0, 10);
@@ -108,7 +109,7 @@ const assertMatterPackageMutable = (matter: Pick<MatterMetaRow, 'operationalStat
   }
 };
 
-const allocateInvoiceNumber = async (connection: Parameters<typeof executeStatement>[2]) => {
+const allocateInvoiceNumber = async (connection: QueryExecutor) => {
   const year = new Date().getUTCFullYear();
   const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
   const rows = await queryRows<RowDataPacket & { nextValue: number }>(
@@ -405,14 +406,24 @@ const createPackageInvoice = async (
   actor: AdminActor,
   matter: MatterMetaRow,
   packageRow: MatterPackageRow,
-  connection: Parameters<typeof executeStatement>[2]
+  connection: QueryExecutor
 ) => {
   const invoicePublicId = createPublicId();
   const invoiceNumber = await allocateInvoiceNumber(connection);
   const now = new Date();
   const createdAt = now.toISOString().slice(0, 19).replace('T', ' ');
   const issueDate = toDateOnly(now);
-  const dueDate = toDateOnly(new Date(now.getTime() + PACKAGE_INVOICE_DUE_DAYS * 24 * 60 * 60 * 1000));
+  const invoiceSettings = await getInvoiceSettings(connection);
+  const dueDate = toDateOnly(
+    new Date(now.getTime() + invoiceSettings.paymentTermsDays * 24 * 60 * 60 * 1000)
+  );
+  const tax = await calculateInvoiceTax(
+    {
+      clientState: matter.state,
+      lineAmount: packageRow.price,
+    },
+    connection
+  );
 
   const invoiceInsert = await executeStatement(
     `INSERT INTO invoices (
@@ -438,7 +449,7 @@ const createPackageInvoice = async (
        created_at,
        updated_at,
        archived_at
-     ) VALUES (?, ?, ?, ?, ?, NULL, 'matter-package', 'sent', 'INR', ?, ?, ?, 0, 0, ?, 0, 0, ?, ?, ?, ?, NULL)`,
+     ) VALUES (?, ?, ?, ?, ?, NULL, 'matter-package', 'sent', 'INR', ?, ?, ?, 0, ?, ?, 0, 0, ?, ?, ?, ?, NULL)`,
     [
       invoicePublicId,
       invoiceNumber,
@@ -447,9 +458,10 @@ const createPackageInvoice = async (
       packageRow.dbId,
       issueDate,
       dueDate,
-      packageRow.price,
-      packageRow.price,
-      packageRow.price,
+      tax.subtotalDecimal,
+      tax.taxDecimal,
+      tax.totalDecimal,
+      tax.totalDecimal,
       actor.userId,
       createdAt,
       createdAt,
@@ -489,7 +501,7 @@ const createPackageInvoice = async (
     connection
   );
 
-  await executeStatement(
+  const lineInsert = await executeStatement(
     `INSERT INTO invoice_lines (
        invoice_id,
        line_type_code,
@@ -508,14 +520,16 @@ const createPackageInvoice = async (
     [
       invoiceInsert.insertId,
       packageRow.packageName,
-      packageRow.price,
-      packageRow.price,
-      packageRow.price,
-      packageRow.price,
+      tax.lineSubtotalDecimal,
+      tax.lineSubtotalDecimal,
+      tax.taxableDecimal,
+      tax.lineTotalDecimal,
       createdAt,
     ],
     connection
   );
+
+  await insertInvoiceLineTaxes(lineInsert.insertId, tax, createdAt, connection);
 
   await executeStatement(
     `INSERT INTO invoice_installments (
@@ -529,7 +543,7 @@ const createPackageInvoice = async (
        paid_at,
        created_at
      ) VALUES (?, 1, ?, ?, 0, ?, 'pending', NULL, ?)`,
-    [invoiceInsert.insertId, dueDate, packageRow.price, packageRow.price, createdAt],
+    [invoiceInsert.insertId, dueDate, tax.totalDecimal, tax.totalDecimal, createdAt],
     connection
   );
 
@@ -537,12 +551,13 @@ const createPackageInvoice = async (
     invoiceDbId: invoiceInsert.insertId,
     invoiceId: invoicePublicId,
     invoiceNumber,
+    totalAmount: Number(tax.totalDecimal),
   };
 };
 
 const findActiveInvoiceForPackage = async (
   matterPackageDbId: number,
-  connection: Parameters<typeof executeStatement>[2]
+  connection: QueryExecutor
 ) =>
   firstRow(
     await queryRows<ExistingInvoiceRow>(
@@ -559,7 +574,7 @@ const findActiveInvoiceForPackage = async (
 
 const invoiceHasCapturedPayment = async (
   invoiceDbId: number,
-  connection: Parameters<typeof executeStatement>[2]
+  connection: QueryExecutor
 ) => {
   const row = firstRow(
     await queryRows<CapturedPaymentRow>(
@@ -998,6 +1013,8 @@ export const overridePackageSelection = async (
       connection
     );
 
+    const invoice = await createPackageInvoice(actor, matterMeta, packageRow, connection);
+
     await executeStatement(
       `UPDATE matters
        SET selected_matter_package_id = ?,
@@ -1008,11 +1025,14 @@ export const overridePackageSelection = async (
            updated_at = UTC_TIMESTAMP(6),
            row_version = row_version + 1
        WHERE id = ?`,
-      [packageRow.dbId, packageRow.price, Math.max(packageRow.price - matterMeta.paidAmount, 0), matter.id],
+      [
+        packageRow.dbId,
+        invoice.totalAmount,
+        Math.max(invoice.totalAmount - matterMeta.paidAmount, 0),
+        matter.id,
+      ],
       connection
     );
-
-    const invoice = await createPackageInvoice(actor, matterMeta, packageRow, connection);
 
     await createClientNotifications(
       {

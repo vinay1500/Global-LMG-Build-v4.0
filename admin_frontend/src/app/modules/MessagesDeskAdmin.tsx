@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router';
 import { 
   Search, Filter, CheckCircle, Clock, AlertCircle, 
   MessageSquare, Paperclip, Send, FileText, Calendar, 
@@ -26,6 +27,12 @@ interface MessagesDeskAdminProps {
   matters?: Matter[];
   messages?: ChatMessage[];
   onArchiveThread?: (threadId: string) => Promise<void>;
+  onCreateThread?: (payload: {
+    clientId: string;
+    confirmDuplicateGeneral?: boolean;
+    content: string;
+    matterId?: string;
+  }) => Promise<{ threadId: string }>;
   onDownloadAttachment?: (documentId: string) => void;
   onMarkThreadRead?: (threadId: string) => Promise<void>;
   onSendReply?: (threadId: string, content: string) => Promise<void>;
@@ -35,6 +42,11 @@ interface MessagesDeskAdminProps {
 
 type FilterType = 'all' | 'unread' | 'waiting' | 'high-priority';
 
+type DuplicateGeneralWarning = {
+  existingThreadId?: string;
+  message: string;
+};
+
 export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
   clients = [],
   events = [],
@@ -42,12 +54,14 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
   matters = [],
   messages = [],
   onArchiveThread,
+  onCreateThread,
   onDownloadAttachment,
   onMarkThreadRead,
   onSendReply,
   searchQuery,
   threads = [],
 }) => {
+  const navigate = useNavigate();
   const [localSearch, setLocalSearch] = useState('');
   const [filterType, setFilterType] = useState<FilterType>('all');
   const [selectedThreadId, setSelectedThreadId] = useState<string>(threads[0]?.id || '');
@@ -56,6 +70,14 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
   const [isArchiving, setIsArchiving] = useState(false);
   const [markingThreadId, setMarkingThreadId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [isComposeOpen, setIsComposeOpen] = useState(false);
+  const [composeClientId, setComposeClientId] = useState('');
+  const [composeMatterId, setComposeMatterId] = useState('');
+  const [composeContent, setComposeContent] = useState('');
+  const [composeError, setComposeError] = useState<string | null>(null);
+  const [duplicateGeneralWarning, setDuplicateGeneralWarning] =
+    useState<DuplicateGeneralWarning | null>(null);
+  const [isCreatingThread, setIsCreatingThread] = useState(false);
 
   useEffect(() => {
     if (!threads.some((thread) => thread.id === selectedThreadId)) {
@@ -115,6 +137,33 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
       .slice(0, 3);
   }, [activeThread, events]);
 
+  const composeClient = useMemo(
+    () => clients.find((client) => client.id === composeClientId) || null,
+    [clients, composeClientId]
+  );
+
+  const composeMatterOptions = useMemo(
+    () => matters.filter((matter) => matter.clientId === composeClientId),
+    [composeClientId, matters]
+  );
+
+  const existingActiveGeneralThread = useMemo(
+    () =>
+      threads.find(
+        (thread) =>
+          thread.clientId === composeClientId &&
+          !thread.matterId &&
+          thread.status !== 'resolved'
+      ) || null,
+    [composeClientId, threads]
+  );
+
+  useEffect(() => {
+    if (composeMatterId && !composeMatterOptions.some((matter) => matter.id === composeMatterId)) {
+      setComposeMatterId('');
+    }
+  }, [composeMatterId, composeMatterOptions]);
+
   const filteredThreads = useMemo(() => {
     const search = (localSearch || searchQuery).toLowerCase();
     return threads.filter(t => {
@@ -164,6 +213,71 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
     return groups;
   }, [threadMessages]);
 
+  const resetCompose = () => {
+    setComposeClientId('');
+    setComposeMatterId('');
+    setComposeContent('');
+    setComposeError(null);
+    setDuplicateGeneralWarning(null);
+    setIsCreatingThread(false);
+  };
+
+  const openCompose = () => {
+    setComposeClientId((current) => current || clients[0]?.id || '');
+    setComposeMatterId('');
+    setComposeContent('');
+    setComposeError(null);
+    setDuplicateGeneralWarning(null);
+    setIsComposeOpen(true);
+  };
+
+  const createThread = (confirmDuplicateGeneral = false) => {
+    if (!onCreateThread || !composeClientId || !composeContent.trim()) {
+      return;
+    }
+
+    if (!composeMatterId && existingActiveGeneralThread && !confirmDuplicateGeneral) {
+      setDuplicateGeneralWarning({
+        existingThreadId: existingActiveGeneralThread.id,
+        message: 'An active general thread already exists for this client.',
+      });
+      return;
+    }
+
+    setComposeError(null);
+    setDuplicateGeneralWarning(null);
+    setIsCreatingThread(true);
+    void onCreateThread({
+      clientId: composeClientId,
+      confirmDuplicateGeneral: confirmDuplicateGeneral || undefined,
+      content: composeContent.trim(),
+      matterId: composeMatterId || undefined,
+    })
+      .then((result) => {
+        setSelectedThreadId(result.threadId);
+        setIsComposeOpen(false);
+        resetCompose();
+      })
+      .catch((error) => {
+        const apiError = error as {
+          code?: string;
+          issues?: { existingThreadId?: string; existingThreadSubject?: string };
+          message?: string;
+        };
+
+        if (apiError.code === 'active_general_thread_exists') {
+          setDuplicateGeneralWarning({
+            existingThreadId: apiError.issues?.existingThreadId,
+            message: apiError.message || 'An active general thread already exists for this client.',
+          });
+          return;
+        }
+
+        setComposeError(apiError.message || 'Unable to create this message thread.');
+      })
+      .finally(() => setIsCreatingThread(false));
+  };
+
   return (
     <div className="h-[calc(100vh-80px)] flex flex-col -m-6 p-6 space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 flex-shrink-0">
@@ -173,14 +287,19 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
         </div>
         <div className="flex items-center gap-3">
           <button
-            className="px-4 py-2 bg-white border border-dashed border-gray-200 text-gray-400 text-sm font-medium rounded-lg cursor-not-allowed"
-            disabled
+            className="px-4 py-2 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 text-sm font-medium rounded-lg transition"
+            onClick={() => navigate('/reports?drilldown=waiting-threads')}
             type="button"
           >
             Export in Reports
           </button>
-          <button className="px-4 py-2 bg-gray-100 text-gray-400 text-sm font-medium rounded-lg cursor-not-allowed flex items-center gap-2" disabled type="button">
-            <MessageSquare className="w-4 h-4" /> New Message Later
+          <button
+            className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 flex items-center gap-2 transition"
+            disabled={!onCreateThread || clients.length === 0}
+            onClick={openCompose}
+            type="button"
+          >
+            <MessageSquare className="w-4 h-4" /> New Message
           </button>
         </div>
       </div>
@@ -304,7 +423,7 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                   <Briefcase className="w-3.5 h-3.5" />
                   <span className="font-medium text-gray-700">{activeThread.matterTitle}</span>
                   <span className="text-gray-300">•</span>
-                  <span>Ref: {activeThread.matterRef}</span>
+                  <span>{activeThread.matterRef ? `Ref: ${activeThread.matterRef}` : 'General thread'}</span>
                   <span className="text-gray-300">•</span>
                   <span>Assigned to {activeThread.assignedTo}</span>
                 </div>
@@ -517,7 +636,7 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
         )}
 
         {/* Right: Contextual Metadata */}
-        {activeThread && activeClient && activeMatter ? (
+        {activeThread && activeClient ? (
           <div className="flex flex-col gap-6 overflow-y-auto">
             {/* Client Context Card */}
             <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
@@ -542,37 +661,47 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                   <Phone className="w-4 h-4 text-gray-400" />
                   <span>{activeClient.phone || 'Not available'}</span>
                 </div>
-                <button className="w-full mt-2 py-2 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg transition">
+                <button
+                  className="w-full mt-2 py-2 text-xs font-medium text-gray-700 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg transition"
+                  onClick={() => navigate(`/clients/${activeClient.id}`)}
+                  type="button"
+                >
                   View Full Profile
                 </button>
               </div>
             </div>
 
             {/* Matter Context Card */}
-            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
-              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Linked Matter</h3>
-              <div className="mb-4">
-                <h4 className="font-medium text-gray-900 mb-1">{activeMatter.title}</h4>
-                <StatusBadge status={activeMatter.operationalStatus} size="sm" />
-              </div>
-              
-              <div className="bg-gray-50 rounded-lg p-3 border border-gray-100 space-y-2 text-sm mb-4">
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Stage</span>
-                  <span className="font-medium text-gray-900 capitalize">
-                    {activeMatter.lifecycleStage.replace(/-/g, ' ')}
-                  </span>
+            {activeMatter ? (
+              <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Linked Matter</h3>
+                <div className="mb-4">
+                  <h4 className="font-medium text-gray-900 mb-1">{activeMatter.title}</h4>
+                  <StatusBadge status={activeMatter.operationalStatus} size="sm" />
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Filed On</span>
-                  <span className="font-medium text-gray-900">{formatDate(activeMatter.createdAt)}</span>
+                
+                <div className="bg-gray-50 rounded-lg p-3 border border-gray-100 space-y-2 text-sm mb-4">
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Stage</span>
+                    <span className="font-medium text-gray-900 capitalize">
+                      {activeMatter.lifecycleStage.replace(/-/g, ' ')}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Filed On</span>
+                    <span className="font-medium text-gray-900">{formatDate(activeMatter.createdAt)}</span>
+                  </div>
                 </div>
+                
+                <button
+                  className="w-full py-2 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-100 rounded-lg transition"
+                  onClick={() => navigate(`/matters/${activeMatter.id}`)}
+                  type="button"
+                >
+                  Open Matter Desk
+                </button>
               </div>
-              
-              <button className="w-full py-2 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-100 rounded-lg transition">
-                Open Matter Desk
-              </button>
-            </div>
+            ) : null}
 
             {/* Upcoming Meetings */}
             {clientEvents.length > 0 && (
@@ -583,7 +712,12 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                 </h3>
                 <div className="space-y-3">
                   {clientEvents.map(event => (
-                    <div key={event.id} className="flex gap-3">
+                    <button
+                      key={event.id}
+                      className="flex gap-3 text-left w-full rounded-lg hover:bg-gray-50 transition"
+                      onClick={() => navigate(`/meetings?clientId=${activeThread.clientId}`)}
+                      type="button"
+                    >
                       <div className="flex flex-col items-center justify-center w-10 h-10 bg-amber-50 rounded-lg border border-amber-100 shrink-0">
                         <span className="text-[10px] font-bold text-amber-600 uppercase leading-none mb-0.5">
                           {new Date(event.date).toLocaleDateString('en-IN', { month: 'short' })}
@@ -600,7 +734,7 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                           {event.type === 'hearing' ? <Briefcase className="w-3 h-3 ml-1" /> : <Video className="w-3 h-3 ml-1" />}
                         </p>
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>
@@ -612,16 +746,25 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Recent Invoices</h3>
                 <div className="space-y-3">
                   {clientInvoices.map(inv => (
-                    <div key={inv.id} className="flex items-center justify-between p-3 rounded-lg border border-gray-100 bg-gray-50 hover:border-gray-200 transition cursor-pointer">
+                    <button
+                      key={inv.id}
+                      className="w-full flex items-center justify-between p-3 rounded-lg border border-gray-100 bg-gray-50 hover:border-gray-200 transition text-left"
+                      onClick={() => navigate(`/billing?clientId=${activeThread.clientId}`)}
+                      type="button"
+                    >
                       <div>
                         <p className="text-sm font-medium text-gray-900">{formatCurrency(inv.totalAmount)}</p>
                         <p className="text-xs text-gray-500 mt-0.5">Due {formatDate(inv.dueDate)}</p>
                       </div>
                       <StatusBadge status={inv.status} size="sm" />
-                    </div>
+                    </button>
                   ))}
                 </div>
-                <button className="w-full mt-3 text-xs font-medium text-gray-500 hover:text-gray-900 text-center py-1">
+                <button
+                  className="w-full mt-3 text-xs font-medium text-gray-500 hover:text-gray-900 text-center py-1"
+                  onClick={() => navigate(`/billing?clientId=${activeThread.clientId}`)}
+                  type="button"
+                >
                   View All Billing
                 </button>
               </div>
@@ -630,6 +773,150 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
           </div>
         ) : null}
       </div>
+      {isComposeOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/30 px-4">
+          <div className="w-full max-w-xl rounded-xl border border-gray-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+              <div>
+                <h2 className="text-lg font-medium text-gray-900">New Message</h2>
+                <p className="mt-0.5 text-xs text-gray-500">Start a client-visible conversation from Global LMG.</p>
+              </div>
+              <button
+                className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-900"
+                onClick={() => {
+                  setIsComposeOpen(false);
+                  resetCompose();
+                }}
+                type="button"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4 px-5 py-5">
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  Client
+                </label>
+                <select
+                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400"
+                  value={composeClientId}
+                  onChange={(event) => {
+                    setComposeClientId(event.target.value);
+                    setComposeMatterId('');
+                    setDuplicateGeneralWarning(null);
+                    setComposeError(null);
+                  }}
+                >
+                  <option value="">Select client</option>
+                  {clients.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {client.name} {client.email ? `(${client.email})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  Matter
+                </label>
+                <select
+                  className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400 disabled:bg-gray-50 disabled:text-gray-400"
+                  disabled={!composeClientId || composeMatterOptions.length === 0}
+                  value={composeMatterId}
+                  onChange={(event) => {
+                    setComposeMatterId(event.target.value);
+                    setDuplicateGeneralWarning(null);
+                    setComposeError(null);
+                  }}
+                >
+                  <option value="">General conversation</option>
+                  {composeMatterOptions.map((matter) => (
+                    <option key={matter.id} value={matter.id}>
+                      {matter.referenceCode ? `${matter.referenceCode} · ` : ''}{matter.title}
+                    </option>
+                  ))}
+                </select>
+                {composeClient && composeMatterOptions.length === 0 && (
+                  <p className="mt-1.5 text-xs text-gray-400">No linked matters found for this client.</p>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-400">
+                  First Message
+                </label>
+                <textarea
+                  className="min-h-[120px] w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400"
+                  onChange={(event) => {
+                    setComposeContent(event.target.value);
+                    setComposeError(null);
+                  }}
+                  placeholder="Write the first message the client will see..."
+                  value={composeContent}
+                />
+              </div>
+
+              {duplicateGeneralWarning && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
+                  <p className="font-medium">{duplicateGeneralWarning.message}</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {duplicateGeneralWarning.existingThreadId && (
+                      <button
+                        className="rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+                        onClick={() => {
+                          setSelectedThreadId(duplicateGeneralWarning.existingThreadId || '');
+                          setIsComposeOpen(false);
+                          resetCompose();
+                        }}
+                        type="button"
+                      >
+                        Open Existing Thread
+                      </button>
+                    )}
+                    <button
+                      className="rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+                      disabled={isCreatingThread}
+                      onClick={() => createThread(true)}
+                      type="button"
+                    >
+                      Create Separate Thread
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {composeError && (
+                <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-600">
+                  {composeError}
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t border-gray-100 px-5 py-4">
+              <button
+                className="rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                onClick={() => {
+                  setIsComposeOpen(false);
+                  resetCompose();
+                }}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!composeClientId || !composeContent.trim() || isCreatingThread}
+                onClick={() => createThread(false)}
+                type="button"
+              >
+                {isCreatingThread ? 'Creating...' : 'Create Thread'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

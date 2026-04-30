@@ -6,6 +6,7 @@ import { IntroSection } from './components/IntroSection';
 import { Footer } from './components/Footer';
 import { ScrollToTop } from './components/ScrollToTop';
 import { AuthModal } from './components/auth/AuthModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { selfHostedUnsplashImage } from './utils/assets';
 import { Seo } from './components/seo/Seo';
 import { buildOrganizationJsonLd, buildWebPageJsonLd, buildWebSiteJsonLd } from './seo/jsonLd';
@@ -207,12 +208,14 @@ const AppLayout = () => {
 // App mounts the auth provider once so brochure pages and dashboard routes share the same session-backed auth state.
 const App = () => {
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <ScrollToTop />
-        <AppLayout />
-      </BrowserRouter>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <BrowserRouter>
+          <ScrollToTop />
+          <AppLayout />
+        </BrowserRouter>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 };
 

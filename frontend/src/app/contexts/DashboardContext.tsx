@@ -1,6 +1,6 @@
 import React, { ReactNode, useCallback, useEffect, useState } from 'react';
 import { type RequestData } from '../data/requestWizardData';
-import type { PlatformUser } from '../data/dashboardTypes';
+import type { ChatMessage, MessageThread, PlatformUser } from '../data/dashboardTypes';
 import { dashboardApi } from '../lib/api/dashboard';
 import { ApiRequestError } from '../lib/api/client';
 import { uploadsApi } from '../lib/api/uploads';
@@ -52,6 +52,84 @@ const createEmptyDashboardState = (currentClient: PlatformUser): DashboardState 
   threads: [],
   users: currentClient.id ? [currentClient] : [],
 });
+
+const asArray = <TValue,>(value: TValue[] | null | undefined): TValue[] =>
+  Array.isArray(value) ? value : [];
+
+const textOr = (value: unknown, fallback = '') =>
+  typeof value === 'string' && value.trim() ? value : fallback;
+
+const normalizeClient = (client: PlatformUser | null | undefined, fallback: PlatformUser) => ({
+  ...fallback,
+  ...(client || {}),
+  avatar: textOr(client?.avatar, fallback.avatar),
+  email: textOr(client?.email, fallback.email),
+  id: textOr(client?.id, fallback.id),
+  joinedAt: textOr(client?.joinedAt, fallback.joinedAt),
+  lastActiveAt: textOr(client?.lastActiveAt, fallback.lastActiveAt),
+  lifecycle: client?.lifecycle || fallback.lifecycle,
+  name: textOr(client?.name, fallback.name),
+  owner: textOr(client?.owner, fallback.owner),
+  phone: textOr(client?.phone, fallback.phone),
+  region: textOr(client?.region, fallback.region),
+});
+
+const normalizeThread = (thread: MessageThread): MessageThread => ({
+  ...thread,
+  assignedTo: textOr(thread.assignedTo, 'Client Intake Desk'),
+  clientId: textOr(thread.clientId),
+  clientName: textOr(thread.clientName, 'Client'),
+  id: textOr(thread.id),
+  lastMessage: textOr(thread.lastMessage, 'No messages yet'),
+  lastMessageAt: textOr(thread.lastMessageAt, new Date().toISOString()),
+  matterId: textOr(thread.matterId),
+  matterRef: textOr(thread.matterRef),
+  matterTitle: textOr(thread.matterTitle, 'General Support'),
+  stage: thread.stage || 'request-received',
+  status: thread.status || 'active',
+  unreadCount: Number(thread.unreadCount || 0),
+  urgency: thread.urgency || 'standard',
+});
+
+const normalizeMessage = (message: ChatMessage): ChatMessage => ({
+  ...message,
+  attachments: asArray(message.attachments),
+  content: textOr(message.content),
+  id: textOr(message.id),
+  read: Boolean(message.read),
+  senderId: textOr(message.senderId, 'system'),
+  senderName: textOr(
+    message.senderName,
+    message.senderRole === 'client' ? 'You' : 'Global LMG'
+  ),
+  senderRole: message.senderRole || 'system',
+  threadId: textOr(message.threadId),
+  timestamp: textOr(message.timestamp, new Date().toISOString()),
+});
+
+const normalizeSnapshot = (
+  snapshot: DashboardSnapshotResponse,
+  fallbackClient: PlatformUser
+): DashboardState => {
+  const currentClient = normalizeClient(snapshot.currentClient, fallbackClient);
+
+  return {
+    advocates: asArray(snapshot.advocates),
+    auditEntries: asArray(snapshot.auditEntries),
+    currentClient,
+    documents: asArray(snapshot.documents),
+    events: asArray(snapshot.events),
+    invoices: asArray(snapshot.invoices),
+    leads: asArray(snapshot.leads),
+    matters: asArray(snapshot.matters),
+    messages: asArray(snapshot.messages).map(normalizeMessage),
+    packages: asArray(snapshot.packages),
+    payments: asArray(snapshot.payments),
+    staff: asArray(snapshot.staff),
+    threads: asArray(snapshot.threads).map(normalizeThread),
+    users: asArray(snapshot.users).length ? asArray(snapshot.users) : [currentClient],
+  };
+};
 
 const toErrorMessage = (error: unknown, fallbackMessage: string) => {
   if (error instanceof ApiRequestError && error.message) {
@@ -117,9 +195,12 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
         dashboardApi.getNotificationPreferences(),
         dashboardApi.getNotifications(),
       ]);
-      setDashboardState(snapshot);
-      setNotificationPreferences(preferences);
-      setNotifications(nextNotifications);
+      setDashboardState(normalizeSnapshot(snapshot, currentUser));
+      setNotificationPreferences({
+        ...DEFAULT_NOTIFICATION_PREFERENCES,
+        ...(preferences || {}),
+      });
+      setNotifications(asArray(nextNotifications));
     } catch (error) {
       const authError = await resolveAuthExpiry(error);
       if (authError) {
@@ -156,8 +237,8 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
 
       const snapshot = await dashboardApi.submitRequest(request, documentUploadIds);
       const nextNotifications = await dashboardApi.getNotifications();
-      setDashboardState(snapshot);
-      setNotifications(nextNotifications);
+      setDashboardState(normalizeSnapshot(snapshot, currentUser || EMPTY_CLIENT));
+      setNotifications(asArray(nextNotifications));
     } catch (error) {
       const authError = await resolveAuthExpiry(error);
       const message =
@@ -201,8 +282,8 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
         attachmentUploadIds,
       });
       const nextNotifications = await dashboardApi.getNotifications();
-      setDashboardState(snapshot);
-      setNotifications(nextNotifications);
+      setDashboardState(normalizeSnapshot(snapshot, currentUser || EMPTY_CLIENT));
+      setNotifications(asArray(nextNotifications));
     } catch (error) {
       const authError = await resolveAuthExpiry(error);
       const message =
@@ -223,8 +304,8 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
         dashboardApi.markThreadRead(threadId),
         dashboardApi.getNotifications(),
       ]);
-      setDashboardState(snapshot);
-      setNotifications(nextNotifications);
+      setDashboardState(normalizeSnapshot(snapshot, currentUser || EMPTY_CLIENT));
+      setNotifications(asArray(nextNotifications));
     } catch (error) {
       const authError = await resolveAuthExpiry(error);
 
@@ -256,8 +337,8 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
         dashboardApi.getSnapshot(),
         dashboardApi.getNotifications(),
       ]);
-      setDashboardState(snapshot);
-      setNotifications(nextNotifications);
+      setDashboardState(normalizeSnapshot(snapshot, currentUser || EMPTY_CLIENT));
+      setNotifications(asArray(nextNotifications));
     } catch (error) {
       const authError = await resolveAuthExpiry(error);
       const message =
@@ -288,8 +369,8 @@ export const DashboardProvider: React.FC<{ children: ReactNode }> = ({ children 
         proposalVersion,
       });
       const nextNotifications = await dashboardApi.getNotifications();
-      setDashboardState(response.snapshot);
-      setNotifications(nextNotifications);
+      setDashboardState(normalizeSnapshot(response.snapshot, currentUser || EMPTY_CLIENT));
+      setNotifications(asArray(nextNotifications));
       return response;
     } catch (error) {
       const authError = await resolveAuthExpiry(error);

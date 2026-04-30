@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../lib/httpErrors.js';
-import { archiveThread, getWorkspace, markThreadRead, replyToThread } from '../modules/messages/service.js';
+import { archiveThread, createThread, getWorkspace, markThreadRead, replyToThread } from '../modules/messages/service.js';
 import { requireMutationPermission, requireReadPermission } from './shared.js';
 
 export const messagesRouter = Router();
@@ -11,11 +11,26 @@ const replySchema = z.object({
   visibleToClient: z.boolean().optional(),
 });
 
+const createThreadSchema = z.object({
+  clientId: z.string().trim().min(1).max(96),
+  confirmDuplicateGeneral: z.boolean().optional(),
+  content: z.string().trim().min(1).max(4000),
+  matterId: z.string().trim().min(1).max(96).optional(),
+});
+
 messagesRouter.get(
   '/messages/workspace',
   asyncHandler(async (request, response) => {
     const actor = await requireReadPermission(request, 'message.send');
     response.json(await getWorkspace(actor));
+  })
+);
+
+messagesRouter.post(
+  '/messages/threads',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'message.send');
+    response.status(201).json(await createThread(actor, createThreadSchema.parse(request.body)));
   })
 );
 

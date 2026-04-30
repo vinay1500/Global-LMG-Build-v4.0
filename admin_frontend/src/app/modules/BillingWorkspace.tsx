@@ -7,12 +7,13 @@ import {
 } from 'lucide-react';
 import { formatCurrency, formatDate, Invoice, Matter, Payment } from '../data/seedData';
 import { StatusBadge } from '../components/dashboard/StatusBadge';
-import type { RecordPaymentResponse, RefundRecord } from '../lib/api/contracts';
+import type { InvoiceSettings, RecordPaymentResponse, RefundRecord } from '../lib/api/contracts';
 
 type FilterStatus = 'all' | 'paid' | 'pending' | 'overdue' | 'draft';
 type PaymentMethod = Payment['method'];
 
 export const BillingWorkspace: React.FC<{
+  invoiceSettings?: InvoiceSettings;
   invoices?: Invoice[];
   matters?: Matter[];
   onCreateInvoice?: (payload: {
@@ -41,6 +42,7 @@ export const BillingWorkspace: React.FC<{
   payments?: Payment[];
   refunds?: RefundRecord[];
 }> = ({
+  invoiceSettings,
   invoices = [],
   matters = [],
   onCreateInvoice,
@@ -150,6 +152,63 @@ export const BillingWorkspace: React.FC<{
 
     return Math.max(activeInvoice.totalAmount - activePaidAmount - activeRefundAmount, 0);
   }, [activeInvoice, activePaidAmount, activeRefundAmount]);
+
+  const activeTaxBreakdown = useMemo(() => {
+    if (!activeInvoice) {
+      return [];
+    }
+
+    const taxMap = new Map<string, { amount: number; label: string }>();
+    activeInvoice.items.forEach((item) => {
+      item.taxes?.forEach((tax) => {
+        const key = `${tax.code}-${tax.percent}`;
+        const existing = taxMap.get(key) || {
+          amount: 0,
+          label: `${tax.name} (${tax.percent.toFixed(2)}%)`,
+        };
+        existing.amount += tax.amount;
+        taxMap.set(key, existing);
+      });
+    });
+
+    return Array.from(taxMap.values());
+  }, [activeInvoice]);
+
+  const taxPreview = useMemo(() => {
+    const amount = Number(createAmount);
+
+    if (!invoiceSettings || Number.isNaN(amount) || amount <= 0) {
+      return null;
+    }
+
+    const rate = invoiceSettings.gstEnabled && invoiceSettings.taxMode === 'forward_charge'
+      ? invoiceSettings.defaultGstRatePercent
+      : 0;
+    const gross = Math.round(amount * 100);
+    const taxable = invoiceSettings.pricesIncludeTax && rate > 0
+      ? Math.round((gross * 10000) / (10000 + Math.round(rate * 100)))
+      : gross;
+    const tax = rate > 0
+      ? invoiceSettings.pricesIncludeTax
+        ? gross - taxable
+        : Math.round((taxable * Math.round(rate * 100)) / 10000)
+      : 0;
+    const total = invoiceSettings.pricesIncludeTax ? gross : taxable + tax;
+
+    return {
+      note:
+        invoiceSettings.taxMode === 'reverse_charge'
+          ? 'Reverse charge: no tax added to invoice total.'
+          : invoiceSettings.taxMode === 'exempt'
+            ? 'Exempt: no tax added to invoice total.'
+            : invoiceSettings.gstEnabled
+              ? `${invoiceSettings.defaultGstRatePercent}% GST preview; final split uses client/business state.`
+              : 'GST disabled: no tax added.',
+      subtotal: taxable / 100,
+      tax: tax / 100,
+      total: total / 100,
+    };
+  }, [createAmount, invoiceSettings]);
 
   const canRecordPayment = Boolean(
     activeInvoice &&
@@ -408,6 +467,27 @@ export const BillingWorkspace: React.FC<{
             </label>
           </div>
 
+          {taxPreview ? (
+            <div className="grid gap-3 rounded-lg border border-gray-100 bg-gray-50 p-3 text-sm md:grid-cols-4">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-gray-400">Taxable</p>
+                <p className="font-medium text-gray-900">{formatCurrency(taxPreview.subtotal)}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-gray-400">Tax</p>
+                <p className="font-medium text-gray-900">{formatCurrency(taxPreview.tax)}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-gray-400">Total</p>
+                <p className="font-medium text-gray-900">{formatCurrency(taxPreview.total)}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-gray-400">Mode</p>
+                <p className="text-xs text-gray-500">{taxPreview.note}</p>
+              </div>
+            </div>
+          ) : null}
+
           {createError ? <p className="text-sm text-red-600">{createError}</p> : null}
 
           <div className="flex items-center gap-3">
@@ -633,7 +713,14 @@ export const BillingWorkspace: React.FC<{
                     <tbody className="divide-y divide-gray-100 text-sm">
                       {activeInvoice.items.map((item, idx) => (
                         <tr key={idx}>
-                          <td className="py-4 text-gray-900">{item.description}</td>
+                          <td className="py-4 text-gray-900">
+                            {item.description}
+                            {item.taxes?.length ? (
+                              <p className="mt-1 text-xs text-gray-400">
+                                {item.taxes.map((tax) => `${tax.name} ${tax.percent.toFixed(2)}%`).join(' · ')}
+                              </p>
+                            ) : null}
+                          </td>
                           <td className="py-4 text-center text-gray-600">{item.quantity}</td>
                           <td className="py-4 text-right text-gray-600">{formatCurrency(item.rate)}</td>
                           <td className="py-4 text-right font-medium text-gray-900">{formatCurrency(item.amount)}</td>
@@ -655,9 +742,20 @@ export const BillingWorkspace: React.FC<{
                           <span>-{formatCurrency(activeInvoice.discount)}</span>
                         </div>
                       )}
-                      <div className="flex justify-between text-gray-600 border-b border-gray-200 pb-3">
-                        <span>GST (18%)</span>
-                        <span>{formatCurrency(activeInvoice.tax)}</span>
+                      <div className="space-y-2 border-b border-gray-200 pb-3">
+                        {activeTaxBreakdown.length > 0 ? (
+                          activeTaxBreakdown.map((tax) => (
+                            <div className="flex justify-between text-gray-600" key={tax.label}>
+                              <span>{tax.label}</span>
+                              <span>{formatCurrency(tax.amount)}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="flex justify-between text-gray-600">
+                            <span>Tax</span>
+                            <span>{formatCurrency(activeInvoice.tax)}</span>
+                          </div>
+                        )}
                       </div>
                       <div className="flex justify-between font-bold text-lg text-gray-900 pt-1">
                         <span>Total</span>

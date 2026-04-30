@@ -148,7 +148,19 @@ export interface Invoice {
   issueDate: string;
   dueDate: string;
   paidDate?: string;
-  items: { description: string; quantity: number; rate: number; amount: number }[];
+  items: Array<{
+    amount: number;
+    description: string;
+    quantity: number;
+    rate: number;
+    taxes?: Array<{
+      amount: number;
+      code: string;
+      name: string;
+      percent: number;
+      taxableAmount: number;
+    }>;
+  }>;
   clientNote?: string;
   internalNote?: string;
   lastReminder?: string;

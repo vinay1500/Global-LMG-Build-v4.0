@@ -24,6 +24,9 @@ import type {
   PlatformUser,
 } from './types.js';
 
+const AUTOMATIC_REQUEST_ACKNOWLEDGEMENT =
+  'We have received your request. A case manager will confirm the next step shortly.';
+
 interface ClientContextRow extends RowDataPacket {
   account_public_id: string;
   client_account_id: number;
@@ -168,6 +171,21 @@ interface BillingSnapshotSeedRow extends RowDataPacket {
   gstin: string | null;
   postal_code: string | null;
   state: string | null;
+}
+
+interface InvoiceSettingsRow extends RowDataPacket {
+  business_state: string;
+  default_gst_rate_bps: number;
+  fallback_tax_type_code: 'cgst_sgst' | 'igst' | 'none';
+  gst_enabled: number;
+  payment_terms_days: number;
+  prices_include_tax: number;
+  reverse_charge_note: string | null;
+  tax_mode_code: 'exempt' | 'forward_charge' | 'reverse_charge';
+}
+
+interface TaxRateIdRow extends RowDataPacket {
+  id: number;
 }
 
 interface InvoiceLineRow extends RowDataPacket {
@@ -641,13 +659,23 @@ export class NormalizedDashboardRepository {
       const currentUserId = Number(currentUserRow.id);
       const ownerUserIdRow = await selectOne<RowDataPacket>(
         connection,
-        `SELECT owner_user_id
-         FROM client_accounts
-         WHERE id = ?
+        `SELECT
+           owner.id AS owner_user_id,
+           owner.actor_type_code AS owner_actor_type_code
+         FROM client_accounts ca
+         LEFT JOIN users owner ON owner.id = ca.owner_user_id
+         WHERE ca.id = ?
          LIMIT 1`,
         [context.clientAccountId]
       );
-      const ownerUserId = Number(ownerUserIdRow?.owner_user_id || currentUserId);
+      const rawOwnerUserId = ownerUserIdRow?.owner_user_id
+        ? Number(ownerUserIdRow.owner_user_id)
+        : null;
+      const internalOwnerUserId =
+        rawOwnerUserId && ownerUserIdRow?.owner_actor_type_code !== 'client'
+          ? rawOwnerUserId
+          : null;
+      const ownerUserId = internalOwnerUserId || currentUserId;
       const createdAt = toMysqlDateTime(nowUtc());
       const uniqueDocumentUploadIds = [...new Set(request.documentUploadIds.map((value) => value.trim()).filter(Boolean))];
       let requestUploadRows: AttachmentUploadRow[] = [];
@@ -923,8 +951,8 @@ export class NormalizedDashboardRepository {
           matterId,
           title,
           'active',
-          ownerUserId,
-          ownerUserId,
+          currentUserId,
+          internalOwnerUserId,
           createdAt,
           createdAt,
           createdAt,
@@ -939,13 +967,15 @@ export class NormalizedDashboardRepository {
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [threadId, 'client', null, currentUserId, null, 1, createdAt, null, null, null]
       );
-      await connection.execute(
-        `INSERT INTO thread_participants (
-          thread_id, participant_role_code, internal_user_id, client_contact_user_id, counsel_partner_id,
-          is_active, joined_at, left_at, last_read_message_id, last_read_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [threadId, 'staff', ownerUserId, null, null, 1, createdAt, null, null, null]
-      );
+      if (internalOwnerUserId) {
+        await connection.execute(
+          `INSERT INTO thread_participants (
+            thread_id, participant_role_code, internal_user_id, client_contact_user_id, counsel_partner_id,
+            is_active, joined_at, left_at, last_read_message_id, last_read_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [threadId, 'staff', internalOwnerUserId, null, null, 1, createdAt, null, null, null]
+        );
+      }
 
       const systemMessage = await connection.execute(
         `INSERT INTO messages (
@@ -984,11 +1014,11 @@ export class NormalizedDashboardRepository {
         [
           createPublicId(),
           threadId,
-          ownerUserId,
+          internalOwnerUserId,
           null,
-          null,
+          internalOwnerUserId ? null : 'global_lmg',
           'text',
-          'We have received your request. A case manager will confirm the next step shortly.',
+          AUTOMATIC_REQUEST_ACKNOWLEDGEMENT,
           1,
           null,
           createdAt,
@@ -1247,7 +1277,6 @@ export class NormalizedDashboardRepository {
 
       const packagePrice = toAmount(packageRow.total_price);
       const paidAmount = toAmount(matterRow.paid_total_amount);
-      const nextDueAmount = Math.max(packagePrice - paidAmount, 0);
 
       await connection.execute(
         `UPDATE matters
@@ -1259,7 +1288,7 @@ export class NormalizedDashboardRepository {
              updated_at = UTC_TIMESTAMP(6),
              row_version = row_version + 1
          WHERE id = ?`,
-        [Number(packageRow.id), packagePrice, nextDueAmount, Number(matterRow.id)]
+        [Number(packageRow.id), packagePrice, Math.max(packagePrice - paidAmount, 0), Number(matterRow.id)]
       );
 
       const invoice = await this.createPackageInvoice(connection, {
@@ -1271,6 +1300,16 @@ export class NormalizedDashboardRepository {
         totalAmount: packagePrice,
       });
       generatedInvoiceId = invoice.publicId;
+
+      await connection.execute(
+        `UPDATE matters
+         SET quoted_total_amount = ?,
+             due_total_amount = ?,
+             updated_at = UTC_TIMESTAMP(6),
+             row_version = row_version + 1
+         WHERE id = ?`,
+        [invoice.totalAmount, Math.max(invoice.totalAmount - paidAmount, 0), Number(matterRow.id)]
+      );
 
       const clientRecipients = await this.getClientRecipientUserIds(
         connection,
@@ -1536,6 +1575,32 @@ export class NormalizedDashboardRepository {
            AND (msg.sender_user_id IS NULL OR msg.sender_user_id <> ?)`,
         [Number(userRow.id), Number(threadRow.id), Number(userRow.id)]
       );
+
+      await connection.execute(
+        `UPDATE thread_participants
+         SET last_read_at = UTC_TIMESTAMP(6),
+             last_read_message_id = (
+               SELECT MAX(msg.id)
+               FROM messages msg
+               WHERE msg.thread_id = ?
+                 AND msg.deleted_at IS NULL
+                 AND msg.visible_to_client = 1
+             )
+         WHERE thread_id = ?
+           AND client_contact_user_id = ?`,
+        [Number(threadRow.id), Number(threadRow.id), Number(userRow.id)]
+      );
+
+      await connection.execute(
+        `UPDATE notifications
+         SET is_read = 1,
+             read_at = COALESCE(read_at, UTC_TIMESTAMP(6))
+         WHERE thread_id = ?
+           AND recipient_user_id = ?
+           AND notification_type_code = 'message_received'
+           AND is_read = 0`,
+        [Number(threadRow.id), Number(userRow.id)]
+      );
     });
 
     return this.getSnapshot(currentClient);
@@ -1695,6 +1760,180 @@ export class NormalizedDashboardRepository {
     );
   }
 
+  private moneyToMinor(value: number | string) {
+    const normalized = String(value).trim();
+    const [wholePart, fractionPart = ''] = normalized.split('.');
+    return Number(wholePart) * 100 + Number(fractionPart.padEnd(2, '0').slice(0, 2));
+  }
+
+  private minorToDecimal(minorUnits: number) {
+    return (minorUnits / 100).toFixed(2);
+  }
+
+  private normalizeState(value: string | null | undefined) {
+    return value
+      ? value
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, '')
+      : '';
+  }
+
+  private async getInvoiceSettings(connection: PoolConnection) {
+    const row = await selectOne<InvoiceSettingsRow>(
+      connection,
+      `SELECT
+         business_state,
+         gst_enabled,
+         default_gst_rate_bps,
+         tax_mode_code,
+         prices_include_tax,
+         fallback_tax_type_code,
+         payment_terms_days,
+         reverse_charge_note
+       FROM invoice_settings
+       WHERE id = 1
+       LIMIT 1`
+    );
+
+    return (
+      row || {
+        business_state: 'Not configured',
+        default_gst_rate_bps: 1800,
+        fallback_tax_type_code: 'igst' as const,
+        gst_enabled: 1,
+        payment_terms_days: 7,
+        prices_include_tax: 0,
+        reverse_charge_note: 'Tax payable under reverse charge where applicable.',
+        tax_mode_code: 'forward_charge' as const,
+      }
+    );
+  }
+
+  private async getTaxRateId(connection: PoolConnection, rateBps: number) {
+    const row = await selectOne<TaxRateIdRow>(
+      connection,
+      `SELECT id
+       FROM tax_rates
+       WHERE is_active = 1
+         AND ROUND(rate_percent * 100) = ?
+       ORDER BY effective_from DESC, id DESC
+       LIMIT 1`,
+      [rateBps]
+    );
+
+    return row?.id || null;
+  }
+
+  private async calculateInvoiceTax(
+    connection: PoolConnection,
+    amount: number,
+    clientState: string | null | undefined
+  ) {
+    const settings = await this.getInvoiceSettings(connection);
+    const grossMinor = this.moneyToMinor(amount);
+    const rateBps =
+      settings.gst_enabled && settings.tax_mode_code === 'forward_charge'
+        ? Number(settings.default_gst_rate_bps || 0)
+        : 0;
+
+    if (!rateBps) {
+      return {
+        dueDateDays: Number(settings.payment_terms_days || 7),
+        lineSubtotal: this.minorToDecimal(grossMinor),
+        lineTotal: this.minorToDecimal(grossMinor),
+        subtotal: this.minorToDecimal(grossMinor),
+        taxable: this.minorToDecimal(grossMinor),
+        tax: '0.00',
+        taxLines: [] as Array<{
+          amount: string;
+          code: string;
+          name: string;
+          percent: string;
+          sortOrder: number;
+          taxRateId: number | null;
+          taxable: string;
+        }>,
+        total: this.minorToDecimal(grossMinor),
+      };
+    }
+
+    const taxableMinor = settings.prices_include_tax
+      ? Math.round((grossMinor * 10000) / (10000 + rateBps))
+      : grossMinor;
+    const taxMinor = settings.prices_include_tax
+      ? grossMinor - taxableMinor
+      : Math.round((taxableMinor * rateBps) / 10000);
+    const totalMinor = settings.prices_include_tax ? grossMinor : taxableMinor + taxMinor;
+    const businessState = this.normalizeState(settings.business_state);
+    const normalizedClientState = this.normalizeState(clientState);
+    const taxType =
+      businessState && businessState !== 'notconfigured' && normalizedClientState
+        ? businessState === normalizedClientState
+          ? 'cgst_sgst'
+          : 'igst'
+        : settings.fallback_tax_type_code;
+    const taxRateId = await this.getTaxRateId(connection, rateBps);
+
+    if (taxType === 'none') {
+      return {
+        dueDateDays: Number(settings.payment_terms_days || 7),
+        lineSubtotal: this.minorToDecimal(taxableMinor),
+        lineTotal: this.minorToDecimal(taxableMinor),
+        subtotal: this.minorToDecimal(taxableMinor),
+        taxable: this.minorToDecimal(taxableMinor),
+        tax: '0.00',
+        taxLines: [],
+        total: this.minorToDecimal(taxableMinor),
+      };
+    }
+
+    const taxLines =
+      taxType === 'cgst_sgst'
+        ? [
+            {
+              amount: this.minorToDecimal(Math.floor(taxMinor / 2)),
+              code: 'CGST',
+              name: 'CGST',
+              percent: (rateBps / 200).toFixed(2),
+              sortOrder: 1,
+              taxRateId,
+              taxable: this.minorToDecimal(taxableMinor),
+            },
+            {
+              amount: this.minorToDecimal(taxMinor - Math.floor(taxMinor / 2)),
+              code: 'SGST',
+              name: 'SGST',
+              percent: (rateBps / 200).toFixed(2),
+              sortOrder: 2,
+              taxRateId,
+              taxable: this.minorToDecimal(taxableMinor),
+            },
+          ]
+        : [
+            {
+              amount: this.minorToDecimal(taxMinor),
+              code: 'IGST',
+              name: 'IGST',
+              percent: (rateBps / 100).toFixed(2),
+              sortOrder: 1,
+              taxRateId,
+              taxable: this.minorToDecimal(taxableMinor),
+            },
+          ];
+
+    return {
+      dueDateDays: Number(settings.payment_terms_days || 7),
+      lineSubtotal: this.minorToDecimal(taxableMinor),
+      lineTotal: this.minorToDecimal(totalMinor),
+      subtotal: this.minorToDecimal(taxableMinor),
+      taxable: this.minorToDecimal(taxableMinor),
+      tax: this.minorToDecimal(taxMinor),
+      taxLines,
+      total: this.minorToDecimal(totalMinor),
+    };
+  }
+
   private async createPackageInvoice(
     connection: PoolConnection,
     input: {
@@ -1710,7 +1949,6 @@ export class NormalizedDashboardRepository {
     const invoiceNumber = await allocateBusinessNumber(connection, 'invoice', 'INV');
     const createdAt = toMysqlDateTime(nowUtc());
     const issueDate = nowUtc().slice(0, 10);
-    const dueDate = addDaysUtc(7).slice(0, 10);
     const billingSeed = await selectOne<BillingSnapshotSeedRow>(
       connection,
       `SELECT
@@ -1733,6 +1971,8 @@ export class NormalizedDashboardRepository {
        LIMIT 1`,
       [input.clientAccountId]
     );
+    const tax = await this.calculateInvoiceTax(connection, input.totalAmount, billingSeed?.state || null);
+    const dueDate = addDaysUtc(tax.dueDateDays).slice(0, 10);
 
     const [invoiceInsert] = await connection.execute(
       `INSERT INTO invoices (
@@ -1758,7 +1998,7 @@ export class NormalizedDashboardRepository {
          created_at,
          updated_at,
          archived_at
-       ) VALUES (?, ?, ?, ?, ?, NULL, 'matter-package', 'sent', 'INR', ?, ?, ?, 0, 0, ?, 0, 0, ?, ?, ?, ?, NULL)`,
+       ) VALUES (?, ?, ?, ?, ?, NULL, 'matter-package', 'sent', 'INR', ?, ?, ?, 0, ?, ?, 0, 0, ?, ?, ?, ?, NULL)`,
       [
         invoicePublicId,
         invoiceNumber,
@@ -1767,9 +2007,10 @@ export class NormalizedDashboardRepository {
         input.matterPackageId,
         issueDate,
         dueDate,
-        input.totalAmount,
-        input.totalAmount,
-        input.totalAmount,
+        tax.subtotal,
+        tax.tax,
+        tax.total,
+        tax.total,
         input.actorUserId,
         createdAt,
         createdAt,
@@ -1827,13 +2068,41 @@ export class NormalizedDashboardRepository {
       [
         invoiceId,
         input.packageName,
-        input.totalAmount,
-        input.totalAmount,
-        input.totalAmount,
-        input.totalAmount,
+        tax.lineSubtotal,
+        tax.lineSubtotal,
+        tax.taxable,
+        tax.lineTotal,
         createdAt,
       ]
     );
+    const invoiceLineId = Number((lineInsert as { insertId: number }).insertId);
+
+    for (const taxLine of tax.taxLines) {
+      await connection.execute(
+        `INSERT INTO invoice_line_taxes (
+           invoice_line_id,
+           tax_rate_id,
+           tax_code_snapshot,
+           tax_name_snapshot,
+           tax_percent_snapshot,
+           taxable_amount,
+           tax_amount,
+           sort_order,
+           created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          invoiceLineId,
+          taxLine.taxRateId,
+          taxLine.code,
+          taxLine.name,
+          taxLine.percent,
+          taxLine.taxable,
+          taxLine.amount,
+          taxLine.sortOrder,
+          createdAt,
+        ]
+      );
+    }
 
     await connection.execute(
       `INSERT INTO invoice_installments (
@@ -1847,14 +2116,15 @@ export class NormalizedDashboardRepository {
          paid_at,
          created_at
        ) VALUES (?, 1, ?, ?, 0, ?, 'pending', NULL, ?)`,
-      [invoiceId, dueDate, input.totalAmount, input.totalAmount, createdAt]
+      [invoiceId, dueDate, tax.total, tax.total, createdAt]
     );
 
     return {
       id: invoiceId,
-      invoiceLineId: Number((lineInsert as { insertId: number }).insertId),
+      invoiceLineId,
       invoiceNumber,
       publicId: invoicePublicId,
+      totalAmount: Number(tax.total),
     };
   }
 
@@ -2433,10 +2703,22 @@ export class NormalizedDashboardRepository {
          ct.public_id AS thread_public_id,
          msg.body_text,
          msg.sent_at,
-         sender.public_id AS sender_user_public_id,
-         COALESCE(sender.display_name, cp.full_name, 'System') AS sender_name,
          CASE
-           WHEN msg.sender_system_code IS NOT NULL THEN 'system'
+           WHEN msg.sender_system_code IS NOT NULL
+             OR (msg.body_text = ? AND msg.sent_at = ct.created_at)
+           THEN CONCAT('system:', COALESCE(msg.sender_system_code, 'global_lmg'))
+           ELSE COALESCE(sender.public_id, CONCAT('system:', COALESCE(msg.sender_system_code, 'unknown')))
+         END AS sender_user_public_id,
+         CASE
+           WHEN msg.sender_system_code IS NOT NULL
+             OR (msg.body_text = ? AND msg.sent_at = ct.created_at)
+           THEN 'Global LMG'
+           ELSE COALESCE(sender.display_name, cp.full_name, 'System')
+         END AS sender_name,
+         CASE
+           WHEN msg.sender_system_code IS NOT NULL
+             OR (msg.body_text = ? AND msg.sent_at = ct.created_at)
+           THEN 'system'
            WHEN sender.actor_type_code = 'client' THEN 'client'
            ELSE 'admin'
          END AS sender_role,
@@ -2467,9 +2749,16 @@ export class NormalizedDashboardRepository {
         cp.full_name,
         sender.actor_type_code,
         msg.sender_system_code,
+        ct.created_at,
         mr.id
       ORDER BY msg.sent_at ASC, msg.id ASC`,
-      [currentUserPublicId, clientAccountId]
+      [
+        AUTOMATIC_REQUEST_ACKNOWLEDGEMENT,
+        AUTOMATIC_REQUEST_ACKNOWLEDGEMENT,
+        AUTOMATIC_REQUEST_ACKNOWLEDGEMENT,
+        currentUserPublicId,
+        clientAccountId,
+      ]
     );
 
     return rows.map((row) => ({

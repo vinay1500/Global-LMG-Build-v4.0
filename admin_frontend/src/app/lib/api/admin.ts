@@ -3,6 +3,7 @@ import type {
   AdminDocumentDetailResponse,
   BillingWorkspaceResponse,
   ClientWorkspaceResponse,
+  CreateMessageThreadResponse,
   ClientsListResponse,
   DashboardWorkspaceResponse,
   DocumentUploadResponse,
@@ -21,11 +22,17 @@ import type {
   RecordPaymentResponse,
   AdminRequestDecisionResponse,
   ReportsWorkspaceResponse,
+  CreateClientPayload,
+  CreateClientResponse,
+  CreateMatterPayload,
+  CreateMatterResponse,
   RequestsWorkspaceResponse,
   RbacWorkspaceResponse,
   SearchResultsResponse,
   SettingsWorkspaceResponse,
   TasksWorkspaceResponse,
+  UpdateInvoiceSettingsPayload,
+  InvoiceSettings,
 } from './contracts';
 import { apiRequest } from './client';
 import { API_ENDPOINTS } from './endpoints';
@@ -61,6 +68,12 @@ const computeFileSha256 = async (file: File) => {
 };
 
 export const adminApi = {
+  createClient: (payload: CreateClientPayload) =>
+    apiRequest<CreateClientResponse>(API_ENDPOINTS.admin.createClient(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
   createInvoice: (payload: {
     amount: number;
     description: string;
@@ -147,6 +160,12 @@ export const adminApi = {
       headers: { 'content-type': 'application/json' },
       method: 'POST',
     }),
+  createMatter: (payload: CreateMatterPayload) =>
+    apiRequest<CreateMatterResponse>(API_ENDPOINTS.admin.createMatter(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
   createRefund: (payload: {
     amount: number;
     invoiceId?: string;
@@ -212,8 +231,25 @@ export const adminApi = {
     apiRequest<RbacWorkspaceResponse>(API_ENDPOINTS.admin.rbacWorkspace()),
   getSettingsWorkspace: () =>
     apiRequest<SettingsWorkspaceResponse>(API_ENDPOINTS.admin.settingsWorkspace()),
+  updateInvoiceSettings: (payload: UpdateInvoiceSettingsPayload) =>
+    apiRequest<InvoiceSettings>(API_ENDPOINTS.admin.invoiceSettings(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+    }),
   getTasksWorkspace: () =>
     apiRequest<TasksWorkspaceResponse>(API_ENDPOINTS.admin.tasksWorkspace()),
+  createMessageThread: (payload: {
+    clientId: string;
+    confirmDuplicateGeneral?: boolean;
+    content: string;
+    matterId?: string;
+  }) =>
+    apiRequest<CreateMessageThreadResponse>(API_ENDPOINTS.admin.messageThreads(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
   listClients: (params: { limit?: number; offset?: number; search?: string } = {}) =>
     apiRequest<ClientsListResponse>(
       withQuery(API_ENDPOINTS.admin.clients(), {

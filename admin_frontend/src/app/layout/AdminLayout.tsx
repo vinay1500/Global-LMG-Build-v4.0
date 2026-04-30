@@ -51,6 +51,7 @@ export const AdminLayout = () => {
       <AdminTopbar
         currentUser={currentUser}
         onOpenSearch={() => setSearchOpen(true)}
+        onSignOut={handleSignOut}
         onToggleSidebar={() => setSidebarOpen((previous) => !previous)}
         sidebarOpen={sidebarOpen}
       />

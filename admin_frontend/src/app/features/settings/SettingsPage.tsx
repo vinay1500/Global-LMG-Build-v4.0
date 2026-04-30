@@ -34,5 +34,13 @@ export const SettingsPage = () => {
     return null;
   }
 
-  return <SettingsWorkspace workspace={data} />;
+  return (
+    <SettingsWorkspace
+      onUpdateInvoiceSettings={async (payload) => {
+        await adminApi.updateInvoiceSettings(payload);
+        await refresh();
+      }}
+      workspace={data}
+    />
+  );
 };

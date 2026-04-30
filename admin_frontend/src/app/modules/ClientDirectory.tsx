@@ -1,34 +1,120 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, Filter, ChevronDown, Check, User, Mail, Phone, Clock, FileText, Briefcase, Plus, MoreVertical, 
-  LayoutGrid, List as ListIcon, Shield, CreditCard, MessageSquare, ArrowRight, Star, AlertCircle, Building2
+  LayoutGrid, List as ListIcon, Shield, CreditCard, MessageSquare, ArrowRight, Star, AlertCircle, Building2, Loader2
 } from 'lucide-react';
 import { PLATFORM_USERS, MATTERS, INVOICES, MESSAGE_THREADS, formatCurrency, formatDate, type PlatformUser } from '../data/seedData';
 import { StatusBadge } from '../components/dashboard/StatusBadge';
 import { EmptyState } from './EmptyState';
-import type { ClientListItem } from '../lib/api/contracts';
+import type { ClientListItem, CreateClientPayload, CreateClientResponse } from '../lib/api/contracts';
 
 type DirectoryClient = PlatformUser | ClientListItem;
 
 export const ClientDirectory = ({ 
   clients = PLATFORM_USERS,
+  createRequested,
+  onCreateClient,
+  onCreateRequestHandled,
   onSelectClient 
 }: { 
   clients?: DirectoryClient[];
+  createRequested?: boolean;
+  onCreateClient?: (payload: CreateClientPayload) => Promise<CreateClientResponse>;
+  onCreateRequestHandled?: () => void;
   onSelectClient: (client: PlatformUser) => void 
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState<'list' | 'card'>('list');
   const [filterOpen, setFilterOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
+  const [createForm, setCreateForm] = useState<CreateClientPayload>({
+    clientType: 'individual',
+    displayName: '',
+    email: '',
+    phone: '',
+    portalAccessEnabled: true,
+    primaryContactName: '',
+    city: '',
+    state: '',
+    notes: '',
+  });
   const [activeFilters, setActiveFilters] = useState<Record<string, string>>({
     lifecycle: 'all',
-    verification: 'all',
     balance: 'all',
     matters: 'all',
     messages: 'all',
     activity: 'all'
   });
+
+  useEffect(() => {
+    if (createRequested && onCreateClient) {
+      setCreateOpen(true);
+      onCreateRequestHandled?.();
+    }
+  }, [createRequested, onCreateClient, onCreateRequestHandled]);
+
+  const resetCreateForm = () => {
+    setCreateError('');
+    setCreateForm({
+      clientType: 'individual',
+      displayName: '',
+      email: '',
+      phone: '',
+      portalAccessEnabled: true,
+      primaryContactName: '',
+      city: '',
+      state: '',
+      notes: '',
+    });
+  };
+
+  const closeCreateModal = () => {
+    if (isCreating) {
+      return;
+    }
+
+    setCreateOpen(false);
+    resetCreateForm();
+  };
+
+  const submitCreateClient = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!onCreateClient) {
+      setCreateError('Client creation is not available in this workspace.');
+      return;
+    }
+
+    if (!createForm.displayName.trim() || !createForm.primaryContactName.trim() || !createForm.email.trim()) {
+      setCreateError('Client name, primary contact, and email are required.');
+      return;
+    }
+
+    setCreateError('');
+    setIsCreating(true);
+
+    try {
+      await onCreateClient({
+        ...createForm,
+        city: createForm.city?.trim() || undefined,
+        displayName: createForm.displayName.trim(),
+        email: createForm.email.trim(),
+        notes: createForm.notes?.trim() || undefined,
+        phone: createForm.phone?.trim() || undefined,
+        primaryContactName: createForm.primaryContactName.trim(),
+        state: createForm.state?.trim() || undefined,
+      });
+      setCreateOpen(false);
+      resetCreateForm();
+    } catch (error) {
+      setCreateError(error instanceof Error ? error.message : 'Unable to create client.');
+    } finally {
+      setIsCreating(false);
+    }
+  };
 
   const getClientStats = (client: DirectoryClient) => {
     const liveClient = client as Partial<ClientListItem>;
@@ -154,10 +240,17 @@ export const ClientDirectory = ({
             { id: 'lead', label: 'Inbound Leads' }
           ])}
 
-          {renderFilterSection('Verification Status', 'verification', [
-            { id: 'verified', label: 'KYC Verified' },
-            { id: 'pending', label: 'Pending Verification' }
-          ])}
+          <div className="mb-6">
+            <h4 className="text-xs font-semibold text-[#8C8981] uppercase tracking-wider mb-3 px-1">
+              Verification Status
+            </h4>
+            <div className="rounded-xl border border-dashed border-[#E6E4DD] bg-white/70 px-3 py-3">
+              <p className="text-sm font-medium text-[#2C2B29]">Not configured</p>
+              <p className="text-xs text-[#8C8981] mt-1">
+                KYC/verification filters will appear after the verification status field is DB-backed.
+              </p>
+            </div>
+          </div>
 
           {renderFilterSection('Unpaid Balance', 'balance', [
             { id: 'has-balance', label: 'Has Outstanding' },
@@ -177,7 +270,7 @@ export const ClientDirectory = ({
         {Object.values(activeFilters).some(v => v !== 'all') && (
           <div className="pt-4 border-t border-[#E6E4DD]">
             <button 
-              onClick={() => setActiveFilters({ lifecycle: 'all', verification: 'all', balance: 'all', matters: 'all', messages: 'all', activity: 'all' })}
+              onClick={() => setActiveFilters({ lifecycle: 'all', balance: 'all', matters: 'all', messages: 'all', activity: 'all' })}
               className="w-full py-2 text-xs font-medium text-[#8C8981] hover:text-[#2C2B29] hover:bg-white rounded-lg transition-colors"
             >
               Clear All Filters
@@ -195,7 +288,20 @@ export const ClientDirectory = ({
               <h2 className="text-2xl font-medium text-[#2C2B29]" style={{ fontFamily: "'Playfair Display', serif" }}>Client Directory</h2>
               <p className="text-sm text-[#8C8981] mt-1">Manage client profiles, lifecycles, and access status.</p>
             </div>
-            <button className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium bg-[#2C2B29] text-white rounded-lg shadow-sm hover:bg-[#4A4946] transition-colors">
+            <button
+              className={`flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-medium shadow-sm transition ${
+                onCreateClient
+                  ? 'bg-[#2C2B29] text-white hover:bg-[#4A4946]'
+                  : 'cursor-not-allowed border border-dashed border-[#D8D5CC] bg-[#F4F1EA] text-[#8C8981]'
+              }`}
+              disabled={!onCreateClient}
+              onClick={() => {
+                resetCreateForm();
+                setCreateOpen(true);
+              }}
+              title={onCreateClient ? 'Create a new client account.' : 'New Client creation is coming in the setup phase.'}
+              type="button"
+            >
               <Plus className="w-4 h-4" /> New Client
             </button>
           </div>
@@ -254,7 +360,7 @@ export const ClientDirectory = ({
                   icon={Search} 
                   title="No clients found" 
                   description="We couldn't find any clients matching your filters or search query."
-                  action={{ label: "Clear Search & Filters", onClick: () => { setSearchQuery(''); setActiveFilters({ lifecycle: 'all', verification: 'all', balance: 'all', matters: 'all', messages: 'all', activity: 'all' }) } }}
+                  action={{ label: "Clear Search & Filters", onClick: () => { setSearchQuery(''); setActiveFilters({ lifecycle: 'all', balance: 'all', matters: 'all', messages: 'all', activity: 'all' }) } }}
                 />
               </div>
             ) : viewMode === 'list' ? (
@@ -346,7 +452,7 @@ export const ClientDirectory = ({
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                 {filteredClients.map(client => {
-                  const stats = getClientStats(client.id);
+                  const stats = getClientStats(client);
                   return (
                     <div 
                       key={client.id}
@@ -404,6 +510,171 @@ export const ClientDirectory = ({
           </div>
         </div>
       </div>
+      <AnimatePresence>
+        {createOpen && (
+          <motion.div
+            animate={{ opacity: 1 }}
+            className="fixed inset-0 z-[80] flex items-center justify-center bg-[#2C2B29]/30 p-4 backdrop-blur-sm"
+            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }}
+          >
+            <motion.form
+              animate={{ opacity: 1, y: 0 }}
+              className="w-full max-w-2xl rounded-xl border border-[#E6E4DD] bg-white shadow-2xl"
+              exit={{ opacity: 0, y: 10 }}
+              initial={{ opacity: 0, y: 10 }}
+              onSubmit={submitCreateClient}
+            >
+              <div className="flex items-start justify-between border-b border-[#E6E4DD] p-5">
+                <div>
+                  <h3 className="text-lg font-medium text-[#2C2B29]">New Client</h3>
+                  <p className="mt-1 text-sm text-[#8C8981]">
+                    Create a client account and primary contact. Portal credentials are not emailed automatically.
+                  </p>
+                </div>
+                <button
+                  className="rounded-lg p-1.5 text-[#8C8981] transition hover:bg-[#F4F1EA] hover:text-[#2C2B29]"
+                  disabled={isCreating}
+                  onClick={closeCreateModal}
+                  type="button"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="grid gap-4 p-5 sm:grid-cols-2">
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Client name</span>
+                  <input
+                    className="w-full rounded-lg border border-[#E6E4DD] px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                    onChange={(event) => setCreateForm((current) => ({ ...current, displayName: event.target.value }))}
+                    placeholder="Client or organization name"
+                    required
+                    value={createForm.displayName}
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Primary contact</span>
+                  <input
+                    className="w-full rounded-lg border border-[#E6E4DD] px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                    onChange={(event) =>
+                      setCreateForm((current) => ({ ...current, primaryContactName: event.target.value }))
+                    }
+                    placeholder="Full name"
+                    required
+                    value={createForm.primaryContactName}
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Email</span>
+                  <input
+                    className="w-full rounded-lg border border-[#E6E4DD] px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                    onChange={(event) => setCreateForm((current) => ({ ...current, email: event.target.value }))}
+                    placeholder="client@example.com"
+                    required
+                    type="email"
+                    value={createForm.email}
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Phone</span>
+                  <input
+                    className="w-full rounded-lg border border-[#E6E4DD] px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                    onChange={(event) => setCreateForm((current) => ({ ...current, phone: event.target.value }))}
+                    placeholder="+91..."
+                    value={createForm.phone || ''}
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Client type</span>
+                  <select
+                    className="w-full rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                    onChange={(event) =>
+                      setCreateForm((current) => ({
+                        ...current,
+                        clientType: event.target.value as CreateClientPayload['clientType'],
+                      }))
+                    }
+                    value={createForm.clientType}
+                  >
+                    <option value="individual">Individual</option>
+                    <option value="organization">Organization</option>
+                  </select>
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">City</span>
+                  <input
+                    className="w-full rounded-lg border border-[#E6E4DD] px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                    onChange={(event) => setCreateForm((current) => ({ ...current, city: event.target.value }))}
+                    placeholder="Optional"
+                    value={createForm.city || ''}
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">State</span>
+                  <input
+                    className="w-full rounded-lg border border-[#E6E4DD] px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                    onChange={(event) => setCreateForm((current) => ({ ...current, state: event.target.value }))}
+                    placeholder="Optional"
+                    value={createForm.state || ''}
+                  />
+                </label>
+                <label className="flex items-center gap-3 rounded-lg border border-[#E6E4DD] bg-[#FCFBF8] px-3 py-2">
+                  <input
+                    checked={Boolean(createForm.portalAccessEnabled)}
+                    className="h-4 w-4 accent-[#C19A5B]"
+                    onChange={(event) =>
+                      setCreateForm((current) => ({
+                        ...current,
+                        portalAccessEnabled: event.target.checked,
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span className="text-sm text-[#2C2B29]">Enable portal access record</span>
+                </label>
+                <label className="space-y-1.5 sm:col-span-2">
+                  <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Notes</span>
+                  <textarea
+                    className="min-h-24 w-full rounded-lg border border-[#E6E4DD] px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                    onChange={(event) => setCreateForm((current) => ({ ...current, notes: event.target.value }))}
+                    placeholder="Internal onboarding note"
+                    value={createForm.notes || ''}
+                  />
+                </label>
+              </div>
+
+              {createError ? (
+                <div className="mx-5 mb-4 rounded-lg border border-[#F5C2C7] bg-[#FDE8EC] px-3 py-2 text-sm text-[#9A1B32]">
+                  {createError}
+                </div>
+              ) : null}
+
+              <div className="flex items-center justify-between border-t border-[#E6E4DD] bg-[#FCFBF8] p-5">
+                <p className="text-xs text-[#8C8981]">Invite delivery: manual/local mode until provider settings are configured.</p>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="rounded-lg border border-[#E6E4DD] px-4 py-2 text-sm font-medium text-[#5A7C96] transition hover:bg-white"
+                    disabled={isCreating}
+                    onClick={closeCreateModal}
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="flex items-center gap-2 rounded-lg bg-[#2C2B29] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#4A4946] disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={isCreating}
+                    type="submit"
+                  >
+                    {isCreating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                    Create Client
+                  </button>
+                </div>
+              </div>
+            </motion.form>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };

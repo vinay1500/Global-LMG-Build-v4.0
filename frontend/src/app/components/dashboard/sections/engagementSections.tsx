@@ -60,6 +60,7 @@ export const DashboardMessagesSection = ({
   onSendMessage,
 }: DashboardMessagesSectionProps) => {
   const attachmentInputRef = React.useRef<HTMLInputElement | null>(null);
+  const safeText = (value: string | null | undefined, fallback = '') => value || fallback;
   const filteredThreads = myThreads.filter((thread) => {
     if (!threadSearchQuery.trim()) {
       return true;
@@ -67,9 +68,9 @@ export const DashboardMessagesSection = ({
 
     const query = threadSearchQuery.trim().toLowerCase();
     return (
-      thread.matterTitle.toLowerCase().includes(query) ||
-      thread.matterRef.toLowerCase().includes(query) ||
-      thread.assignedTo.toLowerCase().includes(query)
+      safeText(thread.matterTitle, 'General Support').toLowerCase().includes(query) ||
+      safeText(thread.matterRef).toLowerCase().includes(query) ||
+      safeText(thread.assignedTo, 'Client Intake Desk').toLowerCase().includes(query)
     );
   });
   const activeThread = selectedThread
@@ -112,7 +113,9 @@ export const DashboardMessagesSection = ({
                 }`}
               >
                 <div className="mb-0.5 flex items-center justify-between">
-                  <span className="flex-1 truncate text-sm">{thread.matterTitle}</span>
+                  <span className="flex-1 truncate text-sm">
+                    {safeText(thread.matterTitle, 'General Support')}
+                  </span>
                   {thread.unreadCount > 0 && (
                     <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-900 text-[10px] text-white">
                       {thread.unreadCount}
@@ -131,9 +134,12 @@ export const DashboardMessagesSection = ({
             <>
               <div className="flex items-center gap-3 border-b border-gray-100 px-5 py-3">
                 <div>
-                  <h3 className="text-sm">{activeThread.matterTitle}</h3>
+                  <h3 className="text-sm">
+                    {safeText(activeThread.matterTitle, 'General Support')}
+                  </h3>
                   <p className="text-xs text-gray-400">
-                    {activeThread.matterRef || 'Inquiry'} · {activeThread.assignedTo}
+                    {activeThread.matterRef || 'Inquiry'} ·{' '}
+                    {safeText(activeThread.assignedTo, 'Client Intake Desk')}
                   </p>
                 </div>
                 <div className="ml-auto">
@@ -155,10 +161,12 @@ export const DashboardMessagesSection = ({
                             : 'bg-gray-100 text-gray-800'
                       }`}
                     >
-                      {message.senderRole !== 'client' && message.senderRole !== 'system' && (
-                        <p className="mb-0.5 text-[11px] text-gray-500">{message.senderName}</p>
+                      {message.senderRole !== 'client' && (
+                        <p className="mb-0.5 text-[11px] text-gray-500">
+                          {safeText(message.senderName, 'Global LMG')}
+                        </p>
                       )}
-                      <p className="text-sm">{message.content}</p>
+                      <p className="text-sm">{safeText(message.content)}</p>
                       {message.attachments && message.attachments.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-2">
                           {message.attachments.map((attachment, index) => (

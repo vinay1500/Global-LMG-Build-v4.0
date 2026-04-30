@@ -1,4 +1,6 @@
-import type { RowDataPacket } from 'mysql2/promise';
+import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
+import { createPublicId } from '../../lib/authCrypto.js';
+import { allocateBusinessNumber } from '../../lib/businessSequences.js';
 import { badRequest, notFound } from '../../lib/httpErrors.js';
 import { executeStatement, queryRows, withTransaction } from '../../lib/mysql.js';
 import { fetchDocuments, fetchEvents, fetchInvoices, fetchMatters, fetchThreads } from '../shared.js';
@@ -6,6 +8,7 @@ import type { AdminActor } from '../auth/service.js';
 import {
   createAuditEvent,
   createClientNotifications,
+  resolveClientAccountByPublicId,
   resolveCounselByPublicId,
   resolveInternalUserByPublicId,
   resolveMatterByPublicId,
@@ -14,6 +17,7 @@ import {
 
 export const listMatters = async (options: { limit: number; search?: string }) => {
   return {
+    createOptions: await getMatterCreateOptions(),
     matters: await fetchMatters({
       limit: options.limit,
       search: options.search,
@@ -23,6 +27,26 @@ export const listMatters = async (options: { limit: number; search?: string }) =
 
 type InternalUserRow = RowDataPacket & { id: string; name: string };
 type CounselRow = RowDataPacket & { id: string; name: string };
+type ClientOptionRow = RowDataPacket & { email: string; id: string; name: string };
+type DomainOptionRow = RowDataPacket & { code: string; name: string };
+type ServiceOptionRow = RowDataPacket & {
+  code: string;
+  domainCode: string;
+  domainName: string;
+  name: string;
+};
+type StageOptionRow = RowDataPacket & { code: string; label: string };
+type StatusOptionRow = RowDataPacket & { code: string; label: string };
+type UrgencyOptionRow = RowDataPacket & { code: string; label: string };
+type ConsultationModeOptionRow = RowDataPacket & { code: string; label: string };
+type MatterClientMetaRow = RowDataPacket & {
+  accountStatusCode: string;
+  clientAccountId: number;
+  clientName: string;
+};
+type LegalDomainRow = RowDataPacket & { id: number; name: string };
+type ServiceIdRow = RowDataPacket & { domainCode: string; id: number; serviceCode: string };
+type UrgencyRuleRow = RowDataPacket & { id: number };
 type MatterUpdateRow = RowDataPacket & {
   clientAccountId: number;
   currentStageCode: string;
@@ -42,6 +66,13 @@ const VALID_PRIORITY_CODES = new Set([
   'in-progress',
   'on-hold',
 ]);
+
+const DEFAULT_MATTER_STAGE = 'request-received';
+const DEFAULT_MATTER_STATUS = 'new-lead';
+const DEFAULT_CONSULTATION_MODE = 'video';
+const DEFAULT_URGENCY_CODE = 'standard';
+
+const buildInClause = (values: readonly unknown[]) => values.map(() => '?').join(', ');
 
 const firstRow = <TRow>(rows: TRow[]) => rows[0] || null;
 
@@ -100,6 +131,79 @@ const assertMatterCanMutate = (
   }
 };
 
+const getMatterCreateOptions = async () => {
+  const [clientRows, domainRows, serviceRows, stageRows, statusRows, urgencyRows, consultationModeRows] =
+    await Promise.all([
+      queryRows<ClientOptionRow>(
+        `SELECT public_id AS id, display_name AS name, primary_email AS email
+         FROM client_accounts
+         WHERE archived_at IS NULL
+           AND account_status_code = 'active'
+         ORDER BY display_name ASC
+         LIMIT 500`
+      ),
+      queryRows<DomainOptionRow>(
+        `SELECT domain_code AS code, domain_name AS name
+         FROM legal_domains
+         WHERE is_active = 1
+         ORDER BY sort_order ASC, domain_name ASC`
+      ),
+      queryRows<ServiceOptionRow>(
+        `SELECT
+           s.service_code AS code,
+           s.service_name AS name,
+           ld.domain_code AS domainCode,
+           ld.domain_name AS domainName
+         FROM services s
+         INNER JOIN legal_domains ld ON ld.id = s.legal_domain_id
+         WHERE s.is_active = 1
+           AND ld.is_active = 1
+         ORDER BY ld.sort_order ASC, s.sort_order ASC, s.service_name ASC`
+      ),
+      queryRows<StageOptionRow>(
+        `SELECT code, label
+         FROM matter_stages
+         WHERE is_active = 1
+         ORDER BY stage_order ASC`
+      ),
+      queryRows<StatusOptionRow>(
+        `SELECT code, label
+         FROM matter_operational_statuses
+         WHERE is_active = 1
+         ORDER BY sort_order ASC`
+      ),
+      queryRows<UrgencyOptionRow>(
+        `SELECT urgency_code AS code, label
+         FROM pricing_urgency_rules
+         WHERE is_active = 1
+         ORDER BY sort_order ASC`
+      ),
+      queryRows<ConsultationModeOptionRow>(
+        `SELECT code, label
+         FROM consultation_modes
+         WHERE is_active = 1
+         ORDER BY sort_order ASC`
+      ),
+    ]);
+
+  return {
+    clients: clientRows,
+    consultationModes: consultationModeRows,
+    domains: domainRows,
+    priorities: [
+      { code: 'in-progress', label: 'In Progress' },
+      { code: 'immediate-6h', label: 'Immediate' },
+      { code: 'awaiting-client', label: 'Awaiting Client' },
+      { code: 'awaiting-team', label: 'Awaiting Team' },
+      { code: 'on-hold', label: 'On Hold' },
+    ],
+    services: serviceRows,
+    stages: stageRows,
+    statuses: statusRows,
+    urgencyRules: urgencyRows,
+  };
+};
+
 const getAssignmentOptions = async () => {
   const [staffRows, counselRows] = await Promise.all([
     queryRows<InternalUserRow>(
@@ -145,6 +249,318 @@ export const getMatterWorkspace = async (matterId: string) => {
     invoices: await fetchInvoices({ matterIds: [matterId] }),
     matter,
     threads: await fetchThreads({ matterIds: [matterId] }),
+  };
+};
+
+export const createMatter = async (
+  actor: AdminActor,
+  payload: {
+    clientAccountPublicId: string;
+    clientVisible?: boolean;
+    consultationModeCode?: string;
+    legalDomainCode?: string;
+    priorityCode?: string;
+    serviceCode?: string;
+    serviceCodes?: string[];
+    stageCode?: string;
+    statusCode?: string;
+    summary?: string;
+    title: string;
+    urgencyCode?: string;
+  }
+) => {
+  const matterPublicId = await withTransaction(async (connection) => {
+    const clientAccount = await resolveClientAccountByPublicId(payload.clientAccountPublicId, connection);
+    const clientMeta = firstRow(
+      await queryRows<MatterClientMetaRow>(
+        `SELECT
+           id AS clientAccountId,
+           display_name AS clientName,
+           account_status_code AS accountStatusCode
+         FROM client_accounts
+         WHERE id = ?
+           AND archived_at IS NULL
+         LIMIT 1
+         FOR UPDATE`,
+        [clientAccount.id],
+        connection
+      )
+    );
+
+    if (!clientMeta) {
+      throw notFound('client_account_not_found', 'Client account not found.');
+    }
+
+    if (clientMeta.accountStatusCode !== 'active') {
+      throw badRequest(
+        'client_not_active_for_matter',
+        'This client account is not active enough for a new matter.'
+      );
+    }
+
+    const selectedServiceCodes = Array.from(
+      new Set(
+        [payload.serviceCode, ...(payload.serviceCodes || [])]
+          .map((code) => code?.trim())
+          .filter((code): code is string => Boolean(code))
+      )
+    );
+
+    const serviceRows = selectedServiceCodes.length
+      ? await queryRows<ServiceIdRow>(
+          `SELECT
+             s.id,
+             s.service_code AS serviceCode,
+             ld.domain_code AS domainCode
+           FROM services s
+           INNER JOIN legal_domains ld ON ld.id = s.legal_domain_id
+           WHERE s.service_code IN (${buildInClause(selectedServiceCodes)})
+             AND s.is_active = 1
+             AND ld.is_active = 1`,
+          selectedServiceCodes,
+          connection
+        )
+      : [];
+
+    if (serviceRows.length !== selectedServiceCodes.length) {
+      throw badRequest('invalid_service_codes', 'One or more selected services are invalid.');
+    }
+
+    const serviceDomainCode = serviceRows[0]?.domainCode;
+    const legalDomainCode = payload.legalDomainCode || serviceDomainCode;
+    const legalDomain = legalDomainCode
+      ? firstRow(
+          await queryRows<LegalDomainRow>(
+            `SELECT id, domain_name AS name
+             FROM legal_domains
+             WHERE domain_code = ?
+               AND is_active = 1
+             LIMIT 1`,
+            [legalDomainCode],
+            connection
+          )
+        )
+      : firstRow(
+          await queryRows<LegalDomainRow>(
+            `SELECT id, domain_name AS name
+             FROM legal_domains
+             WHERE is_active = 1
+             ORDER BY sort_order ASC, domain_name ASC
+             LIMIT 1`,
+            [],
+            connection
+          )
+        );
+
+    if (!legalDomain) {
+      throw badRequest('invalid_legal_domain', 'Select a configured legal domain for this matter.');
+    }
+
+    if (serviceRows.some((service) => service.domainCode !== legalDomainCode)) {
+      throw badRequest(
+        'service_domain_mismatch',
+        'Selected services must belong to the selected matter domain.'
+      );
+    }
+
+    const stageCode = payload.stageCode || DEFAULT_MATTER_STAGE;
+    const statusCode = payload.statusCode || DEFAULT_MATTER_STATUS;
+    const urgencyCode = payload.urgencyCode || DEFAULT_URGENCY_CODE;
+    const consultationModeCode = payload.consultationModeCode || DEFAULT_CONSULTATION_MODE;
+    const priorityCode =
+      payload.priorityCode || (urgencyCode === DEFAULT_URGENCY_CODE ? 'in-progress' : 'immediate-6h');
+
+    await assertMatterStageCode(stageCode, connection);
+    await assertMatterStatusCode(statusCode, connection);
+    assertMatterPriorityCode(priorityCode);
+
+    const urgencyRule = firstRow(
+      await queryRows<UrgencyRuleRow>(
+        `SELECT id
+         FROM pricing_urgency_rules
+         WHERE urgency_code = ?
+           AND is_active = 1
+         LIMIT 1`,
+        [urgencyCode],
+        connection
+      )
+    );
+
+    if (!urgencyRule) {
+      throw badRequest('invalid_urgency_rule', 'The selected urgency rule is not configured.');
+    }
+
+    const consultationMode = firstRow(
+      await queryRows<RowDataPacket & { code: string }>(
+        `SELECT code
+         FROM consultation_modes
+         WHERE code = ?
+           AND is_active = 1
+         LIMIT 1`,
+        [consultationModeCode],
+        connection
+      )
+    );
+
+    if (!consultationMode) {
+      throw badRequest('invalid_consultation_mode', 'The selected consultation mode is not configured.');
+    }
+
+    const matterNumber = await allocateBusinessNumber(connection, 'matter', 'GLMG');
+    const nextMatterPublicId = createPublicId();
+    const summary =
+      payload.summary?.trim() ||
+      'Matter opened by Global LMG operations for service coordination and client support.';
+
+    const insertResult = await executeStatement<ResultSetHeader>(
+      `INSERT INTO matters (
+         public_id,
+         matter_number,
+         service_request_id,
+         client_account_id,
+         opened_by_user_id,
+         legal_domain_id,
+         title,
+         issue_summary,
+         detailed_description,
+         current_stage_code,
+         operational_status_code,
+         consultation_mode_code,
+         urgency_rule_id,
+         priority_code,
+         quoted_total_amount,
+         paid_total_amount,
+         refunded_total_amount,
+         due_total_amount,
+         opened_at,
+         last_activity_at,
+         closed_at,
+         created_at,
+         updated_at
+       ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), NULL, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))`,
+      [
+        nextMatterPublicId,
+        matterNumber,
+        clientMeta.clientAccountId,
+        actor.userId,
+        legalDomain.id,
+        payload.title.trim(),
+        summary.slice(0, 500),
+        summary,
+        stageCode,
+        statusCode,
+        consultationModeCode,
+        urgencyRule.id,
+        priorityCode,
+      ],
+      connection
+    );
+    const matterDbId = Number(insertResult.insertId);
+
+    for (const service of serviceRows) {
+      await executeStatement(
+        `INSERT INTO matter_services (
+           matter_id,
+           service_id,
+           final_fee,
+           service_status_code,
+           completed_at,
+           created_at
+         ) VALUES (?, ?, 0, 'selected', NULL, UTC_TIMESTAMP(6))`,
+        [matterDbId, service.id],
+        connection
+      );
+    }
+
+    await executeStatement(
+      `INSERT INTO matter_stage_history (
+         matter_id,
+         stage_code,
+         entered_at,
+         exited_at,
+         changed_by_user_id,
+         visible_to_client,
+         change_note
+       ) VALUES (?, ?, UTC_TIMESTAMP(6), NULL, ?, ?, ?)`,
+      [
+        matterDbId,
+        stageCode,
+        actor.userId,
+        payload.clientVisible ? 1 : 0,
+        'Matter opened from the admin console.',
+      ],
+      connection
+    );
+
+    await executeStatement(
+      `INSERT INTO matter_updates (
+         matter_id,
+         update_type_code,
+         title,
+         body_text,
+         visible_to_client,
+         created_by_user_id,
+         created_at,
+         edited_at
+       ) VALUES (?, 'note', 'Matter Created', ?, ?, ?, UTC_TIMESTAMP(6), NULL)`,
+      [
+        matterDbId,
+        `Global LMG opened this coordination workspace for ${clientMeta.clientName}.`,
+        payload.clientVisible ? 1 : 0,
+        actor.userId,
+      ],
+      connection
+    );
+
+    if (payload.clientVisible) {
+      await createClientNotifications(
+        {
+          bodyText: 'A new Global LMG matter workspace is available in your client portal.',
+          clientAccountId: clientMeta.clientAccountId,
+          matterId: matterDbId,
+          notificationTypeCode: 'matter_update',
+          priorityCode: 'normal',
+          title: 'Matter workspace created',
+        },
+        connection
+      );
+    }
+
+    await createAuditEvent(
+      {
+        actionCode: 'matter.created',
+        actionLabel: 'Matter created',
+        actorRoleCode: actor.roleCodes[0] || 'case_manager',
+        actorUserId: actor.userId,
+        changes: [
+          { fieldName: 'client_account_id', newValue: payload.clientAccountPublicId },
+          { fieldName: 'title', newValue: payload.title.trim() },
+          { fieldName: 'legal_domain_id', newValue: legalDomain.id },
+          { fieldName: 'current_stage_code', newValue: stageCode },
+          { fieldName: 'operational_status_code', newValue: statusCode },
+          { fieldName: 'client_visible', newValue: Boolean(payload.clientVisible) },
+          { fieldName: 'selected_services', newValue: selectedServiceCodes },
+        ],
+        entityPk: matterDbId,
+        entityTableName: 'matters',
+        sourceModule: 'matter_desk',
+        summaryNewValue: {
+          matterId: nextMatterPublicId,
+          matterNumber,
+          title: payload.title.trim(),
+        },
+      },
+      connection
+    );
+
+    return nextMatterPublicId;
+  });
+
+  const matters = await fetchMatters({ matterIds: [matterPublicId] });
+
+  return {
+    matter: matters[0],
+    status: 'created' as const,
   };
 };
 

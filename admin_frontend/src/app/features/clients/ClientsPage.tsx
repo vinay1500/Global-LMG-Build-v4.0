@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import { WorkspaceState } from '../../components/shared/WorkspaceState';
 import { useAsyncResource } from '../../hooks/useAsyncResource';
 import { adminApi } from '../../lib/api/admin';
@@ -7,6 +7,7 @@ import { ClientDirectory } from '../../modules/ClientDirectory';
 
 export const ClientsPage = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data, errorMessage, isLoading, refresh } = useAsyncResource(
     () => adminApi.listClients(),
     []
@@ -35,6 +36,14 @@ export const ClientsPage = () => {
   return (
     <ClientDirectory
       clients={data?.clients}
+      createRequested={searchParams.get('action') === 'new'}
+      onCreateClient={async (payload) => {
+        const response = await adminApi.createClient(payload);
+        await refresh().catch(() => undefined);
+        navigate(`/clients/${response.client.id}`);
+        return response;
+      }}
+      onCreateRequestHandled={() => setSearchParams({})}
       onSelectClient={(client) => navigate(`/clients/${client.id}`)}
     />
   );

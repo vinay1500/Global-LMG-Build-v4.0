@@ -49,8 +49,13 @@ export const ClientDetailPage = () => {
       events={data.events}
       invoices={data.invoices}
       matters={data.matters}
+      notifications={data.notifications}
       onBack={() => navigate('/clients')}
+      onCreateMatter={() => navigate(`/matters?action=new&clientId=${data.client.id}`)}
       onViewMatter={(matter) => navigate(`/matters/${matter.id}`)}
+      payments={data.payments}
+      requests={data.requests}
+      summary={data.summary}
       threads={data.threads}
     />
   );

@@ -1,17 +1,23 @@
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { 
   Search, Plus, Filter, List, Trello, AlertCircle, Clock, 
   CheckCircle, Briefcase, User, MoreVertical, ChevronDown, 
-  ArrowDownToLine, ArrowUpToLine, DollarSign, Calendar
+  ArrowDownToLine, ArrowUpToLine, DollarSign, Calendar, Loader2
 } from 'lucide-react';
 import { type Matter, PLATFORM_USERS, type PlatformUser } from '../data/seedData';
 import { StatusBadge, UrgencyDot } from '../components/dashboard/StatusBadge';
 import { EmptyState } from './EmptyState';
+import type { CreateMatterPayload, CreateMatterResponse, MatterCreateOptions } from '../lib/api/contracts';
 
 interface MatterDeskAdminProps {
-  matters: Matter[];
   clients?: PlatformUser[];
+  createOptions?: MatterCreateOptions;
+  createRequested?: boolean;
+  matters: Matter[];
+  onCreateMatter?: (payload: CreateMatterPayload) => Promise<CreateMatterResponse>;
+  onCreateRequestHandled?: () => void;
   onViewMatter: (matter: Matter) => void;
+  preselectedClientId?: string;
 }
 
 type ViewMode = 'list' | 'board' | 'queue';
@@ -27,10 +33,23 @@ type FilterState = {
 export const MatterDeskAdmin: React.FC<MatterDeskAdminProps> = ({
   matters,
   clients: providedClients,
+  createOptions,
+  createRequested,
+  onCreateMatter,
+  onCreateRequestHandled,
   onViewMatter,
+  preselectedClientId,
 }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [searchQuery, setSearchQuery] = useState('');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
+  const [createForm, setCreateForm] = useState<CreateMatterPayload>({
+    clientAccountPublicId: '',
+    clientVisible: true,
+    title: '',
+  });
   const [filters, setFilters] = useState<FilterState>({
     stage: null,
     urgency: null,
@@ -44,6 +63,90 @@ export const MatterDeskAdmin: React.FC<MatterDeskAdminProps> = ({
     () => providedClients || PLATFORM_USERS.filter(u => u.lifecycle === 'client'),
     [providedClients]
   );
+  const canCreateMatter = Boolean(
+    onCreateMatter && createOptions?.clients?.length && createOptions?.domains?.length
+  );
+
+  const buildDefaultCreateForm = (clientId?: string): CreateMatterPayload => ({
+    clientAccountPublicId: clientId || createOptions?.clients?.[0]?.id || '',
+    clientVisible: true,
+    consultationModeCode:
+      createOptions?.consultationModes.find((mode) => mode.code === 'video')?.code ||
+      createOptions?.consultationModes[0]?.code,
+    legalDomainCode: createOptions?.domains[0]?.code,
+    priorityCode:
+      createOptions?.priorities.find((priority) => priority.code === 'in-progress')?.code ||
+      createOptions?.priorities[0]?.code,
+    serviceCodes: [],
+    stageCode:
+      createOptions?.stages.find((stage) => stage.code === 'request-received')?.code ||
+      createOptions?.stages[0]?.code,
+    statusCode:
+      createOptions?.statuses.find((status) => status.code === 'new-lead')?.code ||
+      createOptions?.statuses[0]?.code,
+    summary: '',
+    title: '',
+    urgencyCode:
+      createOptions?.urgencyRules.find((urgency) => urgency.code === 'standard')?.code ||
+      createOptions?.urgencyRules[0]?.code,
+  });
+
+  const openCreateModal = (clientId?: string) => {
+    if (!canCreateMatter) {
+      return;
+    }
+
+    setCreateError('');
+    setCreateForm(buildDefaultCreateForm(clientId));
+    setCreateOpen(true);
+  };
+
+  const closeCreateModal = () => {
+    if (isCreating) {
+      return;
+    }
+
+    setCreateOpen(false);
+    setCreateError('');
+  };
+
+  useEffect(() => {
+    if (createRequested && canCreateMatter) {
+      openCreateModal(preselectedClientId);
+      onCreateRequestHandled?.();
+    }
+  }, [createRequested, canCreateMatter, preselectedClientId, onCreateRequestHandled]);
+
+  const submitCreateMatter = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!onCreateMatter) {
+      setCreateError('Matter creation is not available in this workspace.');
+      return;
+    }
+
+    if (!createForm.clientAccountPublicId || !createForm.title.trim() || !createForm.legalDomainCode) {
+      setCreateError('Client, title, and domain are required.');
+      return;
+    }
+
+    setCreateError('');
+    setIsCreating(true);
+
+    try {
+      await onCreateMatter({
+        ...createForm,
+        serviceCodes: createForm.serviceCodes?.filter(Boolean),
+        summary: createForm.summary?.trim() || undefined,
+        title: createForm.title.trim(),
+      });
+      setCreateOpen(false);
+    } catch (error) {
+      setCreateError(error instanceof Error ? error.message : 'Unable to create matter.');
+    } finally {
+      setIsCreating(false);
+    }
+  };
 
   const filteredMatters = useMemo(() => {
     return matters.filter(m => {
@@ -124,7 +227,17 @@ export const MatterDeskAdmin: React.FC<MatterDeskAdminProps> = ({
               <ArrowDownToLine className="w-4 h-4" />
             </button>
           </div>
-          <button className="bg-[#2C2B29] text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-[#4A4946] transition-colors shadow-sm">
+          <button
+            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium shadow-sm transition ${
+              canCreateMatter
+                ? 'bg-[#2C2B29] text-white hover:bg-[#4A4946]'
+                : 'cursor-not-allowed border border-dashed border-[#D8D5CC] bg-[#F4F1EA] text-[#8C8981]'
+            }`}
+            disabled={!canCreateMatter}
+            onClick={() => openCreateModal(preselectedClientId)}
+            title={canCreateMatter ? 'Create a new matter.' : 'Create at least one active client and configured domain first.'}
+            type="button"
+          >
             <Plus className="w-4 h-4" /> New Matter
           </button>
         </div>
@@ -270,8 +383,11 @@ export const MatterDeskAdmin: React.FC<MatterDeskAdminProps> = ({
                       <EmptyState 
                         icon={Briefcase} 
                         title="No matters yet" 
-                        description="Get started by creating your first matter."
-                        action={{ label: "New Matter", onClick: () => {} }}
+                        description={
+                          canCreateMatter
+                            ? 'Create the first matter from the New Matter action above.'
+                            : 'Create an active client before opening the first matter.'
+                        }
                       />
                     </td>
                   </tr>
@@ -390,6 +506,236 @@ export const MatterDeskAdmin: React.FC<MatterDeskAdminProps> = ({
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {createOpen && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#2C2B29]/30 p-4 backdrop-blur-sm">
+          <form
+            className="w-full max-w-3xl rounded-xl border border-[#E6E4DD] bg-white shadow-2xl"
+            onSubmit={submitCreateMatter}
+          >
+            <div className="flex items-start justify-between border-b border-[#E6E4DD] p-5">
+              <div>
+                <h3 className="text-lg font-medium text-[#2C2B29]">New Matter</h3>
+                <p className="mt-1 text-sm text-[#8C8981]">
+                  Create an operations-backed matter workspace for client coordination.
+                </p>
+              </div>
+              <button
+                className="rounded-lg p-1.5 text-[#8C8981] transition hover:bg-[#F4F1EA] hover:text-[#2C2B29]"
+                disabled={isCreating}
+                onClick={closeCreateModal}
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="grid gap-4 p-5 sm:grid-cols-2">
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Client</span>
+                <select
+                  className="w-full rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                  onChange={(event) =>
+                    setCreateForm((current) => ({ ...current, clientAccountPublicId: event.target.value }))
+                  }
+                  required
+                  value={createForm.clientAccountPublicId}
+                >
+                  <option value="">Select client</option>
+                  {createOptions?.clients.map((client) => (
+                    <option key={client.id} value={client.id}>
+                      {client.name} ({client.email})
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Title</span>
+                <input
+                  className="w-full rounded-lg border border-[#E6E4DD] px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                  onChange={(event) => setCreateForm((current) => ({ ...current, title: event.target.value }))}
+                  placeholder="Matter title"
+                  required
+                  value={createForm.title}
+                />
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Domain</span>
+                <select
+                  className="w-full rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                  onChange={(event) =>
+                    setCreateForm((current) => ({
+                      ...current,
+                      legalDomainCode: event.target.value,
+                      serviceCodes: [],
+                    }))
+                  }
+                  required
+                  value={createForm.legalDomainCode || ''}
+                >
+                  {createOptions?.domains.map((domain) => (
+                    <option key={domain.code} value={domain.code}>
+                      {domain.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Service</span>
+                <select
+                  className="w-full rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                  onChange={(event) =>
+                    setCreateForm((current) => ({
+                      ...current,
+                      serviceCodes: event.target.value ? [event.target.value] : [],
+                    }))
+                  }
+                  value={createForm.serviceCodes?.[0] || ''}
+                >
+                  <option value="">No specific service</option>
+                  {createOptions?.services
+                    .filter((service) => service.domainCode === createForm.legalDomainCode)
+                    .map((service) => (
+                      <option key={service.code} value={service.code}>
+                        {service.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Initial stage</span>
+                <select
+                  className="w-full rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                  onChange={(event) => setCreateForm((current) => ({ ...current, stageCode: event.target.value }))}
+                  value={createForm.stageCode || ''}
+                >
+                  {createOptions?.stages.map((stage) => (
+                    <option key={stage.code} value={stage.code}>
+                      {stage.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Initial status</span>
+                <select
+                  className="w-full rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                  onChange={(event) => setCreateForm((current) => ({ ...current, statusCode: event.target.value }))}
+                  value={createForm.statusCode || ''}
+                >
+                  {createOptions?.statuses.map((status) => (
+                    <option key={status.code} value={status.code}>
+                      {status.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Priority</span>
+                <select
+                  className="w-full rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                  onChange={(event) => setCreateForm((current) => ({ ...current, priorityCode: event.target.value }))}
+                  value={createForm.priorityCode || ''}
+                >
+                  {createOptions?.priorities.map((priority) => (
+                    <option key={priority.code} value={priority.code}>
+                      {priority.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Consultation mode</span>
+                <select
+                  className="w-full rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                  onChange={(event) =>
+                    setCreateForm((current) => ({ ...current, consultationModeCode: event.target.value }))
+                  }
+                  value={createForm.consultationModeCode || ''}
+                >
+                  {createOptions?.consultationModes.map((mode) => (
+                    <option key={mode.code} value={mode.code}>
+                      {mode.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Urgency</span>
+                <select
+                  className="w-full rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                  onChange={(event) => setCreateForm((current) => ({ ...current, urgencyCode: event.target.value }))}
+                  value={createForm.urgencyCode || ''}
+                >
+                  {createOptions?.urgencyRules.map((urgency) => (
+                    <option key={urgency.code} value={urgency.code}>
+                      {urgency.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="flex items-center gap-3 rounded-lg border border-[#E6E4DD] bg-[#FCFBF8] px-3 py-2">
+                <input
+                  checked={Boolean(createForm.clientVisible)}
+                  className="h-4 w-4 accent-[#C19A5B]"
+                  onChange={(event) =>
+                    setCreateForm((current) => ({ ...current, clientVisible: event.target.checked }))
+                  }
+                  type="checkbox"
+                />
+                <span className="text-sm text-[#2C2B29]">Visible in client portal</span>
+              </label>
+
+              <label className="space-y-1.5 sm:col-span-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Summary</span>
+                <textarea
+                  className="min-h-24 w-full rounded-lg border border-[#E6E4DD] px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+                  onChange={(event) => setCreateForm((current) => ({ ...current, summary: event.target.value }))}
+                  placeholder="Coordination summary or initial client context"
+                  value={createForm.summary || ''}
+                />
+              </label>
+            </div>
+
+            {createError ? (
+              <div className="mx-5 mb-4 rounded-lg border border-[#F5C2C7] bg-[#FDE8EC] px-3 py-2 text-sm text-[#9A1B32]">
+                {createError}
+              </div>
+            ) : null}
+
+            <div className="flex items-center justify-between border-t border-[#E6E4DD] bg-[#FCFBF8] p-5">
+              <p className="text-xs text-[#8C8981]">Client notifications are created only when portal visibility is enabled.</p>
+              <div className="flex items-center gap-2">
+                <button
+                  className="rounded-lg border border-[#E6E4DD] px-4 py-2 text-sm font-medium text-[#5A7C96] transition hover:bg-white"
+                  disabled={isCreating}
+                  onClick={closeCreateModal}
+                  type="button"
+                >
+                  Cancel
+                </button>
+                <button
+                  className="flex items-center gap-2 rounded-lg bg-[#2C2B29] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#4A4946] disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isCreating}
+                  type="submit"
+                >
+                  {isCreating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                  Create Matter
+                </button>
+              </div>
+            </div>
+          </form>
         </div>
       )}
 

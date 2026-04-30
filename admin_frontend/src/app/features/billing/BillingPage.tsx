@@ -32,6 +32,7 @@ export const BillingPage = () => {
 
   return (
     <BillingWorkspace
+      invoiceSettings={data?.invoiceSettings}
       matters={data?.matters}
       onCreateInvoice={async (payload) => {
         const result = await adminApi.createInvoice(payload);

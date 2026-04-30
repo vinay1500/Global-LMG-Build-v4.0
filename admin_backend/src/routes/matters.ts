@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { asyncHandler } from '../lib/httpErrors.js';
 import {
   addMatterNote,
+  createMatter,
   createMatterAssignment,
   getMatterWorkspace,
   listMatters,
@@ -52,6 +53,21 @@ const updateMatterDetailsSchema = z.object({
   selectedServices: z.array(z.string().trim().min(2).max(64)).max(20).optional(),
 });
 
+const createMatterSchema = z.object({
+  clientAccountPublicId: z.string().trim().min(2).max(64),
+  clientVisible: z.boolean().optional(),
+  consultationModeCode: z.string().trim().min(2).max(64).optional(),
+  legalDomainCode: z.string().trim().min(2).max(64).optional(),
+  priorityCode: z.string().trim().min(2).max(64).optional(),
+  serviceCode: z.string().trim().min(2).max(64).optional(),
+  serviceCodes: z.array(z.string().trim().min(2).max(64)).max(20).optional(),
+  stageCode: z.string().trim().min(2).max(64).optional(),
+  statusCode: z.string().trim().min(2).max(64).optional(),
+  summary: z.string().trim().max(4000).optional(),
+  title: z.string().trim().min(2).max(255),
+  urgencyCode: z.string().trim().min(2).max(64).optional(),
+});
+
 const packageDraftSchema = z.object({
   proposalVersion: z.number().int().positive().optional(),
   packages: z
@@ -91,6 +107,14 @@ mattersRouter.get(
         search: typeof request.query.search === 'string' ? request.query.search : undefined,
       })
     );
+  })
+);
+
+mattersRouter.post(
+  '/matters',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'matter.update');
+    response.status(201).json(await createMatter(actor, createMatterSchema.parse(request.body)));
   })
 );
 

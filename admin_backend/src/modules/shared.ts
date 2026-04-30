@@ -58,9 +58,19 @@ type InvoiceRow = RowDataPacket & {
 type InvoiceLineRow = RowDataPacket & {
   amount: number;
   description: string;
+  invoiceLineDbId: number;
   invoiceDbId: number;
   quantity: number;
   rate: number;
+};
+
+type InvoiceLineTaxRow = RowDataPacket & {
+  amount: number;
+  code: string;
+  invoiceLineDbId: number;
+  name: string;
+  percent: number;
+  taxableAmount: number;
 };
 
 type DocumentRow = RowDataPacket & {
@@ -113,6 +123,7 @@ type ThreadRow = RowDataPacket & {
   matterTitle: string | null;
   stage: string | null;
   status: string;
+  subject: string | null;
   unreadCount: number;
   urgency: string | null;
 };
@@ -152,6 +163,9 @@ type AuditRow = RowDataPacket & {
   sourceModule: string;
   timestamp: string;
 };
+
+const AUTOMATIC_REQUEST_ACKNOWLEDGEMENT =
+  'We have received your request. A case manager will confirm the next step shortly.';
 
 const buildInClause = (values: readonly unknown[]) => values.map(() => '?').join(', ');
 
@@ -358,6 +372,7 @@ export const fetchInvoices = async (filters: { clientAccountIds?: string[]; matt
   const lineRows = await queryRows<InvoiceLineRow>(
     `SELECT
        invoice_id AS invoiceDbId,
+       id AS invoiceLineDbId,
        description,
        quantity,
        unit_price AS rate,
@@ -367,10 +382,31 @@ export const fetchInvoices = async (filters: { clientAccountIds?: string[]; matt
      ORDER BY sort_order ASC, id ASC`,
     invoiceDbIds
   );
+  const lineIds = lineRows.map((row) => row.invoiceLineDbId);
+  const taxRows = lineIds.length
+    ? await queryRows<InvoiceLineTaxRow>(
+        `SELECT
+           invoice_line_id AS invoiceLineDbId,
+           tax_code_snapshot AS code,
+           tax_name_snapshot AS name,
+           tax_percent_snapshot AS percent,
+           taxable_amount AS taxableAmount,
+           tax_amount AS amount
+         FROM invoice_line_taxes
+         WHERE invoice_line_id IN (${buildInClause(lineIds)})
+         ORDER BY sort_order ASC, id ASC`,
+        lineIds
+      )
+    : [];
 
   const linesByInvoiceId = lineRows.reduce<Record<number, InvoiceLineRow[]>>((accumulator, row) => {
     accumulator[row.invoiceDbId] = accumulator[row.invoiceDbId] || [];
     accumulator[row.invoiceDbId]!.push(row);
+    return accumulator;
+  }, {});
+  const taxesByLineId = taxRows.reduce<Record<number, InvoiceLineTaxRow[]>>((accumulator, row) => {
+    accumulator[row.invoiceLineDbId] = accumulator[row.invoiceLineDbId] || [];
+    accumulator[row.invoiceLineDbId]!.push(row);
     return accumulator;
   }, {});
 
@@ -388,6 +424,13 @@ export const fetchInvoices = async (filters: { clientAccountIds?: string[]; matt
       description: line.description,
       quantity: line.quantity,
       rate: line.rate,
+      taxes: (taxesByLineId[line.invoiceLineDbId] || []).map((tax) => ({
+        amount: tax.amount,
+        code: tax.code,
+        name: tax.name,
+        percent: tax.percent,
+        taxableAmount: tax.taxableAmount,
+      })),
     })),
     lastReminder: undefined,
     matterId: row.matterId || '',
@@ -602,6 +645,7 @@ export const fetchThreads = async (filters: {
        m.public_id AS matterId,
        m.title AS matterTitle,
        m.matter_number AS matterRef,
+       ct.subject AS subject,
        m.current_stage_code AS stage,
        pur.urgency_code AS urgency,
        lm.body_text AS lastMessage,
@@ -635,7 +679,7 @@ export const fetchThreads = async (filters: {
     lastMessageAt: row.lastMessageAt ? toUiDateTime(row.lastMessageAt) : '',
     matterId: row.matterId || '',
     matterRef: row.matterRef || '',
-    matterTitle: row.matterTitle || '',
+    matterTitle: row.matterTitle || row.subject || 'General Support',
     stage: row.stage || 'request-received',
     status: row.status,
     unreadCount: Number(row.unreadCount || 0),
@@ -652,10 +696,22 @@ export const fetchMessagesByThreadIds = async (threadIds: string[]) => {
     `SELECT
        msg.public_id AS id,
        ct.public_id AS threadId,
-       COALESCE(u.public_id, CONCAT('system:', COALESCE(msg.sender_system_code, 'unknown'))) AS senderId,
-       COALESCE(u.display_name, cp.full_name, 'System') AS senderName,
        CASE
-         WHEN msg.sender_system_code IS NOT NULL THEN 'system'
+         WHEN msg.sender_system_code IS NOT NULL
+           OR (msg.body_text = ? AND msg.sent_at = ct.created_at)
+         THEN CONCAT('system:', COALESCE(msg.sender_system_code, 'global_lmg'))
+         ELSE COALESCE(u.public_id, CONCAT('system:', COALESCE(msg.sender_system_code, 'unknown')))
+       END AS senderId,
+       CASE
+         WHEN msg.sender_system_code IS NOT NULL
+           OR (msg.body_text = ? AND msg.sent_at = ct.created_at)
+         THEN 'Global LMG'
+         ELSE COALESCE(u.display_name, cp.full_name, 'System')
+       END AS senderName,
+       CASE
+         WHEN msg.sender_system_code IS NOT NULL
+           OR (msg.body_text = ? AND msg.sent_at = ct.created_at)
+         THEN 'system'
          WHEN u.actor_type_code = 'client' THEN 'client'
          ELSE 'admin'
        END AS senderRole,
@@ -677,13 +733,19 @@ export const fetchMessagesByThreadIds = async (threadIds: string[]) => {
        ct.public_id,
        u.public_id,
        msg.sender_system_code,
+       ct.created_at,
        u.display_name,
        cp.full_name,
        u.actor_type_code,
        msg.body_text,
        msg.sent_at
      ORDER BY msg.sent_at ASC, msg.id ASC`,
-    threadIds
+    [
+      AUTOMATIC_REQUEST_ACKNOWLEDGEMENT,
+      AUTOMATIC_REQUEST_ACKNOWLEDGEMENT,
+      AUTOMATIC_REQUEST_ACKNOWLEDGEMENT,
+      ...threadIds,
+    ]
   );
 
   return rows.map((row) => ({
@@ -699,7 +761,29 @@ export const fetchMessagesByThreadIds = async (threadIds: string[]) => {
   }));
 };
 
-export const fetchPayments = async () => {
+export const fetchPayments = async (filters: {
+  clientAccountIds?: string[];
+  invoiceIds?: string[];
+  matterIds?: string[];
+} = {}) => {
+  const where: string[] = [];
+  const params: unknown[] = [];
+
+  if (filters.clientAccountIds?.length) {
+    where.push(`ca.public_id IN (${buildInClause(filters.clientAccountIds)})`);
+    params.push(...filters.clientAccountIds);
+  }
+
+  if (filters.invoiceIds?.length) {
+    where.push(`inv.public_id IN (${buildInClause(filters.invoiceIds)})`);
+    params.push(...filters.invoiceIds);
+  }
+
+  if (filters.matterIds?.length) {
+    where.push(`m.public_id IN (${buildInClause(filters.matterIds)})`);
+    params.push(...filters.matterIds);
+  }
+
   const rows = await queryRows<PaymentRow>(
     `SELECT
        pt.public_id AS id,
@@ -731,7 +815,9 @@ export const fetchPayments = async () => {
      LEFT JOIN matters m ON m.id = inv.matter_id
      JOIN client_accounts ca ON ca.id = pt.client_account_id
      LEFT JOIN users creator ON creator.id = pt.created_by_user_id
-     ORDER BY COALESCE(pt.captured_at, pt.created_at) DESC`
+     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+     ORDER BY COALESCE(pt.captured_at, pt.created_at) DESC`,
+    params
   );
 
   return rows.map((row) => ({

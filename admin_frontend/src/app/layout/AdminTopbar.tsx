@@ -1,10 +1,31 @@
-import React from 'react';
-import { Bell, Menu, Plus, Scale, Search, Shield, X } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  BarChart3,
+  Bell,
+  Briefcase,
+  Calendar,
+  ChevronDown,
+  CreditCard,
+  FileUp,
+  LogOut,
+  Menu,
+  MessageSquare,
+  Plus,
+  Scale,
+  Search,
+  Settings,
+  Shield,
+  UserCircle,
+  Users,
+  X,
+} from 'lucide-react';
+import { useNavigate } from 'react-router';
 import type { AdminSessionUser } from '../lib/api/contracts';
 
 type AdminTopbarProps = {
   currentUser: AdminSessionUser | null;
   onOpenSearch: () => void;
+  onSignOut: () => void;
   onToggleSidebar: () => void;
   sidebarOpen: boolean;
 };
@@ -12,10 +33,39 @@ type AdminTopbarProps = {
 export const AdminTopbar: React.FC<AdminTopbarProps> = ({
   currentUser,
   onOpenSearch,
+  onSignOut,
   onToggleSidebar,
   sidebarOpen,
 }) => {
+  const navigate = useNavigate();
+  const actionsMenuRef = useRef<HTMLDivElement | null>(null);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const initials = currentUser?.displayName?.slice(0, 1)?.toUpperCase() || 'A';
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node;
+
+      if (actionsMenuRef.current && !actionsMenuRef.current.contains(target)) {
+        setActionsOpen(false);
+      }
+
+      if (accountMenuRef.current && !accountMenuRef.current.contains(target)) {
+        setAccountOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, []);
+
+  const navigateAndClose = (path: string) => {
+    navigate(path);
+    setActionsOpen(false);
+    setAccountOpen(false);
+  };
 
   return (
     <header className="sticky top-0 z-30 bg-[#F4F1EA] border-b border-[#E6E4DD] h-16 flex items-center justify-between px-4 sm:px-6 shadow-sm">
@@ -65,26 +115,178 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
         >
           <Search className="w-5 h-5" />
         </button>
-        <button className="hidden sm:flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-[#2C2B29] bg-white border border-[#E6E4DD] rounded-lg hover:bg-[#FCFBF8] transition shadow-sm">
-          <Plus className="w-4 h-4" /> New Action
-        </button>
+        <div className="relative hidden sm:block" ref={actionsMenuRef}>
+          <button
+            aria-expanded={actionsOpen}
+            aria-haspopup="menu"
+            className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-[#2C2B29] bg-white border border-[#E6E4DD] rounded-lg hover:bg-[#FCFBF8] transition shadow-sm"
+            onClick={() => {
+              setActionsOpen((current) => !current);
+              setAccountOpen(false);
+            }}
+            type="button"
+          >
+            <Plus className="w-4 h-4" /> New Action
+            <ChevronDown className="w-3.5 h-3.5 text-[#A8A69F]" />
+          </button>
+          {actionsOpen ? (
+            <div
+              className="absolute right-0 top-full mt-2 w-72 rounded-xl border border-[#E6E4DD] bg-white p-2 shadow-xl"
+              role="menu"
+            >
+              <MenuAction
+                description="Start or reply from Communications Desk"
+                icon={MessageSquare}
+                label="New Message"
+                onClick={() => navigateAndClose('/messages')}
+              />
+              <MenuAction
+                description="Create or manage scheduled meetings"
+                icon={Calendar}
+                label="Create Event / Meetings"
+                onClick={() => navigateAndClose('/meetings')}
+              />
+              <MenuAction
+                description="Upload and review client documents"
+                icon={FileUp}
+                label="Upload Document / Documents"
+                onClick={() => navigateAndClose('/documents')}
+              />
+              <MenuAction
+                description="Create invoices or record payments"
+                icon={CreditCard}
+                label="Open Billing"
+                onClick={() => navigateAndClose('/billing')}
+              />
+              <MenuAction
+                description="Open DB-backed drilldowns and exports"
+                icon={BarChart3}
+                label="Open Reports"
+                onClick={() => navigateAndClose('/reports')}
+              />
+              <div className="my-2 border-t border-[#F4F1EA]" />
+              <MenuAction
+                description="Open Client Directory create flow"
+                icon={Users}
+                label="New Client"
+                onClick={() => navigateAndClose('/clients?action=new')}
+              />
+              <MenuAction
+                description="Open Matter Desk create flow"
+                icon={Briefcase}
+                label="New Matter"
+                onClick={() => navigateAndClose('/matters?action=new')}
+              />
+            </div>
+          ) : null}
+        </div>
         <div className="h-6 w-px bg-[#E6E4DD] hidden sm:block" />
-        <button className="p-2 text-[#8C8981] hover:text-[#2C2B29] hover:bg-[#E6E4DD] rounded-full transition relative">
+        <button
+          aria-label="Open notifications"
+          className="p-2 text-[#8C8981] hover:text-[#2C2B29] hover:bg-[#E6E4DD] rounded-full transition relative"
+          onClick={() => navigateAndClose('/notifications')}
+          type="button"
+        >
           <Bell className="w-5 h-5" />
           <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-[#C19A5B] rounded-full border-2 border-[#F4F1EA]" />
         </button>
-        <div className="flex items-center gap-3">
-          <div className="hidden sm:block text-right">
-            <p className="text-sm font-medium text-[#2C2B29]">
-              {currentUser?.displayName || 'Admin User'}
-            </p>
-            <p className="text-[11px] text-[#8C8981]">{currentUser?.email || 'Session bootstrap pending'}</p>
-          </div>
-          <div className="w-8 h-8 rounded-full bg-[#2C2B29] flex items-center justify-center text-[#F4F1EA] shadow-sm">
-            {currentUser ? initials : <Shield className="w-4 h-4" />}
-          </div>
+        <div className="relative" ref={accountMenuRef}>
+          <button
+            aria-expanded={accountOpen}
+            aria-haspopup="menu"
+            className="flex items-center gap-3 rounded-xl px-1.5 py-1 transition hover:bg-[#E6E4DD]/70"
+            onClick={() => {
+              setAccountOpen((current) => !current);
+              setActionsOpen(false);
+            }}
+            type="button"
+          >
+            <div className="hidden sm:block text-right">
+              <p className="text-sm font-medium text-[#2C2B29]">
+                {currentUser?.displayName || 'Admin User'}
+              </p>
+              <p className="text-[11px] text-[#8C8981]">{currentUser?.email || 'Session bootstrap pending'}</p>
+            </div>
+            <div className="w-8 h-8 rounded-full bg-[#2C2B29] flex items-center justify-center text-[#F4F1EA] shadow-sm">
+              {currentUser ? initials : <Shield className="w-4 h-4" />}
+            </div>
+          </button>
+          {accountOpen ? (
+            <div
+              className="absolute right-0 top-full mt-2 w-72 rounded-xl border border-[#E6E4DD] bg-white p-2 shadow-xl"
+              role="menu"
+            >
+              <div className="px-3 py-2">
+                <p className="text-sm font-medium text-[#2C2B29]">
+                  {currentUser?.displayName || 'Admin User'}
+                </p>
+                <p className="text-xs text-[#8C8981]">{currentUser?.email || 'Session bootstrap pending'}</p>
+              </div>
+              <div className="my-2 border-t border-[#F4F1EA]" />
+              <MenuAction
+                description="Platform settings workspace"
+                icon={Settings}
+                label="Settings"
+                onClick={() => navigateAndClose('/settings')}
+              />
+              <MenuAction
+                description="Notification center"
+                icon={Bell}
+                label="Notifications"
+                onClick={() => navigateAndClose('/notifications')}
+              />
+              <MenuAction
+                description="Coming in profile settings phase"
+                disabled
+                icon={UserCircle}
+                label="My Profile / Change Password"
+              />
+              <div className="my-2 border-t border-[#F4F1EA]" />
+              <MenuAction
+                description="End this admin session"
+                icon={LogOut}
+                label="Sign out"
+                onClick={() => {
+                  setAccountOpen(false);
+                  void onSignOut();
+                }}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
     </header>
   );
 };
+
+const MenuAction = ({
+  description,
+  disabled,
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  description: string;
+  disabled?: boolean;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  onClick?: () => void;
+}) => (
+  <button
+    className={`flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left transition ${
+      disabled
+        ? 'cursor-not-allowed text-[#A8A69F]'
+        : 'text-[#2C2B29] hover:bg-[#F4F1EA]'
+    }`}
+    disabled={disabled}
+    onClick={onClick}
+    role="menuitem"
+    type="button"
+  >
+    <Icon className={`mt-0.5 h-4 w-4 ${disabled ? 'text-[#C9C6BD]' : 'text-[#C19A5B]'}`} />
+    <span>
+      <span className="block text-sm font-medium">{label}</span>
+      <span className="mt-0.5 block text-xs text-[#8C8981]">{description}</span>
+    </span>
+  </button>
+);

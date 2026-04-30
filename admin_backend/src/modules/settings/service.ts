@@ -2,6 +2,7 @@ import type { RowDataPacket } from 'mysql2/promise';
 import { queryRows } from '../../lib/mysql.js';
 import type { AdminActor } from '../auth/service.js';
 import { getWorkspace as getRbacWorkspace } from '../rbac/service.js';
+import { getInvoiceSettings } from './invoiceSettings.js';
 
 type ServiceRow = RowDataPacket & {
   code: string;
@@ -76,6 +77,7 @@ export const getWorkspace = async (actor: AdminActor) => {
     documentCategoryRows,
     latestInvoiceRows,
     sequenceRows,
+    invoiceSettings,
   ] = await Promise.all([
     queryRows<ServiceRow>(
       `SELECT
@@ -157,6 +159,7 @@ export const getWorkspace = async (actor: AdminActor) => {
        ORDER BY sequence_year DESC
        LIMIT 1`
     ),
+    getInvoiceSettings(),
   ]);
 
   const canManageRbac = actor.permissionCodes.includes('rbac.manage');
@@ -177,6 +180,7 @@ export const getWorkspace = async (actor: AdminActor) => {
       invoiceStatuses: invoiceStatusRows.map((row) => ({ code: row.code, label: row.label })),
       latestInvoiceNumber: latestInvoiceRows[0]?.invoiceNumber || null,
       nextInvoiceNumber: buildNextInvoiceNumber(sequenceRows[0]),
+      settings: invoiceSettings,
       taxRates: taxRateRows.map((row) => ({
         code: row.code,
         isActive: Boolean(row.isActive),

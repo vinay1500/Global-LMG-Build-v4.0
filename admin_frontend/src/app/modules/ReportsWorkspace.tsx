@@ -205,14 +205,14 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ workspace })
             onClick={() => handleExportCsv(activeDrilldown?.kind || 'paid-invoices')}
             type="button"
           >
-            <Download className="w-4 h-4" /> CSV
+            <Download className="w-4 h-4" /> Export selected drilldown CSV
           </button>
           <button
             className="px-4 py-2 bg-[#2C2B29] text-white rounded-lg shadow-sm text-sm font-medium hover:bg-[#4A4946] transition flex items-center gap-2"
             onClick={() => window.print()}
             type="button"
           >
-            <Printer className="w-4 h-4" /> PDF
+            <Printer className="w-4 h-4" /> Print report
           </button>
         </div>
       </div>
@@ -266,7 +266,7 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ workspace })
               onClick={() => handleExportCsv(activeDrilldown.kind)}
               type="button"
             >
-              <Download className="w-4 h-4" /> Export {activeDrilldown.label}
+              <Download className="w-4 h-4" /> Export selected drilldown CSV
             </button>
           ) : null}
         </div>

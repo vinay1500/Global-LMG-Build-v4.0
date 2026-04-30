@@ -1,10 +1,11 @@
 import type { AdminActor } from '../auth/service.js';
 import { createPublicId } from '../../lib/authCrypto.js';
+import { allocateBusinessNumber } from '../../lib/businessSequences.js';
 import { badRequest, notFound } from '../../lib/httpErrors.js';
 import { executeStatement, queryRows, withTransaction } from '../../lib/mysql.js';
 import type { RowDataPacket } from 'mysql2/promise';
 import {
-  fetchClientsByIds,
+  fetchClientsForList,
   fetchEvents,
   fetchInvoices,
   fetchMatters,
@@ -26,15 +27,41 @@ type ThreadStateRow = RowDataPacket & {
   statusCode: string;
 };
 
+type ClientAccountRow = RowDataPacket & {
+  displayName: string;
+  id: number;
+};
+
+type ClientContactRow = RowDataPacket & {
+  userId: number;
+};
+
+type MatterLookupRow = RowDataPacket & {
+  clientAccountId: number;
+  id: number;
+  matterNumber: string;
+  title: string;
+};
+
+type ExistingGeneralThreadRow = RowDataPacket & {
+  id: number;
+  publicId: string;
+  subject: string | null;
+};
+
 export const getWorkspace = async (actor: AdminActor) => {
   const threads = await fetchThreads({ viewerUserId: actor.userId });
+  const clientsPromise = fetchClientsForList({ limit: 250, offset: 0 });
+  const allMattersPromise = fetchMatters({ limit: 250 });
 
   if (threads.length === 0) {
+    const [clients, matters] = await Promise.all([clientsPromise, allMattersPromise]);
+
     return {
-      clients: [],
+      clients,
       events: [],
       invoices: [],
-      matters: [],
+      matters,
       messages: [],
       threads: [],
     };
@@ -42,9 +69,9 @@ export const getWorkspace = async (actor: AdminActor) => {
 
   const clientIds = Array.from(new Set(threads.map((thread) => thread.clientId).filter(Boolean)));
   const matterIds = Array.from(new Set(threads.map((thread) => thread.matterId).filter(Boolean)));
-  const [clients, matters, invoices, events, messages] = await Promise.all([
-    fetchClientsByIds(clientIds),
-    matterIds.length > 0 ? fetchMatters({ limit: 100, matterIds }) : Promise.resolve([]),
+  const [clients, allMatters, invoices, events, messages] = await Promise.all([
+    clientsPromise,
+    allMattersPromise,
     fetchInvoices({ clientAccountIds: clientIds }),
     fetchEvents({ clientAccountIds: clientIds }),
     fetchMessagesByThreadIds(threads.map((thread) => thread.id)),
@@ -54,10 +81,267 @@ export const getWorkspace = async (actor: AdminActor) => {
     clients,
     events,
     invoices,
-    matters,
+    matters: allMatters,
     messages,
     threads,
   };
+};
+
+export const createThread = async (
+  actor: AdminActor,
+  payload: {
+    clientId: string;
+    confirmDuplicateGeneral?: boolean;
+    content: string;
+    matterId?: string;
+  }
+) => {
+  return withTransaction(async (connection) => {
+    const clientRows = await queryRows<ClientAccountRow>(
+      `SELECT id, display_name AS displayName
+       FROM client_accounts
+       WHERE public_id = ?
+         AND archived_at IS NULL
+       LIMIT 1
+       FOR UPDATE`,
+      [payload.clientId],
+      connection
+    );
+    const client = clientRows[0];
+
+    if (!client) {
+      throw notFound('client_account_not_found', 'Client account not found.');
+    }
+
+    const contactRows = await queryRows<ClientContactRow>(
+      `SELECT DISTINCT cac.user_id AS userId
+       FROM client_account_contacts cac
+       INNER JOIN users u ON u.id = cac.user_id
+       WHERE cac.client_account_id = ?
+         AND cac.archived_at IS NULL
+         AND cac.portal_access_enabled = 1
+         AND u.archived_at IS NULL
+         AND u.login_enabled = 1`,
+      [client.id],
+      connection
+    );
+
+    if (contactRows.length === 0) {
+      throw badRequest(
+        'client_portal_unavailable',
+        'This client does not have an active portal contact for messaging.'
+      );
+    }
+
+    let matter: MatterLookupRow | null = null;
+
+    if (payload.matterId) {
+      const matterRows = await queryRows<MatterLookupRow>(
+        `SELECT
+           id,
+           client_account_id AS clientAccountId,
+           matter_number AS matterNumber,
+           title
+         FROM matters
+         WHERE public_id = ?
+           AND archived_at IS NULL
+         LIMIT 1`,
+        [payload.matterId],
+        connection
+      );
+      matter = matterRows[0] || null;
+
+      if (!matter) {
+        throw notFound('matter_not_found', 'Matter not found.');
+      }
+
+      if (Number(matter.clientAccountId) !== Number(client.id)) {
+        throw badRequest('matter_client_mismatch', 'Selected matter does not belong to this client.');
+      }
+    }
+
+    if (!matter && !payload.confirmDuplicateGeneral) {
+      const existingGeneralThreadRows = await queryRows<ExistingGeneralThreadRow>(
+        `SELECT id, public_id AS publicId, subject
+         FROM conversation_threads
+         WHERE client_account_id = ?
+           AND matter_id IS NULL
+           AND thread_type_code = 'general'
+           AND archived_at IS NULL
+           AND closed_at IS NULL
+           AND status_code IN ('active', 'waiting')
+         ORDER BY updated_at DESC
+         LIMIT 1
+         FOR UPDATE`,
+        [client.id],
+        connection
+      );
+      const existingGeneralThread = existingGeneralThreadRows[0];
+
+      if (existingGeneralThread) {
+        throw badRequest(
+          'active_general_thread_exists',
+          'An active general thread already exists for this client.',
+          {
+            existingThreadId: existingGeneralThread.publicId,
+            existingThreadSubject: existingGeneralThread.subject || 'General Support',
+          }
+        );
+      }
+    }
+
+    const threadPublicId = createPublicId();
+    const messagePublicId = createPublicId();
+    const threadNumber = await allocateBusinessNumber(connection, 'thread', 'THR');
+    const subject = matter ? matter.title : 'General Support';
+    const threadType = matter ? 'matter' : 'general';
+
+    const threadResult = await executeStatement(
+      `INSERT INTO conversation_threads (
+         public_id,
+         thread_number,
+         thread_type_code,
+         client_account_id,
+         matter_id,
+         subject,
+         status_code,
+         created_by_user_id,
+         assigned_owner_user_id,
+         last_message_at,
+         created_at,
+         updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))`,
+      [
+        threadPublicId,
+        threadNumber,
+        threadType,
+        client.id,
+        matter?.id || null,
+        subject,
+        actor.userId,
+        actor.userId,
+      ],
+      connection
+    );
+    const threadId = Number(threadResult.insertId);
+
+    await executeStatement(
+      `INSERT INTO thread_participants (
+         thread_id,
+         participant_role_code,
+         internal_user_id,
+         client_contact_user_id,
+         counsel_partner_id,
+         is_active,
+         joined_at,
+         left_at,
+         last_read_message_id,
+         last_read_at
+       ) VALUES (?, 'staff', ?, NULL, NULL, 1, UTC_TIMESTAMP(6), NULL, NULL, NULL)`,
+      [threadId, actor.userId],
+      connection
+    );
+
+    for (const contact of contactRows) {
+      await executeStatement(
+        `INSERT INTO thread_participants (
+           thread_id,
+           participant_role_code,
+           internal_user_id,
+           client_contact_user_id,
+           counsel_partner_id,
+           is_active,
+           joined_at,
+           left_at,
+           last_read_message_id,
+           last_read_at
+         ) VALUES (?, 'client', NULL, ?, NULL, 1, UTC_TIMESTAMP(6), NULL, NULL, NULL)`,
+        [threadId, contact.userId],
+        connection
+      );
+    }
+
+    const messageResult = await executeStatement(
+      `INSERT INTO messages (
+         public_id,
+         thread_id,
+         sender_user_id,
+         sender_counsel_partner_id,
+         sender_system_code,
+         message_type_code,
+         body_text,
+         visible_to_client,
+         reply_to_message_id,
+         sent_at,
+         edited_at,
+         deleted_at
+       ) VALUES (?, ?, ?, NULL, NULL, 'text', ?, 1, NULL, UTC_TIMESTAMP(6), NULL, NULL)`,
+      [messagePublicId, threadId, actor.userId, payload.content],
+      connection
+    );
+
+    await executeStatement(
+      `INSERT IGNORE INTO message_reads (message_id, user_id, read_at)
+       VALUES (?, ?, UTC_TIMESTAMP(6))`,
+      [messageResult.insertId, actor.userId],
+      connection
+    );
+
+    await executeStatement(
+      `UPDATE thread_participants
+       SET last_read_at = UTC_TIMESTAMP(6),
+           last_read_message_id = ?
+       WHERE thread_id = ?
+         AND internal_user_id = ?`,
+      [messageResult.insertId, threadId, actor.userId],
+      connection
+    );
+
+    await touchThreadActivity(threadId, connection);
+
+    if (matter) {
+      await touchMatterActivity(matter.id, connection);
+    }
+
+    await createAuditEvent(
+      {
+        actionCode: 'thread.created',
+        actionLabel: 'Admin message thread created',
+        actorRoleCode: actor.roleCodes[0] || 'messaging_desk',
+        actorUserId: actor.userId,
+        changes: [
+          { fieldName: 'client_account_id', newValue: payload.clientId },
+          { fieldName: 'matter_id', newValue: payload.matterId || null },
+          { fieldName: 'body_text', newValue: payload.content },
+        ],
+        entityPk: threadId,
+        entityTableName: 'conversation_threads',
+        sourceModule: 'messages_workspace',
+        summaryNewValue: `${subject}: ${payload.content.slice(0, 160)}`,
+      },
+      connection
+    );
+
+    await createClientNotifications(
+      {
+        bodyText: payload.content.slice(0, 240),
+        clientAccountId: client.id,
+        matterId: matter?.id || null,
+        notificationTypeCode: 'message_received',
+        priorityCode: 'normal',
+        threadId,
+        title: 'New message from Global LMG',
+      },
+      connection
+    );
+
+    return {
+      messageId: messagePublicId,
+      status: 'created' as const,
+      threadId: threadPublicId,
+      threadNumber,
+    };
+  });
 };
 
 export const replyToThread = async (
@@ -191,6 +475,33 @@ export const markThreadRead = async (actor: AdminActor, threadPublicId: string) 
          AND msg.deleted_at IS NULL
          AND (msg.sender_user_id IS NULL OR msg.sender_user_id <> ?)`,
       [actor.userId, thread.id, actor.userId],
+      connection
+    );
+
+    await executeStatement(
+      `UPDATE thread_participants
+       SET last_read_at = UTC_TIMESTAMP(6),
+           last_read_message_id = (
+             SELECT MAX(msg.id)
+             FROM messages msg
+             WHERE msg.thread_id = ?
+               AND msg.deleted_at IS NULL
+           )
+       WHERE thread_id = ?
+         AND internal_user_id = ?`,
+      [thread.id, thread.id, actor.userId],
+      connection
+    );
+
+    await executeStatement(
+      `UPDATE notifications
+       SET is_read = 1,
+           read_at = COALESCE(read_at, UTC_TIMESTAMP(6))
+       WHERE thread_id = ?
+         AND recipient_user_id = ?
+         AND notification_type_code = 'message_received'
+         AND is_read = 0`,
+      [thread.id, actor.userId],
       connection
     );
 

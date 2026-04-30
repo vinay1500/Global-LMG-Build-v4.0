@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { useNavigate } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 import type { PlatformUser } from '../../data/seedData';
 import { WorkspaceState } from '../../components/shared/WorkspaceState';
 import { useAsyncResource } from '../../hooks/useAsyncResource';
@@ -8,13 +8,29 @@ import { MatterDeskAdmin } from '../../modules/MatterDeskAdmin';
 
 export const MattersPage = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data, errorMessage, isLoading, refresh } = useAsyncResource(
     () => adminApi.listMatters(),
     []
   );
   const clients = useMemo<PlatformUser[]>(
-    () =>
-      Array.from(
+    () => {
+      if (data?.createOptions?.clients?.length) {
+        return data.createOptions.clients.map((client) => ({
+          avatar: '',
+          email: client.email,
+          id: client.id,
+          joinedAt: '',
+          lastActiveAt: '',
+          lifecycle: 'client' as const,
+          name: client.name,
+          owner: '',
+          phone: '',
+          region: '',
+        }));
+      }
+
+      return Array.from(
         new Map(
           (data?.matters || []).map((matter) => [
             matter.clientId,
@@ -32,7 +48,8 @@ export const MattersPage = () => {
             },
           ])
         ).values()
-      ),
+      );
+    },
     [data]
   );
 
@@ -59,8 +76,18 @@ export const MattersPage = () => {
   return (
     <MatterDeskAdmin
       clients={clients}
+      createOptions={data?.createOptions}
+      createRequested={searchParams.get('action') === 'new'}
       matters={data?.matters || []}
+      onCreateMatter={async (payload) => {
+        const response = await adminApi.createMatter(payload);
+        await refresh().catch(() => undefined);
+        navigate(`/matters/${response.matter.id}`);
+        return response;
+      }}
+      onCreateRequestHandled={() => setSearchParams({})}
       onViewMatter={(matter) => navigate(`/matters/${matter.id}`)}
+      preselectedClientId={searchParams.get('clientId') || undefined}
     />
   );
 };

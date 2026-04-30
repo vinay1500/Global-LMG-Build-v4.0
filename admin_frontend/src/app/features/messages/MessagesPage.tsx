@@ -48,6 +48,11 @@ export const MessagesPage = () => {
         await adminApi.markThreadRead(threadId);
         await refresh();
       }}
+      onCreateThread={async (payload) => {
+        const result = await adminApi.createMessageThread(payload);
+        await refresh();
+        return result;
+      }}
       onSendReply={async (threadId, content) => {
         await adminApi.replyToThread(threadId, { content, visibleToClient: true });
         await refresh();

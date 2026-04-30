@@ -6,38 +6,62 @@ import {
 } from 'lucide-react';
 import { 
   formatCurrency, formatDate, formatDateTime,
-  type PlatformUser, type Matter, type Invoice, type PlatformDocument, type PlatformEvent,
-  type MessageThread, type AuditEntry
+  type PlatformUser, type Matter, type Invoice, type Payment, type PlatformDocument, type PlatformEvent,
+  type MessageThread, type AuditEntry, type SystemNotification
 } from '../data/seedData';
 import { StatusBadge, UrgencyDot } from '../components/dashboard/StatusBadge';
 import { EmptyState } from './EmptyState';
+import type { AdminRequestRecord, ClientWorkspaceResponse } from '../lib/api/contracts';
 
 interface ClientDetailAdminProps {
   client: PlatformUser;
   matters: Matter[];
   invoices: Invoice[];
+  notifications?: SystemNotification[];
+  payments?: Payment[];
+  requests?: AdminRequestRecord[];
+  summary?: ClientWorkspaceResponse['summary'];
   documents: PlatformDocument[];
   events: PlatformEvent[];
   threads?: MessageThread[];
   auditEntries?: AuditEntry[];
   onBack: () => void;
+  onCreateMatter?: () => void;
   onViewMatter: (matter: Matter) => void;
 }
 
 export const ClientDetailAdmin: React.FC<ClientDetailAdminProps> = ({
-  client, matters, invoices, documents, events, threads = [], auditEntries = [], onBack, onViewMatter
+  client,
+  matters,
+  invoices,
+  notifications = [],
+  payments = [],
+  requests = [],
+  summary,
+  documents,
+  events,
+  threads = [],
+  auditEntries = [],
+  onBack,
+  onCreateMatter,
+  onViewMatter
 }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'matters' | 'billing' | 'documents' | 'messages' | 'meetings' | 'activity'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'requests' | 'matters' | 'billing' | 'documents' | 'messages' | 'meetings' | 'activity'>('overview');
 
-  const totalBilled = invoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
-  const totalPaid = invoices.filter(i => i.status === 'paid').reduce((sum, inv) => sum + inv.totalAmount, 0);
-  const totalDue = totalBilled - totalPaid;
+  const totalBilled = summary?.totalBilled ?? invoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
+  const totalPaid =
+    summary?.totalPaid ??
+    payments
+      .filter((payment) => payment.status === 'success')
+      .reduce((sum, payment) => sum + payment.amount, 0);
+  const totalDue = summary?.outstandingBalance ?? Math.max(totalBilled - totalPaid, 0);
   
   const clientThreads = threads.filter(t => t.clientId === client.id);
   const upcomingMeetings = events
     .filter((event) => event.status === 'upcoming')
     .sort((left, right) => `${left.date} ${left.time}`.localeCompare(`${right.date} ${right.time}`));
   const clientAudit = auditEntries.slice(0, 5);
+  const successfulPayments = payments.filter((payment) => payment.status === 'success');
 
   return (
     <div className="space-y-6">
@@ -61,10 +85,25 @@ export const ClientDetailAdmin: React.FC<ClientDetailAdminProps> = ({
           </div>
         </div>
         <div className="flex gap-2">
-          <button className="px-4 py-2 text-sm border border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 transition">
+          <button
+            className="cursor-not-allowed rounded-lg border border-dashed border-gray-200 px-4 py-2 text-sm text-gray-400"
+            disabled
+            title="Profile editing is coming in the setup phase."
+            type="button"
+          >
             Edit Profile
           </button>
-          <button className="px-4 py-2 text-sm bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition">
+          <button
+            className={`rounded-lg px-4 py-2 text-sm transition ${
+              onCreateMatter
+                ? 'border border-gray-200 bg-gray-900 text-white hover:bg-gray-800'
+                : 'cursor-not-allowed border border-dashed border-gray-200 bg-gray-50 text-gray-400'
+            }`}
+            disabled={!onCreateMatter}
+            onClick={onCreateMatter}
+            title={onCreateMatter ? 'Create a new matter for this client.' : 'New Matter creation is coming in the setup phase.'}
+            type="button"
+          >
             New Matter
           </button>
         </div>
@@ -74,12 +113,13 @@ export const ClientDetailAdmin: React.FC<ClientDetailAdminProps> = ({
       <div className="flex gap-6 border-b border-gray-200 overflow-x-auto no-scrollbar">
         {[
           { id: 'overview', label: 'Client 360 Overview' },
+          { id: 'requests', label: `Requests (${requests.length})` },
           { id: 'matters', label: `Matters (${matters.length})` },
-          { id: 'messages', label: `Messages` },
+          { id: 'messages', label: `Messages (${clientThreads.length})` },
           { id: 'documents', label: `Vault (${documents.length})` },
-          { id: 'billing', label: `Billing & Ledger` },
-          { id: 'meetings', label: `Meetings` },
-          { id: 'activity', label: `Activity` }
+          { id: 'billing', label: `Billing & Ledger (${invoices.length})` },
+          { id: 'meetings', label: `Meetings (${events.length})` },
+          { id: 'activity', label: `Activity (${auditEntries.length + notifications.length})` }
         ].map(tab => (
           <button
             key={tab.id}
@@ -294,21 +334,361 @@ export const ClientDetailAdmin: React.FC<ClientDetailAdminProps> = ({
           </div>
         )}
 
-        {/* Placeholders for other tabs */}
-        {activeTab !== 'overview' && (
-          <div className="bg-white border border-gray-100 rounded-xl shadow-sm p-12 text-center flex flex-col items-center justify-center">
-            <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4">
-              <Folder className="w-8 h-8 text-gray-400" />
+        {activeTab === 'requests' && (
+          <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-blue-500" /> Requests
+                </h3>
+                <p className="text-xs text-gray-500 mt-1">Client intake and decision history from the request workspace.</p>
+              </div>
+              <span className="text-xs text-gray-500">{requests.length} records</span>
             </div>
-            <h3 className="text-xl font-medium text-gray-900 mb-2">
-              {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Workspace
-            </h3>
-            <p className="text-sm text-gray-500 max-w-md">
-              This section is dedicated to {activeTab} for {client.name}.
-            </p>
-            <button onClick={() => setActiveTab('overview')} className="mt-6 px-4 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-900 hover:bg-gray-50 transition-colors">
-              Return to Overview
-            </button>
+            <div className="divide-y divide-gray-100">
+              {requests.map((request) => (
+                <div key={request.id} className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium text-gray-900">{request.title}</p>
+                      <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-600 text-[10px] font-bold uppercase tracking-wide">
+                        {request.statusLabel}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {request.requestNumber} • {request.expertiseArea} • {formatDate(request.createdAt)}
+                    </p>
+                    <p className="text-sm text-gray-600 mt-2 line-clamp-2">{request.issueSummary}</p>
+                    {request.matterNumber ? (
+                      <p className="text-xs text-emerald-700 mt-2">Converted to {request.matterNumber}</p>
+                    ) : null}
+                  </div>
+                  <div className="text-left lg:text-right shrink-0">
+                    <p className="text-sm font-medium text-gray-900">{formatCurrency(request.quoteTotalAmount)}</p>
+                    <p className="text-xs text-gray-500 mt-1">{request.urgencyLabel}</p>
+                    <p className="text-xs text-gray-500">{request.consultationMode}</p>
+                  </div>
+                </div>
+              ))}
+              {requests.length === 0 && (
+                <div className="p-12">
+                  <EmptyState icon={Shield} title="No requests" description="No intake requests are linked to this client yet." />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'matters' && (
+          <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                  <Briefcase className="w-4 h-4 text-indigo-500" /> Matters
+                </h3>
+                <p className="text-xs text-gray-500 mt-1">All matters currently linked to this client account.</p>
+              </div>
+              <span className="text-xs text-gray-500">{matters.length} records</span>
+            </div>
+            <div className="grid xl:grid-cols-2 gap-4 p-5">
+              {matters.map((matter) => (
+                <button
+                  key={matter.id}
+                  onClick={() => onViewMatter(matter)}
+                  className="text-left p-4 border border-gray-100 rounded-xl hover:bg-gray-50 transition flex flex-col gap-3"
+                  type="button"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-900 truncate">{matter.title}</p>
+                      <p className="text-xs text-gray-500 mt-1">{matter.referenceCode}</p>
+                    </div>
+                    <StatusBadge status={matter.operationalStatus} size="sm" />
+                  </div>
+                  <p className="text-sm text-gray-600 line-clamp-2">{matter.issueSummary}</p>
+                  <div className="grid grid-cols-2 gap-3 text-xs text-gray-500">
+                    <span>Stage: {matter.lifecycleStage.replace(/-/g, ' ')}</span>
+                    <span>Updated: {formatDate(matter.lastUpdated)}</span>
+                    <span>Counsel: {matter.assignedCounsel || 'Unassigned'}</span>
+                    <span>Staff: {matter.assignedStaff || 'Unassigned'}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-gray-100 pt-3">
+                    <span className="text-xs text-gray-500">Due {formatCurrency(matter.dueAmount)}</span>
+                    <span className="text-xs font-medium text-gray-900 flex items-center gap-1">
+                      Open Matter <ChevronRight className="w-3 h-3" />
+                    </span>
+                  </div>
+                </button>
+              ))}
+              {matters.length === 0 && (
+                <div className="xl:col-span-2 p-12">
+                  <EmptyState icon={Briefcase} title="No matters" description="No matters are linked to this client yet." />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'billing' && (
+          <div className="space-y-6">
+            <div className="grid md:grid-cols-3 gap-4">
+              <div className="bg-white border border-gray-100 rounded-xl p-5 shadow-sm">
+                <p className="text-xs text-gray-500 uppercase font-bold tracking-wide">Billed</p>
+                <p className="text-2xl font-medium mt-2">{formatCurrency(totalBilled)}</p>
+              </div>
+              <div className="bg-white border border-gray-100 rounded-xl p-5 shadow-sm">
+                <p className="text-xs text-gray-500 uppercase font-bold tracking-wide">Paid</p>
+                <p className="text-2xl font-medium mt-2 text-emerald-700">{formatCurrency(totalPaid)}</p>
+              </div>
+              <div className="bg-white border border-gray-100 rounded-xl p-5 shadow-sm">
+                <p className="text-xs text-gray-500 uppercase font-bold tracking-wide">Outstanding</p>
+                <p className="text-2xl font-medium mt-2 text-amber-700">{formatCurrency(totalDue)}</p>
+              </div>
+            </div>
+            <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+              <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+                <div>
+                  <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                    <CreditCard className="w-4 h-4 text-gray-500" /> Invoices and Payments
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-1">Invoice and manual payment records scoped to this client.</p>
+                </div>
+                <span className="text-xs text-gray-500">{successfulPayments.length} successful payments</span>
+              </div>
+              <div className="divide-y divide-gray-100">
+                {invoices.map((invoice) => {
+                  const invoicePayments = successfulPayments.filter((payment) => payment.invoiceId === invoice.id);
+                  const paidAmount = invoicePayments.reduce((sum, payment) => sum + payment.amount, 0);
+                  const balance = Math.max(invoice.totalAmount - paidAmount, 0);
+
+                  return (
+                    <div key={invoice.id} className="p-5">
+                      <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-medium text-gray-900">{invoice.id}</p>
+                            <StatusBadge status={invoice.status} size="sm" />
+                          </div>
+                          <p className="text-sm text-gray-600 mt-1">{invoice.matterTitle || 'General billing'}</p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Issued {formatDate(invoice.issueDate)} • Due {formatDate(invoice.dueDate)}
+                          </p>
+                        </div>
+                        <div className="text-left lg:text-right">
+                          <p className="font-medium text-gray-900">{formatCurrency(invoice.totalAmount)}</p>
+                          <p className="text-xs text-emerald-700 mt-1">Paid {formatCurrency(paidAmount)}</p>
+                          <p className="text-xs text-amber-700">Balance {formatCurrency(balance)}</p>
+                        </div>
+                      </div>
+                      {invoicePayments.length > 0 ? (
+                        <div className="mt-4 rounded-lg bg-gray-50 border border-gray-100 divide-y divide-gray-100">
+                          {invoicePayments.map((payment) => (
+                            <div key={payment.id} className="p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+                              <span className="font-medium text-gray-800">{payment.reference}</span>
+                              <span className="text-gray-500">{payment.method} • {formatDateTime(payment.timestamp)}</span>
+                              <span className="text-emerald-700 font-medium">{formatCurrency(payment.amount)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+                {invoices.length === 0 && (
+                  <div className="p-12">
+                    <EmptyState icon={CreditCard} title="No invoices" description="No invoices or payment records are linked to this client yet." />
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'documents' && (
+          <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-amber-500" /> Document Vault
+                </h3>
+                <p className="text-xs text-gray-500 mt-1">Documents owned by this client account and linked matters.</p>
+              </div>
+              <span className="text-xs text-gray-500">{documents.length} records</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {documents.map((document) => (
+                <div key={document.id} className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-lg bg-amber-50 border border-amber-100 flex items-center justify-center shrink-0">
+                      <FileText className="w-5 h-5 text-amber-600" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="font-medium text-gray-900 truncate">{document.name}</p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {document.matterTitle || 'General'} • {document.type} • {formatDateTime(document.uploadedAt)}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">Uploaded by {document.uploadedBy}</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-600 text-[10px] font-bold uppercase tracking-wide">
+                      {document.visibility}
+                    </span>
+                    <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-600 text-[10px] font-bold uppercase tracking-wide">
+                      {document.reviewState}
+                    </span>
+                  </div>
+                </div>
+              ))}
+              {documents.length === 0 && (
+                <div className="p-12">
+                  <EmptyState icon={FileText} title="No documents" description="No documents are linked to this client yet." />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'messages' && (
+          <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-blue-500" /> Message Threads
+                </h3>
+                <p className="text-xs text-gray-500 mt-1">Conversation threads scoped to this client account.</p>
+              </div>
+              <span className="text-xs text-gray-500">{summary?.unreadThreadCount ?? clientThreads.filter((thread) => thread.unreadCount > 0).length} unread</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {clientThreads.map((thread) => (
+                <div key={thread.id} className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium text-gray-900">{thread.matterTitle || 'General Support'}</p>
+                      {thread.unreadCount > 0 ? (
+                        <span className="px-2 py-1 rounded-full bg-red-50 text-red-700 text-[10px] font-bold uppercase tracking-wide">
+                          {thread.unreadCount} unread
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {thread.status} • Assigned to {thread.assignedTo} • {thread.lastMessageAt ? formatDateTime(thread.lastMessageAt) : 'No messages yet'}
+                    </p>
+                    <p className="text-sm text-gray-600 mt-2 line-clamp-2">{thread.lastMessage || 'No message body recorded.'}</p>
+                  </div>
+                  <span className="text-xs text-gray-500 shrink-0">{thread.matterRef || 'General'}</span>
+                </div>
+              ))}
+              {clientThreads.length === 0 && (
+                <div className="p-12">
+                  <EmptyState icon={MessageSquare} title="No threads" description="No message threads are linked to this client yet." />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'meetings' && (
+          <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-gray-100 flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                  <Calendar className="w-4 h-4 text-emerald-500" /> Meetings and Events
+                </h3>
+                <p className="text-xs text-gray-500 mt-1">Calendar records linked to this client and their matters.</p>
+              </div>
+              <span className="text-xs text-gray-500">{events.length} records</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {events.map((event) => (
+                <div key={event.id} className="p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-medium text-gray-900">{event.title}</p>
+                      <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-600 text-[10px] font-bold uppercase tracking-wide">
+                        {event.status}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {event.matterTitle || 'General'} • {formatDate(event.date)} {event.time} • {event.mode}
+                    </p>
+                    <p className="text-sm text-gray-600 mt-2 line-clamp-2">{event.notes || event.location || 'No event notes recorded.'}</p>
+                  </div>
+                  <div className="text-left lg:text-right text-xs text-gray-500 shrink-0">
+                    <p>{event.calendarSyncStatus || 'local'} calendar mode</p>
+                    <p>{event.reminderStatus || 'none'} reminders</p>
+                    {event.meetLink ? <p className="text-blue-600 mt-1">Meeting link available</p> : null}
+                  </div>
+                </div>
+              ))}
+              {events.length === 0 && (
+                <div className="p-12">
+                  <EmptyState icon={Calendar} title="No meetings" description="No meetings or events are linked to this client yet." />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'activity' && (
+          <div className="grid lg:grid-cols-2 gap-6">
+            <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+              <div className="p-5 border-b border-gray-100">
+                <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                  <ActivityIcon className="w-4 h-4 text-violet-500" /> Client Notifications
+                </h3>
+                <p className="text-xs text-gray-500 mt-1">Notification activity scoped to this client.</p>
+              </div>
+              <div className="divide-y divide-gray-100">
+                {notifications.map((notification) => (
+                  <div key={notification.id} className="p-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-medium text-gray-900">{notification.title}</p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {notification.source} • {formatDateTime(notification.date)}
+                        </p>
+                      </div>
+                      <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide ${notification.read ? 'bg-gray-100 text-gray-500' : 'bg-blue-50 text-blue-700'}`}>
+                        {notification.read ? 'read' : 'unread'}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-600 mt-2 line-clamp-2">{notification.body}</p>
+                  </div>
+                ))}
+                {notifications.length === 0 && (
+                  <div className="p-12">
+                    <EmptyState icon={ActivityIcon} title="No notifications" description="No notifications are linked to this client yet." />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
+              <div className="p-5 border-b border-gray-100">
+                <h3 className="font-bold text-gray-900 flex items-center gap-2">
+                  <History className="w-4 h-4 text-gray-500" /> Audit Timeline
+                </h3>
+                <p className="text-xs text-gray-500 mt-1">Matter-linked audit activity for this client.</p>
+              </div>
+              <div className="divide-y divide-gray-100">
+                {auditEntries.map((entry) => (
+                  <div key={entry.id} className="p-5">
+                    <p className="font-medium text-gray-900">{entry.action.replace(/_/g, ' ')}</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {entry.actor} • {entry.sourceModule} • {formatDateTime(entry.timestamp)}
+                    </p>
+                    <p className="text-sm text-gray-600 mt-2">{entry.details}</p>
+                  </div>
+                ))}
+                {auditEntries.length === 0 && (
+                  <div className="p-12">
+                    <EmptyState icon={History} title="No audit events" description="No matter audit events are linked to this client yet." />
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>

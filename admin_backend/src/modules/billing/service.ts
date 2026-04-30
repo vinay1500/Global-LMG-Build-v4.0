@@ -1,6 +1,6 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { badRequest, notFound } from '../../lib/httpErrors.js';
-import { executeStatement, queryRows, withTransaction } from '../../lib/mysql.js';
+import { executeStatement, queryRows, withTransaction, type QueryExecutor } from '../../lib/mysql.js';
 import type { AdminActor } from '../auth/service.js';
 import { fetchInvoices, fetchMatters, fetchPayments } from '../shared.js';
 import {
@@ -11,6 +11,8 @@ import {
   touchMatterActivity,
 } from '../writeSupport.js';
 import { createPublicId } from '../../lib/authCrypto.js';
+import { getInvoiceSettings } from '../settings/invoiceSettings.js';
+import { calculateInvoiceTax, insertInvoiceLineTaxes } from './tax.js';
 
 type RefundRow = RowDataPacket & {
   amount: number;
@@ -91,7 +93,6 @@ type DuplicatePaymentReferenceRow = RowDataPacket & {
   paymentId: string;
 };
 
-const MANUAL_INVOICE_DUE_DAYS = 7;
 const MONEY_PATTERN = /^\d+(?:\.\d{1,2})?$/;
 
 const firstRow = <TRow>(rows: TRow[]) => rows[0] || null;
@@ -129,7 +130,7 @@ const normalizeMoney = (value: number | string) => {
 
 const isDateOnly = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
 
-const allocateInvoiceNumber = async (connection: Parameters<typeof executeStatement>[2]) => {
+const allocateInvoiceNumber = async (connection: QueryExecutor) => {
   const year = new Date().getUTCFullYear();
   const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
   const rows = await queryRows<RowDataPacket & { nextValue: number }>(
@@ -329,6 +330,7 @@ const listRefunds = async () => {
 export const getWorkspace = async () => {
   return {
     invoices: await fetchInvoices({}),
+    invoiceSettings: await getInvoiceSettings(),
     matters: await fetchMatters({ limit: 100 }),
     payments: await fetchPayments(),
     refunds: await listRefunds(),
@@ -350,7 +352,15 @@ export const createInvoice = async (
     const invoiceNumber = await allocateInvoiceNumber(connection);
     const createdAt = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const issueDate = toDateOnly(new Date());
-    const dueDate = payload.dueDate || addDaysDateOnly(MANUAL_INVOICE_DUE_DAYS);
+    const invoiceSettings = await getInvoiceSettings(connection);
+    const dueDate = payload.dueDate || addDaysDateOnly(invoiceSettings.paymentTermsDays);
+    const tax = await calculateInvoiceTax(
+      {
+        clientState: matter.state,
+        lineAmount: payload.amount,
+      },
+      connection
+    );
 
     const invoiceResult = await executeStatement(
       `INSERT INTO invoices (
@@ -376,7 +386,7 @@ export const createInvoice = async (
          created_at,
          updated_at,
          archived_at
-       ) VALUES (?, ?, ?, ?, NULL, NULL, 'manual-admin', 'draft', 'INR', ?, ?, ?, 0, 0, ?, 0, 0, ?, ?, ?, ?, NULL)`,
+       ) VALUES (?, ?, ?, ?, NULL, NULL, 'manual-admin', 'draft', 'INR', ?, ?, ?, 0, ?, ?, 0, 0, ?, ?, ?, ?, NULL)`,
       [
         invoicePublicId,
         invoiceNumber,
@@ -384,9 +394,10 @@ export const createInvoice = async (
         matter.matterDbId,
         issueDate,
         dueDate,
-        payload.amount,
-        payload.amount,
-        payload.amount,
+        tax.subtotalDecimal,
+        tax.taxDecimal,
+        tax.totalDecimal,
+        tax.totalDecimal,
         actor.userId,
         createdAt,
         createdAt,
@@ -426,7 +437,7 @@ export const createInvoice = async (
       connection
     );
 
-    await executeStatement(
+    const lineResult = await executeStatement(
       `INSERT INTO invoice_lines (
          invoice_id,
          line_type_code,
@@ -445,14 +456,16 @@ export const createInvoice = async (
       [
         invoiceResult.insertId,
         payload.description,
-        payload.amount,
-        payload.amount,
-        payload.amount,
-        payload.amount,
+        tax.lineSubtotalDecimal,
+        tax.lineSubtotalDecimal,
+        tax.taxableDecimal,
+        tax.lineTotalDecimal,
         createdAt,
       ],
       connection
     );
+
+    await insertInvoiceLineTaxes(lineResult.insertId, tax, createdAt, connection);
 
     await executeStatement(
       `INSERT INTO invoice_installments (
@@ -466,7 +479,30 @@ export const createInvoice = async (
          paid_at,
          created_at
        ) VALUES (?, 1, ?, ?, 0, ?, 'pending', NULL, ?)`,
-      [invoiceResult.insertId, dueDate, payload.amount, payload.amount, createdAt],
+      [invoiceResult.insertId, dueDate, tax.totalDecimal, tax.totalDecimal, createdAt],
+      connection
+    );
+
+    await executeStatement(
+      `UPDATE matters m
+       JOIN (
+         SELECT
+           matter_id,
+           COALESCE(SUM(total_amount), 0) AS quotedTotal,
+           COALESCE(SUM(amount_paid), 0) AS paidTotal,
+           COALESCE(SUM(amount_due), 0) AS dueTotal
+         FROM invoices
+         WHERE matter_id = ?
+           AND archived_at IS NULL
+         GROUP BY matter_id
+       ) totals ON totals.matter_id = m.id
+       SET m.quoted_total_amount = totals.quotedTotal,
+           m.paid_total_amount = totals.paidTotal,
+           m.due_total_amount = totals.dueTotal,
+           m.updated_at = UTC_TIMESTAMP(6),
+           m.row_version = m.row_version + 1
+       WHERE m.id = ?`,
+      [matter.matterDbId, matter.matterDbId],
       connection
     );
 
@@ -480,7 +516,10 @@ export const createInvoice = async (
         actorUserId: actor.userId,
         changes: [
           { fieldName: 'description', newValue: payload.description },
-          { fieldName: 'amount_due', newValue: payload.amount },
+          { fieldName: 'subtotal_amount', newValue: tax.subtotalDecimal },
+          { fieldName: 'tax_amount', newValue: tax.taxDecimal },
+          { fieldName: 'amount_due', newValue: tax.totalDecimal },
+          { fieldName: 'tax_note', newValue: tax.note },
           { fieldName: 'due_date', newValue: dueDate },
           { fieldName: 'status_code', newValue: 'draft' },
         ],

@@ -50,6 +50,27 @@ export interface ClientsListResponse {
   clients: ClientListItem[];
 }
 
+export interface CreateClientPayload {
+  city?: string;
+  clientType?: 'individual' | 'organization';
+  displayName: string;
+  email: string;
+  notes?: string;
+  phone?: string;
+  portalAccessEnabled?: boolean;
+  primaryContactName: string;
+  state?: string;
+}
+
+export interface CreateClientResponse {
+  client: ClientListItem;
+  portalInvite: {
+    mode: 'manual';
+    status: 'not_sent';
+  };
+  status: 'created';
+}
+
 export interface ClientWorkspaceResponse {
   auditEntries: AuditEntry[];
   client: PlatformUser;
@@ -57,10 +78,60 @@ export interface ClientWorkspaceResponse {
   events: PlatformEvent[];
   invoices: Invoice[];
   matters: Matter[];
+  notifications: SystemNotification[];
+  payments: Payment[];
+  requests: AdminRequestRecord[];
+  summary: {
+    activeMatterCount: number;
+    documentCount: number;
+    eventCount: number;
+    invoiceCount: number;
+    matterCount: number;
+    notificationCount: number;
+    outstandingBalance: number;
+    paymentCount: number;
+    requestCount: number;
+    threadCount: number;
+    totalBilled: number;
+    totalPaid: number;
+    unreadThreadCount: number;
+  };
   threads: MessageThread[];
 }
 
+export interface MatterCreateOptions {
+  clients: Array<{ email: string; id: string; name: string }>;
+  consultationModes: Array<{ code: string; label: string }>;
+  domains: Array<{ code: string; name: string }>;
+  priorities: Array<{ code: string; label: string }>;
+  services: Array<{ code: string; domainCode: string; domainName: string; name: string }>;
+  stages: Array<{ code: string; label: string }>;
+  statuses: Array<{ code: string; label: string }>;
+  urgencyRules: Array<{ code: string; label: string }>;
+}
+
+export interface CreateMatterPayload {
+  clientAccountPublicId: string;
+  clientVisible?: boolean;
+  consultationModeCode?: string;
+  legalDomainCode?: string;
+  priorityCode?: string;
+  serviceCode?: string;
+  serviceCodes?: string[];
+  stageCode?: string;
+  statusCode?: string;
+  summary?: string;
+  title: string;
+  urgencyCode?: string;
+}
+
+export interface CreateMatterResponse {
+  matter: Matter;
+  status: 'created';
+}
+
 export interface MattersListResponse {
+  createOptions?: MatterCreateOptions;
   matters: Matter[];
 }
 
@@ -225,6 +296,13 @@ export interface MessagesWorkspaceResponse {
   threads: MessageThread[];
 }
 
+export interface CreateMessageThreadResponse {
+  messageId: string;
+  status: 'created';
+  threadId: string;
+  threadNumber: string;
+}
+
 export interface AdminTaskRecord {
   assignee: string;
   client: string;
@@ -254,6 +332,7 @@ export interface TasksWorkspaceResponse {
 
 export interface BillingWorkspaceResponse {
   invoices: Invoice[];
+  invoiceSettings: InvoiceSettings;
   matters: Matter[];
   payments: Payment[];
   refunds: RefundRecord[];
@@ -496,6 +575,41 @@ export interface ReportDrilldownResponse {
   total: number;
 }
 
+export interface InvoiceSettings {
+  billingDisplayName: string;
+  businessLegalName: string;
+  businessState: string;
+  defaultGstRateBps: number;
+  defaultGstRatePercent: number;
+  defaultSacCode: string | null;
+  fallbackTaxType: 'cgst_sgst' | 'igst' | 'none';
+  gstEnabled: boolean;
+  gstin: string | null;
+  invoiceFooter: string | null;
+  invoicePrefix: string;
+  paymentTermsDays: number;
+  pricesIncludeTax: boolean;
+  reverseChargeNote: string | null;
+  taxMode: 'exempt' | 'forward_charge' | 'reverse_charge';
+}
+
+export type UpdateInvoiceSettingsPayload = Partial<{
+  billingDisplayName: string;
+  businessLegalName: string;
+  businessState: string;
+  defaultGstRatePercent: number;
+  defaultSacCode: string | null;
+  fallbackTaxType: InvoiceSettings['fallbackTaxType'];
+  gstEnabled: boolean;
+  gstin: string | null;
+  invoiceFooter: string | null;
+  invoicePrefix: string;
+  paymentTermsDays: number;
+  pricesIncludeTax: boolean;
+  reverseChargeNote: string | null;
+  taxMode: InvoiceSettings['taxMode'];
+}>;
+
 export interface SettingsWorkspaceResponse {
   consultationModes: Array<{
     code: string;
@@ -511,6 +625,7 @@ export interface SettingsWorkspaceResponse {
     invoiceStatuses: Array<{ code: string; label: string }>;
     latestInvoiceNumber: string | null;
     nextInvoiceNumber: string | null;
+    settings: InvoiceSettings;
     taxRates: Array<{
       code: string;
       isActive: boolean;

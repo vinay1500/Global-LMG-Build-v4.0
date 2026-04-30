@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { AlertCircle, ArrowRight, Scale } from 'lucide-react';
+import { AlertCircle, ArrowRight, Eye, EyeOff, Scale } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router';
 import { ApiRequestError } from '../../lib/api/client';
 import { useAdminSession } from '../../providers/AdminSessionProvider';
@@ -11,6 +11,7 @@ export const LoginPage = () => {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -84,14 +85,24 @@ export const LoginPage = () => {
 
           <label className="block">
             <span className="text-sm font-medium text-[#2C2B29]">Password</span>
-            <input
-              className="mt-2 w-full rounded-lg border border-[#E6E4DD] bg-[#FCFBF8] px-4 py-3 text-sm outline-none focus:border-[#C19A5B]"
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Enter your password"
-              required
-              type="password"
-              value={password}
-            />
+            <div className="relative mt-2">
+              <input
+                className="w-full rounded-lg border border-[#E6E4DD] bg-[#FCFBF8] px-4 py-3 pr-12 text-sm outline-none focus:border-[#C19A5B]"
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Enter your password"
+                required
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+              />
+              <button
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-[#8C8981] transition hover:bg-[#E6E4DD] hover:text-[#2C2B29]"
+                onClick={() => setShowPassword((current) => !current)}
+                type="button"
+              >
+                {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </label>
 
           <label className="flex items-center gap-2 text-sm text-[#5A7C96]">
