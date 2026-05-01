@@ -244,13 +244,7 @@ const seedReferenceData = async (connection: PoolConnection) => {
         is_active, is_subscription_eligible, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
-        legal_domain_id = VALUES(legal_domain_id),
-        service_name = VALUES(service_name),
-        service_description = VALUES(service_description),
-        sort_order = VALUES(sort_order),
-        is_active = VALUES(is_active),
-        is_subscription_eligible = VALUES(is_subscription_eligible),
-        updated_at = VALUES(updated_at)`,
+        service_code = service_code`,
       [
         createPublicId(),
         serviceCode,
@@ -271,13 +265,33 @@ const seedReferenceData = async (connection: PoolConnection) => {
       `INSERT INTO pricing_service_slabs (
         effective_from, effective_to, min_service_count, max_service_count, base_amount,
         per_extra_service_amount, is_active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON DUPLICATE KEY UPDATE
-        base_amount = VALUES(base_amount),
-        per_extra_service_amount = VALUES(per_extra_service_amount),
-        is_active = VALUES(is_active),
-        updated_at = VALUES(updated_at)`,
-      ['2024-01-01', null, minCount, maxCount, baseAmount, perExtraAmount, 1, timestamp, timestamp]
+      )
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM pricing_service_slabs
+        WHERE effective_from = ?
+          AND min_service_count = ?
+          AND (
+            (max_service_count IS NULL AND ? IS NULL)
+            OR max_service_count = ?
+          )
+      )`,
+      [
+        '2024-01-01',
+        null,
+        minCount,
+        maxCount,
+        baseAmount,
+        perExtraAmount,
+        1,
+        timestamp,
+        timestamp,
+        '2024-01-01',
+        minCount,
+        maxCount,
+        maxCount,
+      ]
     );
   }
 
@@ -287,12 +301,7 @@ const seedReferenceData = async (connection: PoolConnection) => {
         urgency_code, label, surcharge_type_code, surcharge_value, sort_order, is_active, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
-        label = VALUES(label),
-        surcharge_type_code = VALUES(surcharge_type_code),
-        surcharge_value = VALUES(surcharge_value),
-        sort_order = VALUES(sort_order),
-        is_active = VALUES(is_active),
-        updated_at = VALUES(updated_at)`,
+        urgency_code = urgency_code`,
       [code, label, surchargeType, surchargeValue, sortOrder, 1, timestamp, timestamp]
     );
   }

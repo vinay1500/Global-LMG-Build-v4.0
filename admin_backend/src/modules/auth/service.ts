@@ -19,19 +19,10 @@ import {
 } from '../../lib/httpErrors.js';
 import { createAuditEvent } from '../writeSupport.js';
 
-const ADMIN_ROLE_CODES = new Set([
-  'ops_admin',
-  'case_manager',
-  'billing_admin',
-  'messaging_desk',
-  'management_viewer',
-]);
-
 type ActorRow = RowDataPacket & {
   account_status_code: string;
   display_name: string;
   email: string;
-  is_active: number | null;
   login_enabled: number;
   must_rotate_password: number | null;
   permission_code: string | null;
@@ -212,7 +203,7 @@ const collectActor = (rows: Array<ActorRow | SessionRow>) => {
   const first = rows[0]!;
   const roleCodes = Array.from(
     new Set(rows.map((row) => row.role_code).filter((value): value is string => Boolean(value)))
-  ).filter((roleCode) => ADMIN_ROLE_CODES.has(roleCode));
+  ).filter((roleCode) => roleCode !== 'client');
 
   if (!first.login_enabled || roleCodes.length === 0) {
     return null;
@@ -274,9 +265,8 @@ const fetchActorByIdentifier = async (identifier: string) => {
        u.account_status_code,
        uc.password_hash,
        uc.must_rotate_password,
-       ur.role_code,
-       rp.permission_code,
-       ur.is_active
+       r.code AS role_code,
+       rp.permission_code
      FROM users u
      LEFT JOIN user_credentials uc ON uc.user_id = u.id
      LEFT JOIN user_roles ur
@@ -284,9 +274,14 @@ const fetchActorByIdentifier = async (identifier: string) => {
       AND ur.is_active = 1
       AND (ur.starts_at IS NULL OR ur.starts_at <= UTC_TIMESTAMP(6))
       AND (ur.ends_at IS NULL OR ur.ends_at >= UTC_TIMESTAMP(6))
-     LEFT JOIN role_permissions rp ON rp.role_code = ur.role_code
+     LEFT JOIN roles r
+       ON r.code = ur.role_code
+      AND r.is_active = 1
+      AND r.code <> 'client'
+     LEFT JOIN role_permissions rp ON rp.role_code = r.code
      WHERE (LOWER(u.email) = LOWER(?) OR u.phone = ?)
-       AND u.archived_at IS NULL`,
+       AND u.archived_at IS NULL
+       AND u.actor_type_code <> 'client'`,
     [identifier, identifier]
   );
 
@@ -310,7 +305,7 @@ const fetchActorBySessionToken = async (rawSessionToken: string) => {
        u.login_enabled,
        u.account_status_code,
        uc.must_rotate_password,
-       ur.role_code,
+       r.code AS role_code,
        rp.permission_code
      FROM user_sessions us
      JOIN users u ON u.id = us.user_id
@@ -320,11 +315,16 @@ const fetchActorBySessionToken = async (rawSessionToken: string) => {
       AND ur.is_active = 1
       AND (ur.starts_at IS NULL OR ur.starts_at <= UTC_TIMESTAMP(6))
       AND (ur.ends_at IS NULL OR ur.ends_at >= UTC_TIMESTAMP(6))
-     LEFT JOIN role_permissions rp ON rp.role_code = ur.role_code
+     LEFT JOIN roles r
+       ON r.code = ur.role_code
+      AND r.is_active = 1
+      AND r.code <> 'client'
+     LEFT JOIN role_permissions rp ON rp.role_code = r.code
      WHERE us.session_token_hash = ?
        AND us.revoked_at IS NULL
        AND us.expires_at > UTC_TIMESTAMP(6)
-       AND u.archived_at IS NULL`,
+       AND u.archived_at IS NULL
+       AND u.actor_type_code <> 'client'`,
     [hashedToken]
   );
 

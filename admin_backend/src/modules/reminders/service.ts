@@ -48,6 +48,13 @@ type ReminderMetricRow = RowDataPacket & {
   processing: number;
   sentRecent: number;
 };
+type ReminderDeliverySettingRow = RowDataPacket & {
+  bodyText: string | null;
+  inAppEnabled: number;
+  isActive: number;
+  subject: string | null;
+  templateId: string | null;
+};
 
 const LOCK_TTL_MINUTES = 15;
 const RETRY_DELAY_MINUTES = 10;
@@ -69,6 +76,9 @@ const normalizeLimit = (limit?: number) =>
 
 const formatDateTimeForCopy = (value: string) => value.slice(0, 16).replace(' ', ' at ');
 
+const renderTemplate = (value: string, context: Record<string, string>) =>
+  value.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, variable: string) => context[variable] || '');
+
 const deliveryLabelFor = (channelCode: string) => {
   if (channelCode === 'email' && env.EMAIL_PROVIDER_MODE !== 'disabled') {
     return 'Email delivery is not implemented in this phase; an in-app/local reminder was created instead.';
@@ -87,6 +97,29 @@ const buildNotificationPayload = (row: ReminderProcessingRow) => ({
   )}. ${deliveryLabelFor(row.channelCode)}`,
   title: `Reminder: ${row.eventTitle}`,
 });
+
+const getReminderDeliverySetting = async (executor: QueryExecutor) => {
+  const rows = await queryRows<ReminderDeliverySettingRow>(
+    `SELECT
+       COALESCE(nds.in_app_enabled, 1) AS inAppEnabled,
+       COALESCE(nds.is_active, nt.is_active) AS isActive,
+       at.public_id AS templateId,
+       at.subject,
+       at.body_text AS bodyText
+     FROM notification_types nt
+     LEFT JOIN notification_delivery_settings nds ON nds.notification_type_code = nt.code
+     LEFT JOIN admin_templates at ON at.public_id = nds.template_public_id
+       AND at.template_type_code = 'notification'
+       AND at.is_active = 1
+       AND at.archived_at IS NULL
+     WHERE nt.code = 'event_reminder'
+     LIMIT 1`,
+    [],
+    executor
+  );
+
+  return rows[0] || { bodyText: null, inAppEnabled: 1, isActive: 1, subject: null, templateId: null };
+};
 
 const selectReminderForProcessing = async (
   reminderId: number,
@@ -163,7 +196,26 @@ const insertNotificationIfNeeded = async (
   row: ReminderProcessingRow,
   executor: QueryExecutor
 ) => {
-  const payload = buildNotificationPayload(row);
+  const deliverySetting = await getReminderDeliverySetting(executor);
+  if (!deliverySetting.isActive || !deliverySetting.inAppEnabled) {
+    return { created: false, notificationId: 0, suppressed: true };
+  }
+
+  const defaultPayload = buildNotificationPayload(row);
+  const templateContext = {
+    actionUrl: '',
+    clientName: row.clientName || row.recipientName || 'Client',
+    matterTitle: row.eventTitle,
+    platformName: 'Global LMG',
+  };
+  const payload = {
+    bodyText: deliverySetting.bodyText
+      ? renderTemplate(deliverySetting.bodyText, templateContext)
+      : defaultPayload.bodyText,
+    title: deliverySetting.subject
+      ? renderTemplate(deliverySetting.subject, templateContext)
+      : defaultPayload.title,
+  };
   const existing = await queryRows<RowDataPacket & { id: number }>(
     `SELECT id
      FROM notifications
@@ -178,7 +230,7 @@ const insertNotificationIfNeeded = async (
   );
 
   if (existing[0]) {
-    return { created: false, notificationId: Number(existing[0].id) };
+    return { created: false, notificationId: Number(existing[0].id), suppressed: false };
   }
 
   const result = await executeStatement(
@@ -204,7 +256,7 @@ const insertNotificationIfNeeded = async (
     executor
   );
 
-  return { created: true, notificationId: result.insertId };
+  return { created: true, notificationId: result.insertId, suppressed: false };
 };
 
 const completeLockedReminder = async (
@@ -278,6 +330,8 @@ const completeLockedReminder = async (
         eventId: row.eventId,
         summaryNewValue: notificationResult.created
           ? 'In-app/local reminder notification created.'
+          : notificationResult.suppressed
+            ? 'Reminder notification suppressed by notification settings.'
           : 'Existing in-app/local reminder notification reused.',
       },
       connection

@@ -1,4 +1,10 @@
-import type { AdminPasswordChangeResponse, AdminSessionResponse } from './contracts';
+import type {
+  AdminAccountResponse,
+  AdminPasswordChangeResponse,
+  AdminSessionResponse,
+  UpdateAdminPreferencesPayload,
+  UpdateAdminProfilePayload,
+} from './contracts';
 import { apiRequest } from './client';
 import { API_ENDPOINTS } from './endpoints';
 
@@ -14,7 +20,20 @@ const postJson = <TResponse>(url: string, payload?: unknown) =>
 export const authApi = {
   changePassword: (payload: { currentPassword: string; newPassword: string }) =>
     postJson<AdminPasswordChangeResponse>(API_ENDPOINTS.admin.auth.password(), payload),
+  getAccount: () => apiRequest<AdminAccountResponse>(API_ENDPOINTS.admin.auth.me()),
   getSession: () => apiRequest<AdminSessionResponse>(API_ENDPOINTS.admin.auth.session()),
+  updatePreferences: (payload: UpdateAdminPreferencesPayload) =>
+    apiRequest<AdminAccountResponse>(API_ENDPOINTS.admin.auth.preferences(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+    }),
+  updateProfile: (payload: UpdateAdminProfilePayload) =>
+    apiRequest<AdminAccountResponse>(API_ENDPOINTS.admin.auth.me(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+    }),
   signIn: (payload: { identifier: string; password: string; rememberMe: boolean }) =>
     postJson<AdminSessionResponse>(API_ENDPOINTS.admin.auth.signIn(), payload),
   signOut: () => apiRequest<void>(API_ENDPOINTS.admin.auth.signOut(), { method: 'POST' }),

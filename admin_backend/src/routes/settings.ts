@@ -2,8 +2,49 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../lib/httpErrors.js';
 import { getWorkspace } from '../modules/settings/service.js';
+import {
+  archivePricingSlab,
+  archiveService,
+  archiveUrgencyRule,
+  createPricingSlab,
+  createService,
+  createUrgencyRule,
+  getPricingRules,
+  getServiceCatalog,
+  updatePricingSlab,
+  updateService,
+  updateUrgencyRule,
+} from '../modules/settings/catalogPricing.js';
 import { getInvoiceSettings, updateInvoiceSettings } from '../modules/settings/invoiceSettings.js';
-import { requireMutationPermission, requireReadActor, requirePermission } from './shared.js';
+import {
+  archiveReminderSetting,
+  createReminderSetting,
+  getNotificationSettings,
+  updateNotificationDeliverySetting,
+  updateReminderSetting,
+} from '../modules/settings/notificationSettings.js';
+import { getPlatformSettings, updatePlatformSetting } from '../modules/settings/platformSettings.js';
+import {
+  archiveRole,
+  assignUserRole,
+  createRole,
+  getWorkspace as getRbacWorkspace,
+  removeUserRole,
+  updateRole,
+  updateRolePermissions,
+} from '../modules/rbac/service.js';
+import {
+  archiveDocumentType,
+  archiveTemplate,
+  createDocumentType,
+  createTemplate,
+  getDocumentTypes,
+  getTemplates,
+  setDefaultTemplate,
+  updateDocumentType,
+  updateTemplate,
+} from '../modules/settings/templatesDocuments.js';
+import { requireMutationPermission, requireReadActor, requireReadPermission, requirePermission } from './shared.js';
 
 export const settingsRouter = Router();
 
@@ -24,6 +65,109 @@ const invoiceSettingsSchema = z.object({
   taxMode: z.enum(['forward_charge', 'reverse_charge', 'exempt']).optional(),
 });
 
+const platformSettingSchema = z.object({
+  value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
+  version: z.number().int().positive().optional(),
+});
+
+const serviceCreateSchema = z.object({
+  code: z.string().trim().max(64).optional(),
+  description: z.string().trim().max(2000).nullable().optional(),
+  domainCode: z.string().trim().min(1).max(64),
+  isActive: z.boolean().optional(),
+  name: z.string().trim().min(2).max(180),
+  sortOrder: z.number().int().min(0).max(100000).optional(),
+});
+
+const serviceUpdateSchema = serviceCreateSchema.omit({ code: true }).partial();
+
+const pricingSlabCreateSchema = z.object({
+  baseAmount: z.number().min(0),
+  effectiveFrom: z.string().trim(),
+  effectiveTo: z.string().trim().nullable().optional(),
+  isActive: z.boolean().optional(),
+  maxServiceCount: z.number().int().positive().nullable().optional(),
+  minServiceCount: z.number().int().positive(),
+  perExtraServiceAmount: z.number().min(0).nullable().optional(),
+});
+
+const pricingSlabUpdateSchema = pricingSlabCreateSchema.partial();
+
+const urgencyRuleCreateSchema = z.object({
+  code: z.string().trim().max(32).optional(),
+  isActive: z.boolean().optional(),
+  label: z.string().trim().min(1).max(120),
+  sortOrder: z.number().int().min(0).max(100000).optional(),
+  surchargeType: z.enum(['flat', 'percent']),
+  surchargeValue: z.number().min(0),
+});
+
+const urgencyRuleUpdateSchema = urgencyRuleCreateSchema.omit({ code: true }).partial();
+
+const templateCreateSchema = z.object({
+  body: z.string().trim().min(1).max(10000),
+  isActive: z.boolean().optional(),
+  name: z.string().trim().min(2).max(180),
+  subject: z.string().trim().max(255).nullable().optional(),
+  type: z.enum(['invoice', 'message', 'notification', 'document_checklist', 'general']),
+  variables: z.array(z.string().trim().min(1).max(64)).optional(),
+});
+
+const templateUpdateSchema = templateCreateSchema.partial().omit({ type: true });
+
+const documentTypeCreateSchema = z.object({
+  allowedExtensions: z.array(z.string().trim().min(1).max(16)).min(1),
+  category: z.string().trim().min(1).max(64),
+  clientVisibleDefault: z.boolean().optional(),
+  code: z.string().trim().max(32).optional(),
+  description: z.string().trim().max(2000).nullable().optional(),
+  displayOrder: z.number().int().min(0).max(100000).optional(),
+  isActive: z.boolean().optional(),
+  maxSizeMb: z.number().int().min(1).max(200),
+  name: z.string().trim().min(2).max(140),
+  requiresReview: z.boolean().optional(),
+});
+
+const documentTypeUpdateSchema = documentTypeCreateSchema.partial().omit({ code: true });
+
+const notificationDeliveryUpdateSchema = z.object({
+  emailEnabled: z.boolean().optional(),
+  inAppEnabled: z.boolean().optional(),
+  isActive: z.boolean().optional(),
+  pushEnabled: z.boolean().optional(),
+  smsEnabled: z.boolean().optional(),
+  templateId: z.string().trim().max(64).nullable().optional(),
+});
+
+const reminderSettingCreateSchema = z.object({
+  channelCode: z.enum(['in_app', 'email', 'sms']),
+  eventTypeCode: z.string().trim().max(32).nullable().optional(),
+  isActive: z.boolean().optional(),
+  offsetMinutes: z.number().int().min(1).max(10080),
+});
+
+const reminderSettingUpdateSchema = reminderSettingCreateSchema.partial();
+
+const rbacRoleCreateSchema = z.object({
+  code: z.string().trim().min(2).max(64).optional(),
+  description: z.string().trim().max(1000).optional(),
+  name: z.string().trim().min(2).max(160),
+});
+
+const rbacRoleUpdateSchema = z.object({
+  description: z.string().trim().max(1000).optional(),
+  isActive: z.boolean().optional(),
+  name: z.string().trim().min(2).max(160).optional(),
+});
+
+const rbacRolePermissionsSchema = z.object({
+  permissionCodes: z.array(z.string().trim().min(1).max(128)),
+});
+
+const rbacUserRoleSchema = z.object({
+  roleCode: z.string().trim().min(1).max(64),
+});
+
 settingsRouter.get(
   '/settings/workspace',
   asyncHandler(async (request, response) => {
@@ -37,6 +181,307 @@ settingsRouter.get(
   asyncHandler(async (request, response) => {
     requirePermission(await requireReadActor(request), 'invoice.view');
     response.json(await getInvoiceSettings());
+  })
+);
+
+settingsRouter.get(
+  '/settings/platform',
+  asyncHandler(async (request, response) => {
+    requirePermission(await requireReadActor(request), 'dashboard.view');
+    response.json({ settings: await getPlatformSettings() });
+  })
+);
+
+settingsRouter.get(
+  '/settings/rbac',
+  asyncHandler(async (request, response) => {
+    await requireReadPermission(request, 'rbac.manage');
+    response.json(await getRbacWorkspace());
+  })
+);
+
+settingsRouter.post(
+  '/settings/rbac/roles',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'rbac.manage');
+    response.status(201).json(await createRole(actor, rbacRoleCreateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.patch(
+  '/settings/rbac/roles/:roleId',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'rbac.manage');
+    const roleId = z.string().trim().min(1).max(64).parse(request.params.roleId);
+    response.json(await updateRole(actor, roleId, rbacRoleUpdateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.post(
+  '/settings/rbac/roles/:roleId/archive',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'rbac.manage');
+    const roleId = z.string().trim().min(1).max(64).parse(request.params.roleId);
+    response.json(await archiveRole(actor, roleId));
+  })
+);
+
+settingsRouter.put(
+  '/settings/rbac/roles/:roleId/permissions',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'rbac.manage');
+    const roleId = z.string().trim().min(1).max(64).parse(request.params.roleId);
+    const body = rbacRolePermissionsSchema.parse(request.body);
+    response.json(await updateRolePermissions(actor, roleId, body.permissionCodes));
+  })
+);
+
+settingsRouter.post(
+  '/settings/rbac/users/:userId/roles',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'rbac.manage');
+    const userId = z.string().trim().min(1).max(64).parse(request.params.userId);
+    const body = rbacUserRoleSchema.parse(request.body);
+    response.status(201).json(await assignUserRole(actor, userId, body.roleCode));
+  })
+);
+
+settingsRouter.delete(
+  '/settings/rbac/users/:userId/roles/:roleId',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'rbac.manage');
+    const userId = z.string().trim().min(1).max(64).parse(request.params.userId);
+    const roleId = z.string().trim().min(1).max(64).parse(request.params.roleId);
+    response.json(await removeUserRole(actor, userId, roleId));
+  })
+);
+
+settingsRouter.patch(
+  '/settings/platform/:key',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const key = z.string().parse(request.params.key);
+    response.json(await updatePlatformSetting(actor, key, platformSettingSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.get(
+  '/settings/service-catalog',
+  asyncHandler(async (request, response) => {
+    requirePermission(await requireReadActor(request), 'dashboard.view');
+    response.json(await getServiceCatalog());
+  })
+);
+
+settingsRouter.post(
+  '/settings/service-catalog/services',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    response.status(201).json(await createService(actor, serviceCreateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.patch(
+  '/settings/service-catalog/services/:serviceId',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const serviceId = z.string().parse(request.params.serviceId);
+    response.json(await updateService(actor, serviceId, serviceUpdateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.post(
+  '/settings/service-catalog/services/:serviceId/archive',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const serviceId = z.string().parse(request.params.serviceId);
+    response.json(await archiveService(actor, serviceId));
+  })
+);
+
+settingsRouter.get(
+  '/settings/pricing-rules',
+  asyncHandler(async (request, response) => {
+    requirePermission(await requireReadActor(request), 'dashboard.view');
+    response.json(await getPricingRules());
+  })
+);
+
+settingsRouter.post(
+  '/settings/pricing-rules/slabs',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    response.status(201).json(await createPricingSlab(actor, pricingSlabCreateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.patch(
+  '/settings/pricing-rules/slabs/:slabId',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const slabId = z.string().parse(request.params.slabId);
+    response.json(await updatePricingSlab(actor, slabId, pricingSlabUpdateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.post(
+  '/settings/pricing-rules/slabs/:slabId/archive',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const slabId = z.string().parse(request.params.slabId);
+    response.json(await archivePricingSlab(actor, slabId));
+  })
+);
+
+settingsRouter.post(
+  '/settings/pricing-rules/urgency',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    response.status(201).json(await createUrgencyRule(actor, urgencyRuleCreateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.patch(
+  '/settings/pricing-rules/urgency/:ruleId',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const ruleId = z.string().parse(request.params.ruleId);
+    response.json(await updateUrgencyRule(actor, ruleId, urgencyRuleUpdateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.post(
+  '/settings/pricing-rules/urgency/:ruleId/archive',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const ruleId = z.string().parse(request.params.ruleId);
+    response.json(await archiveUrgencyRule(actor, ruleId));
+  })
+);
+
+settingsRouter.get(
+  '/settings/templates',
+  asyncHandler(async (request, response) => {
+    requirePermission(await requireReadActor(request), 'dashboard.view');
+    response.json(await getTemplates());
+  })
+);
+
+settingsRouter.post(
+  '/settings/templates',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    response.status(201).json(await createTemplate(actor, templateCreateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.get(
+  '/settings/notifications',
+  asyncHandler(async (request, response) => {
+    requirePermission(await requireReadActor(request), 'dashboard.view');
+    response.json(await getNotificationSettings());
+  })
+);
+
+settingsRouter.patch(
+  '/settings/notifications/types/:typeCode',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const typeCode = z.string().trim().min(1).max(64).parse(request.params.typeCode);
+    response.json(
+      await updateNotificationDeliverySetting(
+        actor,
+        typeCode,
+        notificationDeliveryUpdateSchema.parse(request.body)
+      )
+    );
+  })
+);
+
+settingsRouter.post(
+  '/settings/notifications/reminder-offsets',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    response.status(201).json(await createReminderSetting(actor, reminderSettingCreateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.patch(
+  '/settings/notifications/reminder-offsets/:settingId',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const settingId = z.string().trim().min(1).max(64).parse(request.params.settingId);
+    response.json(await updateReminderSetting(actor, settingId, reminderSettingUpdateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.post(
+  '/settings/notifications/reminder-offsets/:settingId/archive',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const settingId = z.string().trim().min(1).max(64).parse(request.params.settingId);
+    response.json(await archiveReminderSetting(actor, settingId));
+  })
+);
+
+settingsRouter.patch(
+  '/settings/templates/:templateId',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const templateId = z.string().parse(request.params.templateId);
+    response.json(await updateTemplate(actor, templateId, templateUpdateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.post(
+  '/settings/templates/:templateId/archive',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const templateId = z.string().parse(request.params.templateId);
+    response.json(await archiveTemplate(actor, templateId));
+  })
+);
+
+settingsRouter.post(
+  '/settings/templates/:templateId/set-default',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const templateId = z.string().parse(request.params.templateId);
+    response.json(await setDefaultTemplate(actor, templateId));
+  })
+);
+
+settingsRouter.get(
+  '/settings/document-types',
+  asyncHandler(async (request, response) => {
+    requirePermission(await requireReadActor(request), 'dashboard.view');
+    response.json(await getDocumentTypes());
+  })
+);
+
+settingsRouter.post(
+  '/settings/document-types',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    response.status(201).json(await createDocumentType(actor, documentTypeCreateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.patch(
+  '/settings/document-types/:documentTypeId',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const documentTypeId = z.string().parse(request.params.documentTypeId);
+    response.json(await updateDocumentType(actor, documentTypeId, documentTypeUpdateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.post(
+  '/settings/document-types/:documentTypeId/archive',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const documentTypeId = z.string().parse(request.params.documentTypeId);
+    response.json(await archiveDocumentType(actor, documentTypeId));
   })
 );
 

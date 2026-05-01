@@ -610,12 +610,12 @@ export class NormalizedDashboardRepository {
 
       const legalDomainRow = await selectOne<RowDataPacket>(
         connection,
-        'SELECT id, domain_name FROM legal_domains WHERE domain_code = ? LIMIT 1',
+        'SELECT id, domain_name FROM legal_domains WHERE domain_code = ? AND is_active = 1 LIMIT 1',
         [request.legalDomain]
       );
       const urgencyRuleRow = await selectOne<RowDataPacket>(
         connection,
-        'SELECT id, urgency_code, surcharge_value FROM pricing_urgency_rules WHERE urgency_code = ? LIMIT 1',
+        'SELECT id, urgency_code, surcharge_value FROM pricing_urgency_rules WHERE urgency_code = ? AND is_active = 1 LIMIT 1',
         [request.urgency]
       );
       const consultationRuleRow = await selectOne<RowDataPacket>(
@@ -627,8 +627,12 @@ export class NormalizedDashboardRepository {
         connection,
         `SELECT min_service_count, max_service_count, base_amount, per_extra_service_amount
          FROM pricing_service_slabs
-         WHERE min_service_count <= ? AND (max_service_count IS NULL OR max_service_count >= ?)
-         ORDER BY min_service_count DESC
+         WHERE is_active = 1
+           AND effective_from <= CURDATE()
+           AND (effective_to IS NULL OR effective_to >= CURDATE())
+           AND min_service_count <= ?
+           AND (max_service_count IS NULL OR max_service_count >= ?)
+         ORDER BY effective_from DESC, min_service_count DESC
          LIMIT 1`,
         [request.services.length, request.services.length]
       );
@@ -771,7 +775,7 @@ export class NormalizedDashboardRepository {
       for (const [index, serviceCode] of request.services.entries()) {
         const serviceRow = await selectOne<RowDataPacket>(
           connection,
-          'SELECT id FROM services WHERE service_code = ? LIMIT 1',
+          'SELECT id FROM services WHERE service_code = ? AND is_active = 1 LIMIT 1',
           [serviceCode]
         );
 
@@ -874,7 +878,7 @@ export class NormalizedDashboardRepository {
       for (const serviceCode of request.services) {
         const serviceRow = await selectOne<RowDataPacket>(
           connection,
-          'SELECT id FROM services WHERE service_code = ? LIMIT 1',
+          'SELECT id FROM services WHERE service_code = ? AND is_active = 1 LIMIT 1',
           [serviceCode]
         );
 

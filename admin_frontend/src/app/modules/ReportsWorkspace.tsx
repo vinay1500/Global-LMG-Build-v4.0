@@ -53,6 +53,9 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ workspace })
   const [range, setRange] = useState<'Custom' | 'Q2' | 'Q3' | 'YTD'>('YTD');
   const [activeDrilldown, setActiveDrilldown] = useState<ReportDrilldownResponse | null>(null);
   const [drilldownError, setDrilldownError] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
+  const [isExportingCsv, setIsExportingCsv] = useState(false);
   const [isLoadingDrilldown, setIsLoadingDrilldown] = useState(false);
 
   const maxRevenue = useMemo(
@@ -96,8 +99,19 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ workspace })
     void loadDrilldown(kind);
   };
 
-  const handleExportCsv = (kind: ReportDrilldownKind) => {
-    window.open(adminApi.buildReportDrilldownExportUrl(kind), '_blank', 'noopener');
+  const handleExportCsv = async (kind: ReportDrilldownKind) => {
+    setExportError(null);
+    setExportMessage(null);
+    setIsExportingCsv(true);
+
+    try {
+      const result = await adminApi.downloadReportDrilldownCsv(kind);
+      setExportMessage(`CSV downloaded: ${result.fileName}`);
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : 'Unable to export this drilldown.');
+    } finally {
+      setIsExportingCsv(false);
+    }
   };
 
   const openRecord = (item: ReportDrilldownItem) => {
@@ -175,7 +189,7 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ workspace })
             className="text-3xl font-medium text-[#2C2B29]"
             style={{ fontFamily: "'Playfair Display', serif" }}
           >
-            Firm Performance
+            Platform Performance
           </h2>
           <p className="text-sm text-[#8C8981] mt-1">
             Strategic reporting across collections, intake conversion, matter throughput, and delivery pressure.
@@ -201,21 +215,32 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ workspace })
             <Filter className="w-4 h-4 text-[#8C8981]" /> Filters Later
           </button>
           <button
-            className="px-4 py-2 bg-white border border-[#E6E4DD] rounded-lg shadow-sm text-sm font-medium text-[#2C2B29] hover:bg-[#F4F1EA] transition flex items-center gap-2"
-            onClick={() => handleExportCsv(activeDrilldown?.kind || 'paid-invoices')}
+            className="px-4 py-2 bg-white border border-[#E6E4DD] rounded-lg shadow-sm text-sm font-medium text-[#2C2B29] hover:bg-[#F4F1EA] transition flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!activeDrilldown || isExportingCsv}
+            onClick={() => activeDrilldown && void handleExportCsv(activeDrilldown.kind)}
             type="button"
           >
-            <Download className="w-4 h-4" /> Export selected drilldown CSV
+            {isExportingCsv ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            Export selected drilldown CSV
           </button>
           <button
             className="px-4 py-2 bg-[#2C2B29] text-white rounded-lg shadow-sm text-sm font-medium hover:bg-[#4A4946] transition flex items-center gap-2"
             onClick={() => window.print()}
+            title="Uses your browser print dialog. Choose Save as PDF there if you need a PDF file."
             type="button"
           >
             <Printer className="w-4 h-4" /> Print report
           </button>
         </div>
       </div>
+
+      {!activeDrilldown || exportError || exportMessage ? (
+        <div className="rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] px-4 py-3 text-sm text-[#5A7C96]">
+          {!activeDrilldown ? 'Select a KPI drilldown before exporting CSV. Print report uses the browser print dialog and can be saved as PDF from there.' : null}
+          {exportError ? <span className="text-[#9E3D3D]">{exportError}</span> : null}
+          {exportMessage ? <span className="text-[#337348]">{exportMessage}</span> : null}
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <ReportMetricCard
@@ -262,11 +287,13 @@ export const ReportsWorkspace: React.FC<ReportsWorkspaceProps> = ({ workspace })
           </div>
           {activeDrilldown ? (
             <button
-              className="inline-flex items-center gap-2 rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29] hover:bg-[#F4F1EA]"
-              onClick={() => handleExportCsv(activeDrilldown.kind)}
+              className="inline-flex items-center gap-2 rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29] hover:bg-[#F4F1EA] disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={isExportingCsv}
+              onClick={() => void handleExportCsv(activeDrilldown.kind)}
               type="button"
             >
-              <Download className="w-4 h-4" /> Export selected drilldown CSV
+              {isExportingCsv ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+              Export selected drilldown CSV
             </button>
           ) : null}
         </div>

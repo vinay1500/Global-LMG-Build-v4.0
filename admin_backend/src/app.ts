@@ -11,6 +11,7 @@ export const createApp = () => {
   app.use(
     cors({
       credentials: true,
+      exposedHeaders: ['content-disposition'],
       origin: env.PUBLIC_ADMIN_WEB_ORIGIN,
     })
   );

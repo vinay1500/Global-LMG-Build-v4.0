@@ -7,6 +7,7 @@ import {
   ChevronDown,
   CreditCard,
   FileUp,
+  KeyRound,
   LogOut,
   Menu,
   MessageSquare,
@@ -15,6 +16,7 @@ import {
   Search,
   Settings,
   Shield,
+  SlidersHorizontal,
   UserCircle,
   Users,
   X,
@@ -236,10 +238,22 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
                 onClick={() => navigateAndClose('/notifications')}
               />
               <MenuAction
-                description="Coming in profile settings phase"
-                disabled
+                description="Update your admin display details"
                 icon={UserCircle}
-                label="My Profile / Change Password"
+                label="My Profile"
+                onClick={() => navigateAndClose('/account?tab=profile')}
+              />
+              <MenuAction
+                description="Change your password securely"
+                icon={KeyRound}
+                label="Change Password"
+                onClick={() => navigateAndClose('/account?tab=password')}
+              />
+              <MenuAction
+                description="Workspace defaults and display preferences"
+                icon={SlidersHorizontal}
+                label="Preferences"
+                onClick={() => navigateAndClose('/account?tab=preferences')}
               />
               <div className="my-2 border-t border-[#F4F1EA]" />
               <MenuAction

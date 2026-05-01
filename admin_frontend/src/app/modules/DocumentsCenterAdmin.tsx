@@ -16,12 +16,13 @@ import {
   Upload,
 } from 'lucide-react';
 import type { Matter, PlatformDocument } from '../data/seedData';
-import type { AdminDocumentDetailResponse } from '../lib/api/contracts';
+import type { AdminDocumentDetailResponse, SettingsDocumentType } from '../lib/api/contracts';
 import { EmptyState } from './EmptyState';
 
 interface DocumentsCenterAdminProps {
   buildDownloadUrl?: (documentId: string) => string;
   buildPreviewUrl?: (documentId: string) => string;
+  documentTypes?: SettingsDocumentType[];
   documents: PlatformDocument[];
   matters?: Matter[];
   onFetchDocumentDetail?: (documentId: string) => Promise<AdminDocumentDetailResponse>;
@@ -30,6 +31,7 @@ interface DocumentsCenterAdminProps {
     payload: { reviewState: 'reviewed' | 'unreviewed'; visibility: 'client' | 'internal' }
   ) => Promise<void>;
   onUploadDocument?: (payload: {
+    categoryCode?: string;
     file: File;
     matterId: string;
     reviewState: 'reviewed' | 'unreviewed';
@@ -136,6 +138,7 @@ const canPreviewDocument = (
 export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
   buildDownloadUrl,
   buildPreviewUrl,
+  documentTypes = [],
   documents,
   matters = [],
   onFetchDocumentDetail,
@@ -150,6 +153,7 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
   const [visibilityFilter, setVisibilityFilter] = useState<'all' | 'client' | 'internal'>('all');
   const [reviewFilter, setReviewFilter] = useState<'all' | 'reviewed' | 'unreviewed'>('all');
   const [showUploadForm, setShowUploadForm] = useState(false);
+  const [uploadCategoryCode, setUploadCategoryCode] = useState('');
   const [uploadMatterId, setUploadMatterId] = useState('');
   const [uploadVisibility, setUploadVisibility] = useState<'client' | 'internal'>('internal');
   const [uploadReviewState, setUploadReviewState] = useState<'reviewed' | 'unreviewed'>('unreviewed');
@@ -165,6 +169,24 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
   const [detailError, setDetailError] = useState<string | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
   const [detailReloadKey, setDetailReloadKey] = useState(0);
+  const activeDocumentTypes = useMemo(
+    () => documentTypes.filter((documentType) => documentType.isActive),
+    [documentTypes]
+  );
+  const selectedUploadDocumentType = useMemo(
+    () =>
+      activeDocumentTypes.find((documentType) => documentType.code === uploadCategoryCode) ||
+      activeDocumentTypes[0] ||
+      null,
+    [activeDocumentTypes, uploadCategoryCode]
+  );
+  const acceptedUploadTypes = useMemo(() => {
+    if (!selectedUploadDocumentType?.allowedExtensions.length) {
+      return ACCEPTED_UPLOAD_TYPES;
+    }
+
+    return selectedUploadDocumentType.allowedExtensions.map((extension) => `.${extension}`).join(',');
+  }, [selectedUploadDocumentType]);
 
   useEffect(() => {
     if (!selectedDoc) {
@@ -181,6 +203,34 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
       setUploadMatterId(matters[0].id);
     }
   }, [matters, uploadMatterId]);
+
+  useEffect(() => {
+    if (!uploadCategoryCode && activeDocumentTypes.length > 0) {
+      setUploadCategoryCode(activeDocumentTypes[0].code);
+      return;
+    }
+
+    if (
+      uploadCategoryCode &&
+      activeDocumentTypes.length > 0 &&
+      !activeDocumentTypes.some((documentType) => documentType.code === uploadCategoryCode)
+    ) {
+      setUploadCategoryCode(activeDocumentTypes[0].code);
+    }
+  }, [activeDocumentTypes, uploadCategoryCode]);
+
+  useEffect(() => {
+    if (!selectedUploadDocumentType) {
+      return;
+    }
+
+    setUploadVisibility(selectedUploadDocumentType.clientVisibleDefault ? 'client' : 'internal');
+    setUploadReviewState(selectedUploadDocumentType.requiresReview ? 'unreviewed' : 'reviewed');
+  }, [
+    selectedUploadDocumentType?.clientVisibleDefault,
+    selectedUploadDocumentType?.code,
+    selectedUploadDocumentType?.requiresReview,
+  ]);
 
   useEffect(() => {
     if (!selectedDoc || !onFetchDocumentDetail) {
@@ -290,6 +340,7 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
 
     try {
       await onUploadDocument({
+        categoryCode: uploadCategoryCode || selectedUploadDocumentType?.code,
         file: uploadFile,
         matterId: uploadMatterId,
         reviewState: uploadReviewState,
@@ -380,7 +431,7 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
           className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
           onSubmit={(event) => void handleUploadSubmit(event)}
         >
-          <div className="grid gap-3 md:grid-cols-[2fr_1fr_1fr_1.5fr_auto] md:items-end">
+          <div className="grid gap-3 md:grid-cols-[2fr_1.4fr_1fr_1fr_1.5fr_auto] md:items-end">
             <label className="text-xs font-medium text-gray-500">
               Matter
               <select
@@ -393,6 +444,21 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
                     {matter.referenceCode} - {matter.title} ({matter.clientName})
                   </option>
                 ))}
+              </select>
+            </label>
+            <label className="text-xs font-medium text-gray-500">
+              Document Type
+              <select
+                className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-gray-400"
+                onChange={(event) => setUploadCategoryCode(event.target.value)}
+                value={uploadCategoryCode}
+              >
+                {activeDocumentTypes.map((documentType) => (
+                  <option key={documentType.id} value={documentType.code}>
+                    {documentType.name}
+                  </option>
+                ))}
+                {activeDocumentTypes.length === 0 ? <option value="">Default attachment</option> : null}
               </select>
             </label>
             <label className="text-xs font-medium text-gray-500">
@@ -420,11 +486,16 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
             <label className="text-xs font-medium text-gray-500">
               File
               <input
-                accept={ACCEPTED_UPLOAD_TYPES}
+                accept={acceptedUploadTypes}
                 className="mt-1 block w-full text-sm text-gray-700 file:mr-3 file:rounded-lg file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:text-sm file:text-gray-700"
                 onChange={(event) => setUploadFile(event.target.files?.[0] || null)}
                 type="file"
               />
+              {selectedUploadDocumentType ? (
+                <span className="mt-1 block text-[11px] text-gray-400">
+                  Up to {selectedUploadDocumentType.maxSizeMb} MB · {selectedUploadDocumentType.allowedExtensions.join(', ')}
+                </span>
+              ) : null}
             </label>
             <button
               className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-200"

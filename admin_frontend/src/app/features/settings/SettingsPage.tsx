@@ -36,8 +36,116 @@ export const SettingsPage = () => {
 
   return (
     <SettingsWorkspace
+      onArchivePricingSlab={async (slabId) => {
+        await adminApi.archivePricingSlab(slabId);
+        await refresh();
+      }}
+      onArchiveService={async (serviceId) => {
+        await adminApi.archiveServiceCatalogService(serviceId);
+        await refresh();
+      }}
+      onArchiveUrgencyRule={async (ruleId) => {
+        await adminApi.archiveUrgencyRule(ruleId);
+        await refresh();
+      }}
+      onArchiveDocumentType={async (documentTypeId) => {
+        await adminApi.archiveDocumentType(documentTypeId);
+        await refresh();
+      }}
+      onArchiveReminderSetting={async (settingId) => {
+        await adminApi.archiveReminderSetting(settingId);
+        await refresh();
+      }}
+      onArchiveTemplate={async (templateId) => {
+        await adminApi.archiveTemplate(templateId);
+        await refresh();
+      }}
+      onCreateDocumentType={async (payload) => {
+        await adminApi.createDocumentType(payload);
+        await refresh();
+      }}
+      onCreateReminderSetting={async (payload) => {
+        await adminApi.createReminderSetting(payload);
+        await refresh();
+      }}
+      onCreateRbacRole={async (payload) => {
+        await adminApi.createRbacRole(payload);
+        await refresh();
+      }}
+      onCreatePricingSlab={async (payload) => {
+        await adminApi.createPricingSlab(payload);
+        await refresh();
+      }}
+      onCreateService={async (payload) => {
+        await adminApi.createServiceCatalogService(payload);
+        await refresh();
+      }}
+      onCreateUrgencyRule={async (payload) => {
+        await adminApi.createUrgencyRule(payload);
+        await refresh();
+      }}
+      onCreateTemplate={async (payload) => {
+        await adminApi.createTemplate(payload);
+        await refresh();
+      }}
+      onSetDefaultTemplate={async (templateId) => {
+        await adminApi.setDefaultTemplate(templateId);
+        await refresh();
+      }}
+      onArchiveRbacRole={async (roleId) => {
+        await adminApi.archiveRbacRole(roleId);
+        await refresh();
+      }}
+      onAssignRbacUserRole={async (userId, roleCode) => {
+        await adminApi.assignRbacUserRole(userId, roleCode);
+        await refresh();
+      }}
+      onRemoveRbacUserRole={async (userId, roleCode) => {
+        await adminApi.removeRbacUserRole(userId, roleCode);
+        await refresh();
+      }}
+      onUpdateDocumentType={async (documentTypeId, payload) => {
+        await adminApi.updateDocumentType(documentTypeId, payload);
+        await refresh();
+      }}
+      onUpdateNotificationTypeSetting={async (typeCode, payload) => {
+        await adminApi.updateNotificationTypeSetting(typeCode, payload);
+        await refresh();
+      }}
+      onUpdatePricingSlab={async (slabId, payload) => {
+        await adminApi.updatePricingSlab(slabId, payload);
+        await refresh();
+      }}
+      onUpdateReminderSetting={async (settingId, payload) => {
+        await adminApi.updateReminderSetting(settingId, payload);
+        await refresh();
+      }}
+      onUpdateService={async (serviceId, payload) => {
+        await adminApi.updateServiceCatalogService(serviceId, payload);
+        await refresh();
+      }}
+      onUpdateUrgencyRule={async (ruleId, payload) => {
+        await adminApi.updateUrgencyRule(ruleId, payload);
+        await refresh();
+      }}
+      onUpdateTemplate={async (templateId, payload) => {
+        await adminApi.updateTemplate(templateId, payload);
+        await refresh();
+      }}
       onUpdateInvoiceSettings={async (payload) => {
         await adminApi.updateInvoiceSettings(payload);
+        await refresh();
+      }}
+      onUpdatePlatformSetting={async (key, payload) => {
+        await adminApi.updatePlatformSetting(key, payload);
+        await refresh();
+      }}
+      onUpdateRbacRole={async (roleId, payload) => {
+        await adminApi.updateRbacRole(roleId, payload);
+        await refresh();
+      }}
+      onUpdateRbacRolePermissions={async (roleId, payload) => {
+        await adminApi.updateRbacRolePermissions(roleId, payload);
         await refresh();
       }}
       workspace={data}

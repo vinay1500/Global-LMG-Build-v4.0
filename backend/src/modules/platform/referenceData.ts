@@ -41,6 +41,7 @@ export const PERMISSION_SEEDS = [
   ['payment.manage', 'payment', 'manage', 'Manage payments'],
   ['refund.view', 'refund', 'view', 'View refunds'],
   ['refund.manage', 'refund', 'manage', 'Manage refunds'],
+  ['settings.manage', 'settings', 'manage', 'Manage mutable platform settings'],
   ['rbac.manage', 'rbac', 'manage', 'Manage roles and permissions'],
 ] as const;
 
@@ -114,6 +115,7 @@ export const ROLE_PERMISSION_SEEDS: Array<[string, string[]]> = [
       'payment.manage',
       'refund.view',
       'refund.manage',
+      'settings.manage',
       'rbac.manage',
     ],
   ],
@@ -216,13 +218,13 @@ export const LEGAL_DOMAIN_SEEDS = [
 ] as const;
 
 export const SERVICE_SEEDS = [
-  ['get-counsel', 'property', 'Get Me a Counsel', 'Representation & Arguments', 1, 0],
-  ['document-review', 'corporate', 'Document Review and Compliance Check', 'Audit & Verification', 2, 0],
-  ['legal-drafting', 'corporate', 'Legal Drafting', 'Contracts, Notices, Applications', 3, 0],
-  ['case-assessment', 'civil', 'Case Assessment and Strategy', 'Merit Analysis & Planning', 4, 0],
-  ['litigation-monitoring', 'civil', 'Litigation Monitoring', 'Shadow Counsel & Case Tracking', 5, 0],
-  ['liaison-support', 'criminal', 'Liaison and Field Support', 'Registry, Filing, Police Station', 6, 0],
-  ['court-technology', 'tax', 'Court Technology and Digital Support', 'Live Hearings, E-courts', 7, 1],
+  ['get-counsel', 'property', 'Get Me a Counsel', 'Lawyer matching and counsel coordination', 1, 0],
+  ['document-review', 'corporate', 'Document Review and Compliance Check', 'Document coordination and compliance support', 2, 0],
+  ['legal-drafting', 'corporate', 'Legal Drafting', 'Drafting coordination for contracts, notices, and applications', 3, 0],
+  ['case-assessment', 'civil', 'Case Assessment and Strategy', 'Intake review and coordination planning', 4, 0],
+  ['litigation-monitoring', 'civil', 'Litigation Monitoring', 'Independent counsel coordination and case tracking', 5, 0],
+  ['liaison-support', 'criminal', 'Liaison and Field Support', 'Registry, filing, and field coordination support', 6, 0],
+  ['court-technology', 'tax', 'Court Technology and Digital Support', 'Digital hearing and e-court support coordination', 7, 1],
 ] as const;
 
 export const PRICING_SERVICE_SLAB_SEEDS = [

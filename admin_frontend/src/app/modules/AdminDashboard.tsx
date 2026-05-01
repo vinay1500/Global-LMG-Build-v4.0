@@ -202,8 +202,12 @@ export const AdminDashboard = () => {
             <button className="px-3 py-1.5 text-sm bg-white border border-[#E6E4DD] text-[#2C2B29] rounded-md shadow-sm hover:bg-[#FCFBF8] transition flex items-center gap-2">
               <CalendarIcon className="w-4 h-4 text-[#8C8981]" /> Last 30 Days
             </button>
-            <button className="px-3 py-1.5 text-sm bg-[#2C2B29] text-[#F4F1EA] rounded-md shadow-sm hover:bg-[#4A4946] transition flex items-center gap-2">
-              <Download className="w-4 h-4" /> Export Report
+            <button
+              className="px-3 py-1.5 text-sm bg-white border border-dashed border-[#E6E4DD] text-[#A8A69F] rounded-md shadow-sm cursor-not-allowed flex items-center gap-2"
+              disabled
+              type="button"
+            >
+              <Download className="w-4 h-4" /> Use Reports Export
             </button>
           </div>
         </div>

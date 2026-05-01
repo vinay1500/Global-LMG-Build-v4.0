@@ -23,6 +23,7 @@ const getSingleQueryValue = (request: Request, name: string) => {
 };
 
 const adminUploadQuerySchema = z.object({
+  categoryCode: z.string().trim().min(1).max(32).default('attachment'),
   checksumSha256: z.string().trim().regex(/^[a-f0-9]{64}$/i),
   fileName: z.string().trim().min(1).max(255),
   matterId: z.string().trim().min(1).max(128),
@@ -46,6 +47,7 @@ const updateDocumentSchema = z.object({
 const parseAdminUploadQuery = (request: Request) =>
   adminUploadQuerySchema.parse({
     checksumSha256: getSingleQueryValue(request, 'checksumSha256'),
+    categoryCode: getSingleQueryValue(request, 'categoryCode') || 'attachment',
     fileName: getSingleQueryValue(request, 'fileName'),
     matterId: getSingleQueryValue(request, 'matterId'),
     mimeType: getSingleQueryValue(request, 'mimeType'),

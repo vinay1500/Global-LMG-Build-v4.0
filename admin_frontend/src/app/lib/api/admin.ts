@@ -6,6 +6,8 @@ import type {
   CreateMessageThreadResponse,
   ClientsListResponse,
   DashboardWorkspaceResponse,
+  DocumentTypePayload,
+  DocumentTypesResponse,
   DocumentUploadResponse,
   DocumentsListResponse,
   EventsWorkspaceResponse,
@@ -14,8 +16,13 @@ import type {
   MattersListResponse,
   MessagesWorkspaceResponse,
   NotificationsListResponse,
+  NotificationDeliverySetting,
+  NotificationDeliverySettingPayload,
+  NotificationSettingsResponse,
   ReminderProcessResponse,
   ReminderRetryResponse,
+  ReminderSetting,
+  ReminderSettingPayload,
   ReminderWorkspaceResponse,
   ReportDrilldownKind,
   ReportDrilldownResponse,
@@ -26,15 +33,36 @@ import type {
   CreateClientResponse,
   CreateMatterPayload,
   CreateMatterResponse,
+  CreateRbacRolePayload,
+  CreateServiceCatalogPayload,
+  PricingRulesResponse,
+  PricingSlabPayload,
   RequestsWorkspaceResponse,
   RbacWorkspaceResponse,
   SearchResultsResponse,
+  ServiceCatalogResponse,
   SettingsWorkspaceResponse,
+  SettingsPricingSlab,
+  SettingsService,
+  SettingsUrgencyRule,
   TasksWorkspaceResponse,
+  TemplatePayload,
+  TemplatesResponse,
+  UpdateRbacRolePayload,
+  UpdateRbacRolePermissionsPayload,
+  UpdateDocumentTypePayload,
   UpdateInvoiceSettingsPayload,
   InvoiceSettings,
+  PlatformSetting,
+  PlatformSettingsResponse,
+  UpdatePlatformSettingPayload,
+  UpdateReminderSettingPayload,
+  UpdateServiceCatalogPayload,
+  UpdateTemplatePayload,
+  UpdateUrgencyRulePayload,
+  UrgencyRulePayload,
 } from './contracts';
-import { apiRequest } from './client';
+import { ApiRequestError, apiRequest } from './client';
 import { API_ENDPOINTS } from './endpoints';
 
 const withQuery = (url: string, params: Record<string, string | number | undefined>) => {
@@ -65,6 +93,31 @@ const computeFileSha256 = async (file: File) => {
     checksumSha256: toHex(digest),
     content,
   };
+};
+
+const getAttachmentFileName = (headerValue: string | null, fallback: string) => {
+  if (!headerValue) {
+    return fallback;
+  }
+
+  const utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(headerValue);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1].replace(/"/g, ''));
+  }
+
+  const match = /filename="?([^";]+)"?/i.exec(headerValue);
+  return match?.[1] || fallback;
+};
+
+const downloadBlob = (blob: Blob, fileName: string) => {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 };
 
 export const adminApi = {
@@ -215,6 +268,12 @@ export const adminApi = {
     apiRequest<ReminderWorkspaceResponse>(API_ENDPOINTS.admin.reminderWorkspace()),
   getReportsWorkspace: () =>
     apiRequest<ReportsWorkspaceResponse>(API_ENDPOINTS.admin.reportsWorkspace()),
+  getServiceCatalog: () =>
+    apiRequest<ServiceCatalogResponse>(API_ENDPOINTS.admin.serviceCatalog()),
+  getPlatformSettings: () =>
+    apiRequest<PlatformSettingsResponse>(API_ENDPOINTS.admin.platformSettings()),
+  getPricingRules: () =>
+    apiRequest<PricingRulesResponse>(API_ENDPOINTS.admin.pricingRules()),
   getReportDrilldown: (
     kind: ReportDrilldownKind,
     params: { limit?: number; offset?: number } = {}
@@ -229,10 +288,169 @@ export const adminApi = {
     apiRequest<RequestsWorkspaceResponse>(API_ENDPOINTS.admin.requestsWorkspace()),
   getRbacWorkspace: () =>
     apiRequest<RbacWorkspaceResponse>(API_ENDPOINTS.admin.rbacWorkspace()),
+  getSettingsRbac: () =>
+    apiRequest<RbacWorkspaceResponse>(API_ENDPOINTS.admin.settingsRbac()),
+  createRbacRole: (payload: CreateRbacRolePayload) =>
+    apiRequest<RbacWorkspaceResponse['roles'][number]>(API_ENDPOINTS.admin.settingsRbacRoles(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  updateRbacRole: (roleId: string, payload: UpdateRbacRolePayload) =>
+    apiRequest<RbacWorkspaceResponse['roles'][number]>(API_ENDPOINTS.admin.settingsRbacRole(roleId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+    }),
+  archiveRbacRole: (roleId: string) =>
+    apiRequest<RbacWorkspaceResponse['roles'][number]>(API_ENDPOINTS.admin.settingsRbacRoleArchive(roleId), {
+      method: 'POST',
+    }),
+  updateRbacRolePermissions: (roleId: string, payload: UpdateRbacRolePermissionsPayload) =>
+    apiRequest<RbacWorkspaceResponse['roles'][number]>(
+      API_ENDPOINTS.admin.settingsRbacRolePermissions(roleId),
+      {
+        body: JSON.stringify(payload),
+        headers: { 'content-type': 'application/json' },
+        method: 'PUT',
+      }
+    ),
+  assignRbacUserRole: (userId: string, roleCode: string) =>
+    apiRequest<{ status: 'assigned' }>(API_ENDPOINTS.admin.settingsRbacUserRoles(userId), {
+      body: JSON.stringify({ roleCode }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  removeRbacUserRole: (userId: string, roleCode: string) =>
+    apiRequest<{ status: 'removed' }>(API_ENDPOINTS.admin.settingsRbacUserRole(userId, roleCode), {
+      method: 'DELETE',
+    }),
   getSettingsWorkspace: () =>
     apiRequest<SettingsWorkspaceResponse>(API_ENDPOINTS.admin.settingsWorkspace()),
+  getNotificationSettings: () =>
+    apiRequest<NotificationSettingsResponse>(API_ENDPOINTS.admin.settingsNotifications()),
+  updateNotificationTypeSetting: (typeCode: string, payload: NotificationDeliverySettingPayload) =>
+    apiRequest<NotificationDeliverySetting>(API_ENDPOINTS.admin.settingsNotificationType(typeCode), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+    }),
+  createReminderSetting: (payload: ReminderSettingPayload) =>
+    apiRequest<ReminderSetting>(API_ENDPOINTS.admin.settingsReminderOffsets(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  updateReminderSetting: (settingId: string, payload: UpdateReminderSettingPayload) =>
+    apiRequest<ReminderSetting>(API_ENDPOINTS.admin.settingsReminderOffset(settingId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+    }),
+  archiveReminderSetting: (settingId: string) =>
+    apiRequest<ReminderSetting>(API_ENDPOINTS.admin.settingsReminderOffsetArchive(settingId), {
+      method: 'POST',
+    }),
+  getSettingsTemplates: () =>
+    apiRequest<TemplatesResponse>(API_ENDPOINTS.admin.settingsTemplates()),
+  createTemplate: (payload: TemplatePayload) =>
+    apiRequest<TemplatesResponse['templates'][number]>(API_ENDPOINTS.admin.settingsTemplates(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  updateTemplate: (templateId: string, payload: UpdateTemplatePayload) =>
+    apiRequest<TemplatesResponse['templates'][number]>(API_ENDPOINTS.admin.settingsTemplate(templateId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+    }),
+  archiveTemplate: (templateId: string) =>
+    apiRequest<TemplatesResponse['templates'][number]>(API_ENDPOINTS.admin.settingsTemplateArchive(templateId), {
+      method: 'POST',
+    }),
+  setDefaultTemplate: (templateId: string) =>
+    apiRequest<TemplatesResponse['templates'][number]>(API_ENDPOINTS.admin.settingsTemplateDefault(templateId), {
+      method: 'POST',
+    }),
+  getSettingsDocumentTypes: () =>
+    apiRequest<DocumentTypesResponse>(API_ENDPOINTS.admin.settingsDocumentTypes()),
+  createDocumentType: (payload: DocumentTypePayload) =>
+    apiRequest<DocumentTypesResponse['documentTypes'][number]>(API_ENDPOINTS.admin.settingsDocumentTypes(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  updateDocumentType: (documentTypeId: string, payload: UpdateDocumentTypePayload) =>
+    apiRequest<DocumentTypesResponse['documentTypes'][number]>(
+      API_ENDPOINTS.admin.settingsDocumentType(documentTypeId),
+      {
+        body: JSON.stringify(payload),
+        headers: { 'content-type': 'application/json' },
+        method: 'PATCH',
+      }
+    ),
+  archiveDocumentType: (documentTypeId: string) =>
+    apiRequest<DocumentTypesResponse['documentTypes'][number]>(
+      API_ENDPOINTS.admin.settingsDocumentTypeArchive(documentTypeId),
+      { method: 'POST' }
+    ),
+  createServiceCatalogService: (payload: CreateServiceCatalogPayload) =>
+    apiRequest<SettingsService>(API_ENDPOINTS.admin.serviceCatalogServices(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  updateServiceCatalogService: (serviceId: string, payload: UpdateServiceCatalogPayload) =>
+    apiRequest<SettingsService>(API_ENDPOINTS.admin.serviceCatalogService(serviceId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+    }),
+  archiveServiceCatalogService: (serviceId: string) =>
+    apiRequest<SettingsService>(API_ENDPOINTS.admin.serviceCatalogServiceArchive(serviceId), {
+      method: 'POST',
+    }),
+  createPricingSlab: (payload: PricingSlabPayload) =>
+    apiRequest<SettingsPricingSlab>(API_ENDPOINTS.admin.pricingRuleSlabs(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  updatePricingSlab: (slabId: string, payload: Partial<PricingSlabPayload>) =>
+    apiRequest<SettingsPricingSlab>(API_ENDPOINTS.admin.pricingRuleSlab(slabId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+    }),
+  archivePricingSlab: (slabId: string) =>
+    apiRequest<SettingsPricingSlab>(API_ENDPOINTS.admin.pricingRuleSlabArchive(slabId), {
+      method: 'POST',
+    }),
+  createUrgencyRule: (payload: UrgencyRulePayload) =>
+    apiRequest<SettingsUrgencyRule>(API_ENDPOINTS.admin.pricingRuleUrgencyRules(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  updateUrgencyRule: (ruleId: string, payload: UpdateUrgencyRulePayload) =>
+    apiRequest<SettingsUrgencyRule>(API_ENDPOINTS.admin.pricingRuleUrgency(ruleId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+    }),
+  archiveUrgencyRule: (ruleId: string) =>
+    apiRequest<SettingsUrgencyRule>(API_ENDPOINTS.admin.pricingRuleUrgencyArchive(ruleId), {
+      method: 'POST',
+    }),
   updateInvoiceSettings: (payload: UpdateInvoiceSettingsPayload) =>
     apiRequest<InvoiceSettings>(API_ENDPOINTS.admin.invoiceSettings(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+    }),
+  updatePlatformSetting: (key: string, payload: UpdatePlatformSettingPayload) =>
+    apiRequest<PlatformSetting>(API_ENDPOINTS.admin.platformSetting(key), {
       body: JSON.stringify(payload),
       headers: { 'content-type': 'application/json' },
       method: 'PATCH',
@@ -399,7 +617,33 @@ export const adminApi = {
   buildDocumentPreviewUrl: (documentId: string) => API_ENDPOINTS.admin.documentPreview(documentId),
   buildReportDrilldownExportUrl: (kind: ReportDrilldownKind) =>
     API_ENDPOINTS.admin.reportDrilldownExport(kind),
+  downloadReportDrilldownCsv: async (kind: ReportDrilldownKind) => {
+    const fallbackName = `global-lmg-${kind}-${new Date().toISOString().slice(0, 10)}.csv`;
+    const response = await fetch(API_ENDPOINTS.admin.reportDrilldownExport(kind), {
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      let errorCode = 'csv_export_failed';
+      let errorMessage = `CSV export failed with status ${response.status}`;
+
+      try {
+        const errorBody = (await response.json()) as { error?: string; message?: string };
+        errorCode = errorBody.error || errorCode;
+        errorMessage = errorBody.message || errorMessage;
+      } catch {
+        // Keep the status-based message.
+      }
+
+      throw new ApiRequestError(errorCode, errorMessage);
+    }
+
+    const fileName = getAttachmentFileName(response.headers.get('content-disposition'), fallbackName);
+    downloadBlob(await response.blob(), fileName);
+    return { fileName };
+  },
   uploadDocument: async (payload: {
+    categoryCode?: string;
     file: File;
     matterId: string;
     reviewState: 'reviewed' | 'unreviewed';
@@ -409,6 +653,7 @@ export const adminApi = {
 
     return apiRequest<DocumentUploadResponse>(
       withQuery(API_ENDPOINTS.admin.uploadDocument(), {
+        categoryCode: payload.categoryCode,
         checksumSha256,
         fileName: payload.file.name,
         matterId: payload.matterId,

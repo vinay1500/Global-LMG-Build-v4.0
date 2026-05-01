@@ -17,6 +17,7 @@ import {
   type PlatformEvent,
   type PlatformUser,
 } from '../data/seedData';
+import type { AdminTemplate } from '../lib/api/contracts';
 import { StatusBadge, UrgencyDot } from '../components/dashboard/StatusBadge';
 import { EmptyState } from './EmptyState';
 
@@ -26,6 +27,7 @@ interface MessagesDeskAdminProps {
   invoices?: Invoice[];
   matters?: Matter[];
   messages?: ChatMessage[];
+  messageTemplates?: AdminTemplate[];
   onArchiveThread?: (threadId: string) => Promise<void>;
   onCreateThread?: (payload: {
     clientId: string;
@@ -53,6 +55,7 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
   invoices = [],
   matters = [],
   messages = [],
+  messageTemplates = [],
   onArchiveThread,
   onCreateThread,
   onDownloadAttachment,
@@ -158,6 +161,14 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
     [composeClientId, threads]
   );
 
+  const activeMessageTemplates = useMemo(
+    () =>
+      messageTemplates.filter(
+        (template) => template.type === 'message' && template.isActive && !template.archivedAt
+      ),
+    [messageTemplates]
+  );
+
   useEffect(() => {
     if (composeMatterId && !composeMatterOptions.some((matter) => matter.id === composeMatterId)) {
       setComposeMatterId('');
@@ -212,6 +223,39 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
     });
     return groups;
   }, [threadMessages]);
+
+  const renderMessageTemplate = (template: AdminTemplate) =>
+    template.body.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, variable: string) => {
+      const values: Record<string, string> = {
+        adminName: 'Global LMG Support',
+        clientName: activeClient?.name || composeClient?.name || 'Client',
+        matterTitle: activeMatter?.title || composeMatterOptions.find((matter) => matter.id === composeMatterId)?.title || '',
+        platformName: 'Global LMG',
+        supportEmail: 'support@globallmg.local',
+      };
+
+      return values[variable] || '';
+    });
+
+  const insertTemplateIntoReply = (templateId: string) => {
+    const template = activeMessageTemplates.find((entry) => entry.id === templateId);
+    if (!template) {
+      return;
+    }
+
+    const rendered = renderMessageTemplate(template);
+    setNewMessage((current) => (current.trim() ? `${current.trim()}\n\n${rendered}` : rendered));
+  };
+
+  const insertTemplateIntoCompose = (templateId: string) => {
+    const template = activeMessageTemplates.find((entry) => entry.id === templateId);
+    if (!template) {
+      return;
+    }
+
+    const rendered = renderMessageTemplate(template);
+    setComposeContent((current) => (current.trim() ? `${current.trim()}\n\n${rendered}` : rendered));
+  };
 
   const resetCompose = () => {
     setComposeClientId('');
@@ -291,7 +335,7 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
             onClick={() => navigate('/reports?drilldown=waiting-threads')}
             type="button"
           >
-            Export in Reports
+            Open Reports Export
           </button>
           <button
             className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 flex items-center gap-2 transition"
@@ -573,14 +617,27 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                     >
                       <Paperclip className="w-4 h-4" />
                     </button>
-                    <button
-                      className="p-2 text-gray-300 rounded-lg cursor-not-allowed text-xs font-medium px-3"
-                      disabled
-                      title="Message templates are not enabled yet."
-                      type="button"
+                    <select
+                      className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 outline-none disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-300"
+                      disabled={activeMessageTemplates.length === 0 || activeThread.status === 'resolved'}
+                      onChange={(event) => {
+                        insertTemplateIntoReply(event.target.value);
+                        event.target.value = '';
+                      }}
+                      title={
+                        activeMessageTemplates.length === 0
+                          ? 'No active message templates configured.'
+                          : 'Insert message template'
+                      }
+                      value=""
                     >
-                      Use Template
-                    </button>
+                      <option value="">Use Template</option>
+                      {activeMessageTemplates.map((template) => (
+                        <option key={template.id} value={template.id}>
+                          {template.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <button
                     className="bg-gray-900 text-white px-4 py-1.5 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-gray-800 transition shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
@@ -847,6 +904,24 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                 <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-400">
                   First Message
                 </label>
+                <div className="mb-2 flex justify-end">
+                  <select
+                    className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs font-medium text-gray-600 outline-none disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-300"
+                    disabled={activeMessageTemplates.length === 0}
+                    onChange={(event) => {
+                      insertTemplateIntoCompose(event.target.value);
+                      event.target.value = '';
+                    }}
+                    value=""
+                  >
+                    <option value="">Insert template</option>
+                    {activeMessageTemplates.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
                 <textarea
                   className="min-h-[120px] w-full resize-none rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400"
                   onChange={(event) => {

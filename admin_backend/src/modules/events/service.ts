@@ -12,6 +12,7 @@ import { badRequest, notFound } from '../../lib/httpErrors.js';
 import { executeStatement, queryRows, withTransaction, type QueryExecutor } from '../../lib/mysql.js';
 import { env } from '../../config/env.js';
 import type { RowDataPacket } from 'mysql2/promise';
+import { getActiveReminderSettings } from '../settings/notificationSettings.js';
 
 type EventStateRow = RowDataPacket & {
   cancelledAt: string | null;
@@ -163,6 +164,7 @@ const scheduleEventReminders = async (
   actor: AdminActor,
   input: {
     clientAccountId: number;
+    eventTypeCode: string;
     eventId: number;
     scheduledStartAt: string;
     visibleToClient: boolean;
@@ -175,12 +177,12 @@ const scheduleEventReminders = async (
   }
 
   const recipientUserIds = await getClientRecipientUserIds(executor, input.clientAccountId);
-  const reminderOffsets = [24 * 60, 60];
+  const reminderSettings = await getActiveReminderSettings(input.eventTypeCode, executor);
   let scheduledCount = 0;
 
   for (const recipientUserId of recipientUserIds) {
-    for (const offsetMinutes of reminderOffsets) {
-      const scheduledAt = subtractMinutesFromMysqlDateTime(input.scheduledStartAt, offsetMinutes);
+    for (const reminderSetting of reminderSettings) {
+      const scheduledAt = subtractMinutesFromMysqlDateTime(input.scheduledStartAt, reminderSetting.offsetMinutes);
 
       if (!isFutureMysqlDateTime(scheduledAt)) {
         continue;
@@ -195,8 +197,8 @@ const scheduleEventReminders = async (
            sent_at,
            delivery_status_code,
            failure_reason
-         ) VALUES (?, ?, 'in_app', ?, NULL, 'pending', NULL)`,
-        [input.eventId, recipientUserId, scheduledAt],
+         ) VALUES (?, ?, ?, ?, NULL, 'pending', NULL)`,
+        [input.eventId, recipientUserId, reminderSetting.channelCode, scheduledAt],
         executor
       );
       scheduledCount += 1;
@@ -403,6 +405,7 @@ export const createEvent = async (
     await recordCalendarSyncState(connection, actor, eventId, 'create');
     await scheduleEventReminders(connection, actor, {
       clientAccountId: clientAccount.id,
+      eventTypeCode: payload.type,
       eventId,
       scheduledStartAt,
       visibleToClient,
@@ -552,6 +555,7 @@ export const updateEvent = async (
     await recordCalendarSyncState(connection, actor, event.id, 'update');
     await scheduleEventReminders(connection, actor, {
       clientAccountId: clientAccount.id,
+      eventTypeCode: payload.type || event.eventTypeCode,
       eventId: event.id,
       scheduledStartAt: nextStartAt,
       visibleToClient: nextVisibleToClient,

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Navigate, Route, Routes } from 'react-router';
+import { AdminAccountPage } from './features/account/AdminAccountPage';
 import { AccessDeniedPage } from './features/auth/AccessDeniedPage';
 import { LoginPage } from './features/auth/LoginPage';
 import { PasswordRotationPage } from './features/auth/PasswordRotationPage';
@@ -42,6 +43,7 @@ export const AdminRoutes = () => {
           <Route path="/meetings" element={<MeetingsPage />} />
           <Route path="/billing" element={<BillingPage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
+          <Route path="/account" element={<AdminAccountPage />} />
           <Route path="/audit" element={<AuditPage />} />
           <Route path="/requests" element={<RequestsPage />} />
           <Route path="/tasks" element={<TasksPage />} />

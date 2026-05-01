@@ -443,8 +443,12 @@ export const AnalyticsDashboard = () => {
               <p className="text-sm text-[#8C8981] mt-1">Explore financial, operational, and client growth metrics.</p>
             </div>
             <div className="flex gap-2">
-              <button className="px-4 py-2 text-sm bg-white border border-[#E6E4DD] text-[#2C2B29] rounded-md shadow-sm hover:bg-[#FCFBF8] transition flex items-center gap-2 font-medium">
-                <Download className="w-4 h-4 text-[#8C8981]" /> Export PDF
+              <button
+                className="px-4 py-2 text-sm bg-white border border-dashed border-[#E6E4DD] text-[#A8A69F] rounded-md shadow-sm cursor-not-allowed flex items-center gap-2 font-medium"
+                disabled
+                type="button"
+              >
+                <Download className="w-4 h-4 text-[#A8A69F]" /> Use Reports Export
               </button>
             </div>
           </div>

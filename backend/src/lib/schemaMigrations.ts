@@ -2491,4 +2491,539 @@ export const NORMALIZED_MIGRATIONS: SchemaMigrationDefinition[] = [
        WHERE NOT EXISTS (SELECT 1 FROM invoice_settings WHERE id = 1)`
     ],
   },
+  {
+    id: '015-platform-settings-foundation',
+    description: 'Create reusable mutable platform settings with RBAC and safe defaults.',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS platform_settings (
+        setting_key VARCHAR(128) NOT NULL,
+        setting_value_json JSON NOT NULL,
+        category VARCHAR(64) NOT NULL,
+        label VARCHAR(160) NOT NULL,
+        description TEXT NULL,
+        value_type VARCHAR(32) NOT NULL,
+        is_sensitive TINYINT(1) NOT NULL DEFAULT 0,
+        version BIGINT UNSIGNED NOT NULL DEFAULT 1,
+        updated_by BIGINT UNSIGNED NULL,
+        updated_at DATETIME(6) NOT NULL,
+        created_at DATETIME(6) NOT NULL,
+        PRIMARY KEY (setting_key),
+        INDEX idx_platform_settings_category (category),
+        INDEX idx_platform_settings_updated_by (updated_by),
+        CONSTRAINT chk_platform_settings_value_type CHECK (value_type IN ('string', 'text', 'boolean', 'integer', 'decimal', 'select', 'json')),
+        CONSTRAINT fk_platform_settings_updated_by FOREIGN KEY (updated_by)
+          REFERENCES users (id)
+          ON UPDATE CASCADE
+          ON DELETE SET NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+      `INSERT INTO permissions (code, module_name, action_name, description, created_at, updated_at)
+       VALUES ('settings.manage', 'settings', 'manage', 'Manage mutable platform settings', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+       ON DUPLICATE KEY UPDATE
+         module_name = VALUES(module_name),
+         action_name = VALUES(action_name),
+         description = VALUES(description),
+         updated_at = VALUES(updated_at)`,
+      `INSERT INTO role_permissions (role_code, permission_code, granted_at)
+       SELECT 'ops_admin', 'settings.manage', UTC_TIMESTAMP(6)
+       WHERE EXISTS (SELECT 1 FROM roles WHERE code = 'ops_admin')
+       ON DUPLICATE KEY UPDATE granted_at = VALUES(granted_at)`,
+      `INSERT INTO platform_settings (
+         setting_key,
+         setting_value_json,
+         category,
+         label,
+         description,
+         value_type,
+         is_sensitive,
+         version,
+         updated_by,
+         updated_at,
+         created_at
+       )
+       VALUES
+         (
+           'platform.display_name',
+           JSON_OBJECT('value', 'Global LMG'),
+           'general',
+           'Platform Display Name',
+           'Name shown in operational platform surfaces.',
+           'string',
+           0,
+           1,
+           NULL,
+           UTC_TIMESTAMP(6),
+           UTC_TIMESTAMP(6)
+         ),
+         (
+           'platform.support_email',
+           JSON_OBJECT('value', 'support@globallmg.local'),
+           'general',
+           'Support Email',
+           'Default operational support email shown to admins and clients where configured.',
+           'string',
+           0,
+           1,
+           NULL,
+           UTC_TIMESTAMP(6),
+           UTC_TIMESTAMP(6)
+         ),
+         (
+           'platform.support_phone',
+           JSON_OBJECT('value', ''),
+           'general',
+           'Support Phone',
+           'Default operational support phone number.',
+           'string',
+           0,
+           1,
+           NULL,
+           UTC_TIMESTAMP(6),
+           UTC_TIMESTAMP(6)
+         ),
+         (
+           'platform.default_timezone',
+           JSON_OBJECT('value', 'Asia/Kolkata'),
+           'general',
+           'Default Timezone',
+           'Default timezone for operational displays and future scheduling defaults.',
+           'select',
+           0,
+           1,
+           NULL,
+           UTC_TIMESTAMP(6),
+           UTC_TIMESTAMP(6)
+         ),
+         (
+           'platform.default_currency',
+           JSON_OBJECT('value', 'INR'),
+           'general',
+           'Default Currency',
+           'Default currency code for platform displays where a record-specific currency is unavailable.',
+           'select',
+           0,
+           1,
+           NULL,
+           UTC_TIMESTAMP(6),
+           UTC_TIMESTAMP(6)
+         ),
+         (
+           'platform.default_date_format',
+           JSON_OBJECT('value', 'DD/MM/YYYY'),
+           'general',
+           'Default Date Format',
+           'Default date format for admin-facing display preferences.',
+           'select',
+           0,
+           1,
+           NULL,
+           UTC_TIMESTAMP(6),
+           UTC_TIMESTAMP(6)
+         ),
+         (
+           'portal.maintenance_banner_enabled',
+           JSON_OBJECT('value', FALSE),
+           'portal',
+           'Maintenance Banner Enabled',
+           'Controls whether the portal maintenance banner should be shown by consumers that opt in to these settings.',
+           'boolean',
+           0,
+           1,
+           NULL,
+           UTC_TIMESTAMP(6),
+           UTC_TIMESTAMP(6)
+         ),
+         (
+           'portal.maintenance_banner_message',
+           JSON_OBJECT('value', ''),
+           'portal',
+           'Maintenance Banner Message',
+           'Neutral portal maintenance message used when the maintenance banner is enabled.',
+           'text',
+           0,
+           1,
+           NULL,
+           UTC_TIMESTAMP(6),
+           UTC_TIMESTAMP(6)
+         ),
+         (
+           'platform.operational_footer_note',
+           JSON_OBJECT('value', 'Global LMG is an intermediary legal consultancy, lawyer-matching, coordination, and support platform. Global LMG is not a law firm and does not provide legal representation.'),
+           'general',
+           'Operational Footer Note',
+           'Neutral footer language for future configurable operational surfaces.',
+           'text',
+           0,
+           1,
+           NULL,
+           UTC_TIMESTAMP(6),
+           UTC_TIMESTAMP(6)
+         )
+       ON DUPLICATE KEY UPDATE
+         category = VALUES(category),
+         label = VALUES(label),
+         description = VALUES(description),
+         value_type = VALUES(value_type),
+         is_sensitive = VALUES(is_sensitive)`
+    ],
+  },
+  {
+    id: '016-neutral-service-catalog-copy',
+    description: 'Replace old default service catalog descriptions with neutral intermediary platform language.',
+    statements: [
+      `UPDATE services
+       SET service_description = 'Lawyer matching and counsel coordination',
+           updated_at = UTC_TIMESTAMP(6)
+       WHERE service_code = 'get-counsel'
+         AND service_description = 'Representation & Arguments'`,
+      `UPDATE services
+       SET service_description = 'Document coordination and compliance support',
+           updated_at = UTC_TIMESTAMP(6)
+       WHERE service_code = 'document-review'
+         AND service_description = 'Audit & Verification'`,
+      `UPDATE services
+       SET service_description = 'Drafting coordination for contracts, notices, and applications',
+           updated_at = UTC_TIMESTAMP(6)
+       WHERE service_code = 'legal-drafting'
+         AND service_description = 'Contracts, Notices, Applications'`,
+      `UPDATE services
+       SET service_description = 'Intake review and coordination planning',
+           updated_at = UTC_TIMESTAMP(6)
+       WHERE service_code = 'case-assessment'
+         AND service_description = 'Merit Analysis & Planning'`,
+      `UPDATE services
+       SET service_description = 'Independent counsel coordination and case tracking',
+           updated_at = UTC_TIMESTAMP(6)
+       WHERE service_code = 'litigation-monitoring'
+         AND service_description = 'Shadow Counsel & Case Tracking'`,
+      `UPDATE services
+       SET service_description = 'Registry, filing, and field coordination support',
+           updated_at = UTC_TIMESTAMP(6)
+       WHERE service_code = 'liaison-support'
+         AND service_description = 'Registry, Filing, Police Station'`,
+      `UPDATE services
+       SET service_description = 'Digital hearing and e-court support coordination',
+           updated_at = UTC_TIMESTAMP(6)
+       WHERE service_code = 'court-technology'
+         AND service_description = 'Live Hearings, E-courts'`
+    ],
+  },
+  {
+    id: '017-templates-and-document-types',
+    description: 'Create editable admin templates and document type registry for settings workspace.',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS admin_templates (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        public_id CHAR(26) NOT NULL,
+        template_type_code VARCHAR(32) NOT NULL,
+        template_name VARCHAR(180) NOT NULL,
+        subject VARCHAR(255) NULL,
+        body_text TEXT NOT NULL,
+        variables_json JSON NOT NULL,
+        is_default TINYINT(1) NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        version INT UNSIGNED NOT NULL DEFAULT 1,
+        created_by_user_id BIGINT UNSIGNED NULL,
+        updated_by_user_id BIGINT UNSIGNED NULL,
+        created_at DATETIME(6) NOT NULL,
+        updated_at DATETIME(6) NOT NULL,
+        archived_at DATETIME(6) NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_admin_templates_public_id (public_id),
+        INDEX idx_admin_templates_type_active (template_type_code, is_active, archived_at),
+        INDEX idx_admin_templates_default (template_type_code, is_default, archived_at),
+        CONSTRAINT chk_admin_templates_type CHECK (template_type_code IN ('invoice', 'message', 'notification', 'document_checklist', 'general')),
+        CONSTRAINT fk_admin_templates_created_by FOREIGN KEY (created_by_user_id)
+          REFERENCES users (id)
+          ON UPDATE CASCADE
+          ON DELETE SET NULL,
+        CONSTRAINT fk_admin_templates_updated_by FOREIGN KEY (updated_by_user_id)
+          REFERENCES users (id)
+          ON UPDATE CASCADE
+          ON DELETE SET NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+      `CREATE TABLE IF NOT EXISTS document_types (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        public_id CHAR(26) NOT NULL,
+        code VARCHAR(32) NOT NULL,
+        name VARCHAR(140) NOT NULL,
+        description TEXT NULL,
+        category VARCHAR(64) NOT NULL,
+        allowed_extensions_json JSON NOT NULL,
+        max_size_mb INT UNSIGNED NOT NULL DEFAULT 25,
+        requires_review TINYINT(1) NOT NULL DEFAULT 1,
+        client_visible_default TINYINT(1) NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        display_order INT NOT NULL DEFAULT 0,
+        created_at DATETIME(6) NOT NULL,
+        updated_at DATETIME(6) NOT NULL,
+        archived_at DATETIME(6) NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_document_types_public_id (public_id),
+        UNIQUE KEY uq_document_types_code (code),
+        INDEX idx_document_types_active_order (is_active, display_order),
+        CONSTRAINT chk_document_types_max_size CHECK (max_size_mb BETWEEN 1 AND 200)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+      `INSERT INTO admin_templates (
+         public_id,
+         template_type_code,
+         template_name,
+         subject,
+         body_text,
+         variables_json,
+         is_default,
+         is_active,
+         version,
+         created_by_user_id,
+         updated_by_user_id,
+         created_at,
+         updated_at,
+         archived_at
+       )
+       SELECT
+         CONCAT('tplseed', LPAD(ROW_NUMBER() OVER (ORDER BY seed.template_type_code, seed.template_name), 19, '0')),
+         seed.template_type_code,
+         seed.template_name,
+         seed.subject,
+         seed.body_text,
+         seed.variables_json,
+         seed.is_default,
+         1,
+         1,
+         NULL,
+         NULL,
+         UTC_TIMESTAMP(6),
+         UTC_TIMESTAMP(6),
+         NULL
+       FROM (
+         SELECT 'invoice' AS template_type_code, 'Standard Invoice Note' AS template_name, NULL AS subject,
+           'Thank you for using {{platformName}} for coordination and support services. Invoice {{invoiceNumber}} is due by {{dueDate}}.' AS body_text,
+           JSON_ARRAY('platformName', 'invoiceNumber', 'dueDate') AS variables_json,
+           1 AS is_default
+         UNION ALL
+         SELECT 'message', 'Client Follow-up Reply', NULL,
+           'Hello {{clientName}}, thank you for your message. Our team will coordinate the next step for {{matterTitle}} and update you shortly.',
+           JSON_ARRAY('clientName', 'matterTitle'),
+           1
+         UNION ALL
+         SELECT 'notification', 'Document Shared Notice', NULL,
+           'A document has been shared for {{matterTitle}}. Please review it in your client portal.',
+           JSON_ARRAY('matterTitle'),
+           1
+         UNION ALL
+         SELECT 'document_checklist', 'Standard Intake Checklist', NULL,
+           'Please upload identity proof, matter background documents, and any correspondence relevant to {{matterTitle}}.',
+           JSON_ARRAY('matterTitle'),
+           1
+         UNION ALL
+         SELECT 'general', 'Operational Footer', NULL,
+           'Global LMG is an intermediary legal consultancy, lawyer-matching, coordination, and support platform. Global LMG is not a law firm and does not provide legal representation.',
+           JSON_ARRAY('platformName'),
+           1
+       ) seed
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM admin_templates existing
+         WHERE existing.template_type_code = seed.template_type_code
+           AND existing.template_name = seed.template_name
+       )`,
+      `INSERT INTO document_types (
+         public_id,
+         code,
+         name,
+         description,
+         category,
+         allowed_extensions_json,
+         max_size_mb,
+         requires_review,
+         client_visible_default,
+         is_active,
+         display_order,
+         created_at,
+         updated_at,
+         archived_at
+       )
+       SELECT
+         CONCAT('doctype', LPAD(ROW_NUMBER() OVER (ORDER BY seed.display_order), 19, '0')),
+         seed.code,
+         seed.name,
+         seed.description,
+         seed.category,
+         seed.allowed_extensions_json,
+         seed.max_size_mb,
+         seed.requires_review,
+         seed.client_visible_default,
+         1,
+         seed.display_order,
+         UTC_TIMESTAMP(6),
+         UTC_TIMESTAMP(6),
+         NULL
+       FROM (
+         SELECT 'attachment' AS code, 'General Attachment' AS name, 'General matter or client attachment.' AS description,
+           'general' AS category, JSON_ARRAY('pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'txt', 'csv', 'xls', 'xlsx', 'zip') AS allowed_extensions_json,
+           25 AS max_size_mb, 1 AS requires_review, 0 AS client_visible_default, 10 AS display_order
+         UNION ALL
+         SELECT 'identity-proof', 'Identity Proof', 'Identity or KYC-supporting document.', 'identity',
+           JSON_ARRAY('pdf', 'jpg', 'jpeg', 'png'), 10, 1, 0, 20
+         UNION ALL
+         SELECT 'matter-background', 'Matter Background', 'Background material shared for coordination and support.', 'matter',
+           JSON_ARRAY('pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png', 'txt'), 25, 1, 0, 30
+         UNION ALL
+         SELECT 'invoice-support', 'Invoice Support', 'Billing, payment, or invoice supporting document.', 'billing',
+           JSON_ARRAY('pdf', 'jpg', 'jpeg', 'png', 'csv', 'xls', 'xlsx'), 15, 1, 0, 40
+       ) seed
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM document_types existing
+         WHERE existing.code = seed.code
+       )`
+    ],
+  },
+  {
+    id: '018-notification-settings',
+    description: 'Create editable notification delivery settings and reminder offset configuration.',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS notification_delivery_settings (
+        notification_type_code VARCHAR(64) NOT NULL,
+        in_app_enabled TINYINT(1) NOT NULL DEFAULT 1,
+        email_enabled TINYINT(1) NOT NULL DEFAULT 0,
+        sms_enabled TINYINT(1) NOT NULL DEFAULT 0,
+        push_enabled TINYINT(1) NOT NULL DEFAULT 0,
+        template_public_id CHAR(26) NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        updated_by_user_id BIGINT UNSIGNED NULL,
+        created_at DATETIME(6) NOT NULL,
+        updated_at DATETIME(6) NOT NULL,
+        PRIMARY KEY (notification_type_code),
+        INDEX idx_notification_delivery_template (template_public_id),
+        CONSTRAINT fk_notification_delivery_type FOREIGN KEY (notification_type_code)
+          REFERENCES notification_types (code)
+          ON UPDATE CASCADE
+          ON DELETE CASCADE,
+        CONSTRAINT fk_notification_delivery_template FOREIGN KEY (template_public_id)
+          REFERENCES admin_templates (public_id)
+          ON UPDATE CASCADE
+          ON DELETE SET NULL,
+        CONSTRAINT fk_notification_delivery_updated_by FOREIGN KEY (updated_by_user_id)
+          REFERENCES users (id)
+          ON UPDATE CASCADE
+          ON DELETE SET NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+      `CREATE TABLE IF NOT EXISTS reminder_settings (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        public_id CHAR(26) NOT NULL,
+        event_type_code VARCHAR(32) NULL,
+        offset_minutes INT UNSIGNED NOT NULL,
+        channel_code VARCHAR(32) NOT NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        display_order INT NOT NULL DEFAULT 0,
+        created_by_user_id BIGINT UNSIGNED NULL,
+        updated_by_user_id BIGINT UNSIGNED NULL,
+        created_at DATETIME(6) NOT NULL,
+        updated_at DATETIME(6) NOT NULL,
+        archived_at DATETIME(6) NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_reminder_settings_public_id (public_id),
+        INDEX idx_reminder_settings_active (event_type_code, is_active, archived_at, display_order),
+        CONSTRAINT chk_reminder_settings_offset CHECK (offset_minutes BETWEEN 1 AND 10080),
+        CONSTRAINT chk_reminder_settings_channel CHECK (channel_code IN ('in_app', 'email', 'sms')),
+        CONSTRAINT fk_reminder_settings_created_by FOREIGN KEY (created_by_user_id)
+          REFERENCES users (id)
+          ON UPDATE CASCADE
+          ON DELETE SET NULL,
+        CONSTRAINT fk_reminder_settings_updated_by FOREIGN KEY (updated_by_user_id)
+          REFERENCES users (id)
+          ON UPDATE CASCADE
+          ON DELETE SET NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+      `INSERT INTO notification_delivery_settings (
+         notification_type_code,
+         in_app_enabled,
+         email_enabled,
+         sms_enabled,
+         push_enabled,
+         template_public_id,
+         is_active,
+         updated_by_user_id,
+         created_at,
+         updated_at
+       )
+       SELECT
+         nt.code,
+         1,
+         0,
+         0,
+         0,
+         NULL,
+         nt.is_active,
+         NULL,
+         UTC_TIMESTAMP(6),
+         UTC_TIMESTAMP(6)
+       FROM notification_types nt
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM notification_delivery_settings existing
+         WHERE existing.notification_type_code = nt.code
+       )`,
+      `INSERT INTO reminder_settings (
+         public_id,
+         event_type_code,
+         offset_minutes,
+         channel_code,
+         is_active,
+         display_order,
+         created_by_user_id,
+         updated_by_user_id,
+         created_at,
+         updated_at,
+         archived_at
+       )
+       SELECT
+         seed.public_id,
+         NULL,
+         seed.offset_minutes,
+         'in_app',
+         1,
+         seed.display_order,
+         NULL,
+         NULL,
+         UTC_TIMESTAMP(6),
+         UTC_TIMESTAMP(6),
+         NULL
+       FROM (
+         SELECT 'remset00000000000000000001' AS public_id, 1440 AS offset_minutes, 10 AS display_order
+         UNION ALL
+         SELECT 'remset00000000000000000002', 60, 20
+       ) seed
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM reminder_settings existing
+         WHERE existing.event_type_code IS NULL
+           AND existing.offset_minutes = seed.offset_minutes
+           AND existing.channel_code = 'in_app'
+           AND existing.archived_at IS NULL
+       )`
+    ],
+  },
+  {
+    id: '019-admin-user-preferences',
+    description: 'Create per-admin profile preference storage.',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS admin_user_preferences (
+        user_id BIGINT UNSIGNED NOT NULL,
+        default_landing_path VARCHAR(120) NOT NULL DEFAULT '/dashboard',
+        date_format VARCHAR(32) NOT NULL DEFAULT 'DD/MM/YYYY',
+        density_code VARCHAR(32) NOT NULL DEFAULT 'comfortable',
+        avatar_color VARCHAR(32) NOT NULL DEFAULT '#2C2B29',
+        in_app_notifications_enabled TINYINT(1) NOT NULL DEFAULT 1,
+        created_at DATETIME(6) NOT NULL,
+        updated_at DATETIME(6) NOT NULL,
+        PRIMARY KEY (user_id),
+        CONSTRAINT chk_admin_preferences_density CHECK (density_code IN ('comfortable', 'compact')),
+        CONSTRAINT fk_admin_preferences_user FOREIGN KEY (user_id)
+          REFERENCES users (id)
+          ON UPDATE CASCADE
+          ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`
+    ],
+  },
 ];

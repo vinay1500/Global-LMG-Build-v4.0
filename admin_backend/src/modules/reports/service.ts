@@ -798,6 +798,6 @@ export const exportDrilldownCsv = async (
 
   return {
     csv: rows.map((row) => row.map(csvEscape).join(',')).join('\n'),
-    fileName: `glmg-${definition.csvFileName}.csv`,
+    fileName: `global-lmg-${definition.csvFileName}-${new Date().toISOString().slice(0, 10)}.csv`,
   };
 };

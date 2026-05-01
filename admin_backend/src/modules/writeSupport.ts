@@ -7,6 +7,21 @@ type IdRow = RowDataPacket & { id: number };
 type MatterRow = IdRow & { clientAccountId: number };
 type ThreadRow = IdRow & { clientAccountId: number; matterId: number | null };
 type PaymentRow = IdRow & { clientAccountId: number; invoiceId: number | null };
+type NotificationDeliveryRow = RowDataPacket & {
+  bodyText: string | null;
+  inAppEnabled: number;
+  isActive: number;
+  subject: string | null;
+  templateId: string | null;
+};
+type NotificationTemplateContextRow = RowDataPacket & {
+  clientName: string | null;
+  documentType: string | null;
+  dueDate: string | null;
+  invoiceNumber: string | null;
+  matterTitle: string | null;
+  totalAmount: string | null;
+};
 
 const firstRow = <TRow>(rows: TRow[]) => rows[0] || null;
 
@@ -20,6 +35,75 @@ const stringifyChange = (value: unknown) => {
   }
 
   return JSON.stringify(value);
+};
+
+const renderTemplate = (value: string, context: Record<string, string>) =>
+  value.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, variable: string) => context[variable] || '');
+
+const getNotificationDelivery = async (notificationTypeCode: string, executor?: QueryExecutor) => {
+  const row = firstRow(
+    await queryRows<NotificationDeliveryRow>(
+      `SELECT
+         COALESCE(nds.in_app_enabled, 1) AS inAppEnabled,
+         COALESCE(nds.is_active, nt.is_active) AS isActive,
+         at.public_id AS templateId,
+         at.subject,
+         at.body_text AS bodyText
+       FROM notification_types nt
+       LEFT JOIN notification_delivery_settings nds ON nds.notification_type_code = nt.code
+       LEFT JOIN admin_templates at ON at.public_id = nds.template_public_id
+         AND at.template_type_code = 'notification'
+         AND at.is_active = 1
+         AND at.archived_at IS NULL
+       WHERE nt.code = ?
+       LIMIT 1`,
+      [notificationTypeCode],
+      executor
+    )
+  );
+
+  return row || { bodyText: null, inAppEnabled: 1, isActive: 1, subject: null, templateId: null };
+};
+
+const getNotificationTemplateContext = async (
+  input: {
+    clientAccountId: number;
+    documentId?: number | null;
+    invoiceId?: number | null;
+    matterId?: number | null;
+  },
+  executor?: QueryExecutor
+) => {
+  const row = firstRow(
+    await queryRows<NotificationTemplateContextRow>(
+      `SELECT
+         ca.display_name AS clientName,
+         matter.title AS matterTitle,
+         invoice.invoice_number AS invoiceNumber,
+         DATE_FORMAT(invoice.due_date, '%Y-%m-%d') AS dueDate,
+         CAST(invoice.total_amount AS CHAR) AS totalAmount,
+         doc.category_code AS documentType
+       FROM client_accounts ca
+       LEFT JOIN matters matter ON matter.id = ?
+       LEFT JOIN invoices invoice ON invoice.id = ?
+       LEFT JOIN documents doc ON doc.id = ?
+       WHERE ca.id = ?
+       LIMIT 1`,
+      [input.matterId || null, input.invoiceId || null, input.documentId || null, input.clientAccountId],
+      executor
+    )
+  );
+
+  return {
+    actionUrl: '',
+    clientName: row?.clientName || 'Client',
+    documentType: row?.documentType || 'document',
+    dueDate: row?.dueDate || '',
+    matterTitle: row?.matterTitle || '',
+    platformName: 'Global LMG',
+    totalAmount: row?.totalAmount || '',
+    invoiceNumber: row?.invoiceNumber || '',
+  };
 };
 
 export const resolveMatterByPublicId = async (
@@ -298,6 +382,21 @@ export const createClientNotifications = async (
   },
   executor?: QueryExecutor
 ) => {
+  const delivery = await getNotificationDelivery(input.notificationTypeCode, executor);
+  if (!delivery.isActive || !delivery.inAppEnabled) {
+    return;
+  }
+
+  const templateContext = delivery.templateId
+    ? await getNotificationTemplateContext(input, executor)
+    : null;
+  const title = delivery.subject && templateContext
+    ? renderTemplate(delivery.subject, templateContext)
+    : input.title;
+  const bodyText = delivery.bodyText && templateContext
+    ? renderTemplate(delivery.bodyText, templateContext)
+    : input.bodyText;
+
   const recipients = await queryRows<IdRow>(
     `SELECT DISTINCT user_id AS id
      FROM client_account_contacts
@@ -332,8 +431,8 @@ export const createClientNotifications = async (
         createPublicId(),
         recipient.id,
         input.notificationTypeCode,
-        input.title,
-        input.bodyText,
+        title || input.title,
+        bodyText || input.bodyText,
         input.priorityCode || 'normal',
         input.matterId || null,
         input.invoiceId || null,

@@ -32,6 +32,7 @@ export const DocumentsPage = () => {
 
   return (
     <DocumentsCenterAdmin
+      documentTypes={data?.documentTypes || []}
       documents={data?.documents || []}
       matters={data?.matters || []}
       buildDownloadUrl={adminApi.buildDocumentDownloadUrl}

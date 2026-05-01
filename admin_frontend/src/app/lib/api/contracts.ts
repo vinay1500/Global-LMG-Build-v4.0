@@ -39,6 +39,63 @@ export interface AdminPasswordChangeResponse {
   user: AdminSessionUser;
 }
 
+export interface AdminAccountProfile {
+  avatarUrl: string | null;
+  city: string;
+  displayName: string;
+  email: string;
+  firstName: string;
+  id: string;
+  jobTitle: string;
+  lastName: string;
+  permissionCodes: string[];
+  phone: string;
+  roleCodes: string[];
+  state: string;
+  timezoneName: string;
+}
+
+export interface AdminAccountPreferences {
+  avatarColor: string;
+  dateFormat: string;
+  defaultLandingPath:
+    | '/billing'
+    | '/clients'
+    | '/dashboard'
+    | '/documents'
+    | '/matters'
+    | '/meetings'
+    | '/messages'
+    | '/notifications'
+    | '/reports'
+    | '/requests';
+  densityCode: 'comfortable' | 'compact';
+  inAppNotificationsEnabled: boolean;
+  timezoneName: string;
+}
+
+export interface AdminAccountResponse {
+  preferences: AdminAccountPreferences;
+  profile: AdminAccountProfile;
+}
+
+export interface UpdateAdminProfilePayload {
+  city?: string | null;
+  displayName?: string;
+  jobTitle?: string | null;
+  phone?: string | null;
+  state?: string | null;
+}
+
+export interface UpdateAdminPreferencesPayload {
+  avatarColor?: string;
+  dateFormat?: string;
+  defaultLandingPath?: AdminAccountPreferences['defaultLandingPath'];
+  densityCode?: AdminAccountPreferences['densityCode'];
+  inAppNotificationsEnabled?: boolean;
+  timezoneName?: string;
+}
+
 export interface ClientListItem extends PlatformUser {
   activeMatters: number;
   hasUnread: boolean;
@@ -194,6 +251,7 @@ export interface MatterPackageProposalsResponse {
 }
 
 export interface DocumentsListResponse {
+  documentTypes?: SettingsDocumentType[];
   documents: PlatformDocument[];
   matters: Matter[];
 }
@@ -463,6 +521,26 @@ export interface RbacWorkspaceResponse {
   }>;
 }
 
+export interface CreateRbacRolePayload {
+  code?: string;
+  description?: string;
+  name: string;
+}
+
+export interface UpdateRbacRolePayload {
+  description?: string;
+  isActive?: boolean;
+  name?: string;
+}
+
+export interface UpdateRbacRolePermissionsPayload {
+  permissionCodes: string[];
+}
+
+export interface AssignRbacUserRolePayload {
+  roleCode: string;
+}
+
 export interface DashboardWorkspaceResponse {
   accessOverview: {
     roles: RbacWorkspaceResponse['roles'];
@@ -610,6 +688,237 @@ export type UpdateInvoiceSettingsPayload = Partial<{
   taxMode: InvoiceSettings['taxMode'];
 }>;
 
+export type PlatformSettingValue = boolean | number | string | null;
+
+export interface PlatformSetting {
+  category: string;
+  description: string | null;
+  isSensitive: boolean;
+  key: string;
+  label: string;
+  masked: boolean;
+  updatedAt: string;
+  updatedBy: number | null;
+  value: PlatformSettingValue;
+  valueType: 'boolean' | 'decimal' | 'integer' | 'json' | 'select' | 'string' | 'text';
+  version: number;
+}
+
+export interface PlatformSettingsResponse {
+  settings: PlatformSetting[];
+}
+
+export interface UpdatePlatformSettingPayload {
+  value: PlatformSettingValue;
+  version?: number;
+}
+
+export interface SettingsServiceDomain {
+  code: string;
+  isActive: boolean;
+  name: string;
+  sortOrder: number;
+}
+
+export interface SettingsService {
+  code: string;
+  description: string;
+  domainCode: string;
+  domainName: string;
+  id: string;
+  isActive: boolean;
+  name: string;
+  sortOrder: number;
+}
+
+export interface SettingsPricingSlab {
+  baseAmount: number;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  id: string;
+  isActive: boolean;
+  maxServiceCount: number | null;
+  minServiceCount: number;
+  perExtraServiceAmount: number | null;
+}
+
+export interface SettingsUrgencyRule {
+  code: string;
+  id: string;
+  isActive: boolean;
+  label: string;
+  sortOrder: number;
+  surchargeType: 'flat' | 'percent' | string;
+  surchargeValue: number;
+}
+
+export interface ServiceCatalogResponse {
+  domains: SettingsServiceDomain[];
+  services: SettingsService[];
+}
+
+export interface PricingRulesResponse {
+  serviceSlabs: SettingsPricingSlab[];
+  urgencyRules: SettingsUrgencyRule[];
+}
+
+export interface CreateServiceCatalogPayload {
+  code?: string;
+  description?: string | null;
+  domainCode: string;
+  isActive?: boolean;
+  name: string;
+  sortOrder?: number;
+}
+
+export type UpdateServiceCatalogPayload = Partial<Omit<CreateServiceCatalogPayload, 'code'>>;
+
+export interface PricingSlabPayload {
+  baseAmount: number;
+  effectiveFrom: string;
+  effectiveTo?: string | null;
+  isActive?: boolean;
+  maxServiceCount?: number | null;
+  minServiceCount: number;
+  perExtraServiceAmount?: number | null;
+}
+
+export interface UrgencyRulePayload {
+  code?: string;
+  isActive?: boolean;
+  label: string;
+  sortOrder?: number;
+  surchargeType: 'flat' | 'percent';
+  surchargeValue: number;
+}
+
+export type UpdateUrgencyRulePayload = Partial<Omit<UrgencyRulePayload, 'code'>>;
+
+export type TemplateType = 'document_checklist' | 'general' | 'invoice' | 'message' | 'notification';
+
+export interface AdminTemplate {
+  archivedAt: string | null;
+  body: string;
+  createdAt: string;
+  id: string;
+  isActive: boolean;
+  isDefault: boolean;
+  name: string;
+  subject: string | null;
+  type: TemplateType;
+  updatedAt: string;
+  variables: string[];
+  version: number;
+}
+
+export interface TemplatesResponse {
+  templates: AdminTemplate[];
+}
+
+export interface TemplatePayload {
+  body: string;
+  isActive?: boolean;
+  name: string;
+  subject?: string | null;
+  type: TemplateType;
+  variables?: string[];
+}
+
+export type UpdateTemplatePayload = Partial<Omit<TemplatePayload, 'type'>>;
+
+export interface SettingsDocumentType {
+  allowedExtensions: string[];
+  archivedAt?: string | null;
+  category: string;
+  clientVisibleDefault: boolean;
+  code: string;
+  description: string;
+  displayOrder: number;
+  id: string;
+  isActive: boolean;
+  maxSizeMb: number;
+  name: string;
+  requiresReview: boolean;
+  updatedAt?: string;
+  usageCount?: number;
+}
+
+export interface DocumentTypesResponse {
+  documentTypes: SettingsDocumentType[];
+}
+
+export interface DocumentTypePayload {
+  allowedExtensions: string[];
+  category: string;
+  clientVisibleDefault?: boolean;
+  code?: string;
+  description?: string | null;
+  displayOrder?: number;
+  isActive?: boolean;
+  maxSizeMb: number;
+  name: string;
+  requiresReview?: boolean;
+}
+
+export type UpdateDocumentTypePayload = Partial<Omit<DocumentTypePayload, 'code'>>;
+
+export type NotificationChannelCode = 'email' | 'in_app' | 'sms';
+
+export interface NotificationDeliverySetting {
+  emailEnabled: boolean;
+  inAppEnabled: boolean;
+  isActive: boolean;
+  label: string;
+  pushEnabled: boolean;
+  smsEnabled: boolean;
+  sortOrder: number;
+  template: { id: string; name: string; type: string } | null;
+  templateId: string | null;
+  typeCode: string;
+}
+
+export interface ReminderSetting {
+  archivedAt: string | null;
+  channelCode: NotificationChannelCode;
+  displayOrder: number;
+  eventTypeCode: string | null;
+  eventTypeLabel: string;
+  id: string;
+  isActive: boolean;
+  offsetMinutes: number;
+}
+
+export interface NotificationSettingsResponse {
+  deliverySettings: NotificationDeliverySetting[];
+  eventTypes: Array<{ code: string; label: string }>;
+  providerMode: {
+    email: 'disabled' | 'preview' | 'resend';
+    inApp: 'local';
+    push: 'disabled';
+    sms: 'disabled' | 'preview' | 'twilio-verify';
+  };
+  reminderSettings: ReminderSetting[];
+  templates: Array<{ id: string; name: string }>;
+}
+
+export interface NotificationDeliverySettingPayload {
+  emailEnabled?: boolean;
+  inAppEnabled?: boolean;
+  isActive?: boolean;
+  pushEnabled?: boolean;
+  smsEnabled?: boolean;
+  templateId?: string | null;
+}
+
+export interface ReminderSettingPayload {
+  channelCode: NotificationChannelCode;
+  eventTypeCode?: string | null;
+  isActive?: boolean;
+  offsetMinutes: number;
+}
+
+export type UpdateReminderSettingPayload = Partial<ReminderSettingPayload>;
+
 export interface SettingsWorkspaceResponse {
   consultationModes: Array<{
     code: string;
@@ -620,6 +929,7 @@ export interface SettingsWorkspaceResponse {
     code: string;
     usageCount: number;
   }>;
+  documentTypes: SettingsDocumentType[];
   invoiceConfiguration: {
     defaultManualDueDays: number;
     invoiceStatuses: Array<{ code: string; label: string }>;
@@ -637,40 +947,19 @@ export interface SettingsWorkspaceResponse {
     code: string;
     label: string;
   }>;
+  notificationSettings: NotificationSettingsResponse;
+  platformSettings: PlatformSetting[];
   pricingRules: {
-    serviceSlabs: Array<{
-      baseAmount: number;
-      effectiveFrom: string;
-      effectiveTo: string | null;
-      isActive: boolean;
-      maxServiceCount: number | null;
-      minServiceCount: number;
-      perExtraServiceAmount: number | null;
-    }>;
-    urgencyRules: Array<{
-      code: string;
-      isActive: boolean;
-      label: string;
-      surchargeType: string;
-      surchargeValue: number;
-    }>;
+    serviceSlabs: SettingsPricingSlab[];
+    urgencyRules: SettingsUrgencyRule[];
   };
   rbac: {
     canManage: boolean;
     permissions: RbacWorkspaceResponse['permissions'];
     roles: RbacWorkspaceResponse['roles'];
+    users: RbacWorkspaceResponse['users'];
   };
-  services: Array<{
-    code: string;
-    description: string;
-    domainName: string;
-    isActive: boolean;
-    name: string;
-    sortOrder: number;
-  }>;
-  templates: Array<{
-    channel: string;
-    id: string;
-    label: string;
-  }>;
+  serviceDomains: SettingsServiceDomain[];
+  services: SettingsService[];
+  templates: AdminTemplate[];
 }

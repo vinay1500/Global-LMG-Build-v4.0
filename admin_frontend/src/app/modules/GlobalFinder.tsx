@@ -434,8 +434,13 @@ export const GlobalFinder = ({ isOpen, onClose, onSelect }: GlobalFinderProps) =
              </div>
           </div>
           <div className="p-4 border-t border-[#E6E4DD] bg-white flex justify-end gap-3 shrink-0">
-             <button className="px-4 py-2 text-sm font-medium text-[#2C2B29] border border-[#E6E4DD] rounded-lg hover:bg-[#F4F1EA] transition-colors flex items-center gap-2">
-               <Download className="w-4 h-4" /> PDF
+             <button
+               className="px-4 py-2 text-sm font-medium text-[#A8A69F] border border-dashed border-[#E6E4DD] rounded-lg cursor-not-allowed flex items-center gap-2"
+               disabled
+               title="Use Billing or Reports for authorized exports. This preview does not generate a PDF."
+               type="button"
+             >
+               <Download className="w-4 h-4" /> PDF unavailable
              </button>
              <button onClick={() => onSelect(selectedItem)} className="px-4 py-2 text-sm font-medium text-white bg-[#2C2B29] rounded-lg hover:bg-[#4A4946] transition-colors shadow-sm">
                View Ledger

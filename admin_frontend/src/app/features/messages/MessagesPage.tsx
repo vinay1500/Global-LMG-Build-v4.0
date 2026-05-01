@@ -9,6 +9,10 @@ export const MessagesPage = () => {
     () => adminApi.getMessagesWorkspace(),
     []
   );
+  const { data: templatesData } = useAsyncResource(
+    () => adminApi.getSettingsTemplates().catch(() => ({ templates: [] })),
+    []
+  );
 
   if (isLoading && !data) {
     return (
@@ -37,6 +41,7 @@ export const MessagesPage = () => {
       invoices={data?.invoices}
       matters={data?.matters}
       messages={data?.messages}
+      messageTemplates={templatesData?.templates || []}
       onArchiveThread={async (threadId) => {
         await adminApi.archiveThread(threadId);
         await refresh();

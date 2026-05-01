@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router';
 import { 
   CreditCard, FileText, Download, Mail, DollarSign, 
   Search, Filter, Plus, ChevronRight, CheckCircle, 
@@ -52,6 +53,7 @@ export const BillingWorkspace: React.FC<{
   payments = [],
   refunds = [],
 }) => {
+  const navigate = useNavigate();
   const [showCreateInvoiceForm, setShowCreateInvoiceForm] = useState(false);
   const [createMatterId, setCreateMatterId] = useState(matters[0]?.id || '');
   const [createDescription, setCreateDescription] = useState('');
@@ -375,11 +377,11 @@ export const BillingWorkspace: React.FC<{
         </div>
         <div className="flex items-center gap-3">
           <button
-            className="px-4 py-2 bg-white border border-dashed border-gray-200 text-gray-400 text-sm font-medium rounded-lg flex items-center gap-2 cursor-not-allowed"
-            disabled
+            className="px-4 py-2 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 text-sm font-medium rounded-lg flex items-center gap-2 transition"
+            onClick={() => navigate('/reports?drilldown=outstanding-invoices')}
             type="button"
           >
-            <Download className="w-4 h-4" /> Export in Reports
+            <Download className="w-4 h-4" /> Open Reports Export
           </button>
           <button
             className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg flex items-center gap-2 transition hover:bg-gray-800 disabled:opacity-50"

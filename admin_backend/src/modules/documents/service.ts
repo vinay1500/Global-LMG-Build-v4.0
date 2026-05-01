@@ -69,11 +69,64 @@ type DocumentMatterRow = RowDataPacket & {
   matterId: number | null;
 };
 
+type ActiveDocumentTypeRow = RowDataPacket & {
+  allowedExtensionsJson: unknown;
+  clientVisibleDefault: number;
+  code: string;
+  maxSizeMb: number;
+  requiresReview: number;
+};
+
 const storageDriver = getDocumentStorage();
 
 export const listDocuments = async () => {
+  const documentTypeRows = await queryRows<
+    RowDataPacket & {
+      allowedExtensionsJson: unknown;
+      category: string;
+      clientVisibleDefault: number;
+      code: string;
+      description: string | null;
+      displayOrder: number;
+      id: string;
+      isActive: number;
+      maxSizeMb: number;
+      name: string;
+      requiresReview: number;
+    }
+  >(
+    `SELECT
+       public_id AS id,
+       code,
+       name,
+       description,
+       category,
+       allowed_extensions_json AS allowedExtensionsJson,
+       max_size_mb AS maxSizeMb,
+       requires_review AS requiresReview,
+       client_visible_default AS clientVisibleDefault,
+       is_active AS isActive,
+       display_order AS displayOrder
+     FROM document_types
+     WHERE archived_at IS NULL
+     ORDER BY is_active DESC, display_order ASC, name ASC`
+  );
+
   return {
     documents: await fetchDocuments({}),
+    documentTypes: documentTypeRows.map((row) => ({
+      allowedExtensions: parseJsonStringArray(row.allowedExtensionsJson),
+      category: row.category,
+      clientVisibleDefault: Boolean(row.clientVisibleDefault),
+      code: row.code,
+      description: row.description || '',
+      displayOrder: Number(row.displayOrder || 0),
+      id: row.id,
+      isActive: Boolean(row.isActive),
+      maxSizeMb: Number(row.maxSizeMb || 0),
+      name: row.name,
+      requiresReview: Boolean(row.requiresReview),
+    })),
     matters: await fetchMatters({ limit: 250 }),
   };
 };
@@ -90,6 +143,62 @@ const visibilityToUi = (visibilityScope: string) =>
   visibilityScope.toLowerCase().includes('internal') ? 'internal' : 'client';
 
 const normalizeMimeType = (mimeType: string) => mimeType.trim().toLowerCase();
+
+const parseJsonStringArray = (raw: unknown): string[] => {
+  const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : [];
+};
+
+const getDocumentTypeByCode = async (
+  categoryCode: string,
+  executor: Parameters<typeof queryRows>[2],
+  activeOnly = true
+) => {
+  const row = (
+    await queryRows<ActiveDocumentTypeRow>(
+      `SELECT
+         code,
+         allowed_extensions_json AS allowedExtensionsJson,
+         max_size_mb AS maxSizeMb,
+         requires_review AS requiresReview,
+         client_visible_default AS clientVisibleDefault
+       FROM document_types
+       WHERE code = ?
+         ${activeOnly ? 'AND is_active = 1 AND archived_at IS NULL' : ''}
+       LIMIT 1`,
+      [categoryCode],
+      executor
+    )
+  )[0];
+
+  if (!row) {
+    throw badRequest(
+      'invalid_document_type',
+      activeOnly ? 'Select an active document type.' : 'Document type could not be resolved for this document.'
+    );
+  }
+
+  return row;
+};
+
+const assertDocumentTypeAllowsFile = (documentType: ActiveDocumentTypeRow, fileName: string, sizeBytes: number) => {
+  const extension = getFileExtension(fileName).replace(/^\./, '').toLowerCase();
+  const allowedExtensions = parseJsonStringArray(documentType.allowedExtensionsJson).map((value) =>
+    value.replace(/^\./, '').toLowerCase()
+  );
+  const maxBytes = Number(documentType.maxSizeMb || 0) * 1024 * 1024;
+
+  if (allowedExtensions.length && !allowedExtensions.includes(extension)) {
+    throw badRequest(
+      'document_type_extension_blocked',
+      `This document type allows: ${allowedExtensions.join(', ')}.`
+    );
+  }
+
+  if (maxBytes > 0 && sizeBytes > maxBytes) {
+    throw badRequest('document_type_size_exceeded', `This document type allows files up to ${documentType.maxSizeMb} MB.`);
+  }
+};
 
 const mapDocumentVersion = (row: DocumentVersionRow) => ({
   checksumSha256: row.checksumSha256,
@@ -150,6 +259,7 @@ export const uploadAdminDocument = async (
     checksumSha256: string;
     content: Buffer;
     fileName: string;
+    categoryCode?: string;
     matterId: string;
     mimeType: string;
     reviewState: 'reviewed' | 'unreviewed';
@@ -171,6 +281,9 @@ export const uploadAdminDocument = async (
       mimeType: payload.mimeType,
       sha256: checksumSha256,
     });
+    const categoryCode = payload.categoryCode?.trim() || 'attachment';
+    const documentType = await getDocumentTypeByCode(categoryCode, connection);
+    assertDocumentTypeAllowsFile(documentType, payload.fileName, payload.content.length);
 
     const documentPublicId = createPublicId();
     const documentNumber = await allocateBusinessNumber(connection, 'document', 'DOC');
@@ -194,12 +307,13 @@ export const uploadAdminDocument = async (
          created_by_user_id,
          created_at,
          updated_at
-       ) VALUES (?, ?, ?, ?, 'attachment', ?, 1, ?, ${nowExpression}, ${nowExpression})`,
+       ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ${nowExpression}, ${nowExpression})`,
       [
         documentPublicId,
         documentNumber,
         matter.clientAccountId,
         payload.fileName,
+        categoryCode,
         toVisibilityScope(payload.visibility),
         actor.userId,
       ],
@@ -341,6 +455,8 @@ export const uploadAdminDocumentVersion = async (
       mimeType: payload.mimeType,
       sha256: checksumSha256,
     });
+    const documentType = await getDocumentTypeByCode(detail.categoryCode, connection, false);
+    assertDocumentTypeAllowsFile(documentType, payload.fileName, payload.content.length);
 
     const versionRows = await queryRows<RowDataPacket & { nextVersion: number }>(
       `SELECT COALESCE(MAX(version_no), 0) + 1 AS nextVersion
