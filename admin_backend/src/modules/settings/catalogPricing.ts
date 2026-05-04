@@ -13,15 +13,37 @@ type DomainRow = RowDataPacket & {
 };
 
 type ServiceRow = RowDataPacket & {
+  baseFee: number;
   code: string;
   dbId: number;
   description: string | null;
   domainCode: string;
   domainName: string;
+  icon: string | null;
   id: string;
   isActive: number;
   name: string;
   sortOrder: number;
+};
+
+type ConsultationModeRow = RowDataPacket & {
+  code: string;
+  description: string | null;
+  isActive: number;
+  label: string;
+  sortOrder: number;
+  surchargeValue: number | null;
+  transportDisclaimer: string | null;
+};
+
+type CountryPricingRow = RowDataPacket & {
+  countryCode: string;
+  countryName: string;
+  currencyCode: string;
+  id: string;
+  isActive: number;
+  isDefault: number;
+  multiplier: number;
 };
 
 type PricingSlabRow = RowDataPacket & {
@@ -40,15 +62,18 @@ type UrgencyRuleRow = RowDataPacket & {
   id: number;
   isActive: number;
   label: string;
+  responseWindowHours: number | null;
   sortOrder: number;
   surchargeType: string;
   surchargeValue: number;
 };
 
 export type CreateServiceInput = {
+  baseFee?: number;
   code?: string;
   description?: string | null;
   domainCode: string;
+  icon?: string | null;
   isActive?: boolean;
   name: string;
   sortOrder?: number;
@@ -70,12 +95,36 @@ export type UrgencyRuleInput = {
   code?: string;
   isActive?: boolean;
   label: string;
+  responseWindowHours?: number | null;
   sortOrder?: number;
   surchargeType: 'flat' | 'percent';
   surchargeValue: number;
 };
 
 export type UpdateUrgencyRuleInput = Partial<Omit<UrgencyRuleInput, 'code'>>;
+
+export type ConsultationModeInput = {
+  code?: string;
+  description?: string | null;
+  isActive?: boolean;
+  label: string;
+  sortOrder?: number;
+  surchargeValue?: number;
+  transportDisclaimer?: string | null;
+};
+
+export type UpdateConsultationModeInput = Partial<Omit<ConsultationModeInput, 'code'>>;
+
+export type CountryPricingInput = {
+  countryCode?: string;
+  countryName: string;
+  currencyCode: string;
+  isActive?: boolean;
+  isDefault?: boolean;
+  multiplier: number;
+};
+
+export type UpdateCountryPricingInput = Partial<Omit<CountryPricingInput, 'countryCode'>>;
 
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const CODE_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -124,22 +173,30 @@ const normalizeServicePayload = (payload: CreateServiceInput) => {
   if (!CODE_PATTERN.test(code)) {
     throw badRequest('invalid_service_code', 'Service code must be a lowercase slug.');
   }
+  assertNonNegativeAmount(payload.baseFee ?? 1000, 'baseFee');
 
   return {
     code,
+    baseFee: payload.baseFee ?? 1000,
     description: payload.description?.trim() || null,
     domainCode,
+    icon: payload.icon?.trim() || null,
     isActive: payload.isActive ?? true,
     name,
     sortOrder: payload.sortOrder ?? 0,
   };
 };
 
+const normalizeCurrency = (value: string) => value.trim().toUpperCase();
+const normalizeCountryCode = (value: string) => value.trim().toUpperCase().slice(0, 8);
+
 const mapService = (row: ServiceRow) => ({
+  baseFee: Number(row.baseFee || 0),
   code: row.code,
   description: row.description || '',
   domainCode: row.domainCode,
   domainName: row.domainName,
+  icon: row.icon || 'Briefcase',
   id: row.id,
   isActive: Boolean(row.isActive),
   name: row.name,
@@ -162,9 +219,30 @@ const mapUrgency = (row: UrgencyRuleRow) => ({
   id: String(row.id),
   isActive: Boolean(row.isActive),
   label: row.label,
+  responseWindowHours: row.responseWindowHours === null ? null : Number(row.responseWindowHours),
   sortOrder: Number(row.sortOrder || 0),
   surchargeType: row.surchargeType,
   surchargeValue: Number(row.surchargeValue || 0),
+});
+
+const mapConsultationMode = (row: ConsultationModeRow) => ({
+  code: row.code,
+  description: row.description || '',
+  isActive: Boolean(row.isActive),
+  label: row.label,
+  sortOrder: Number(row.sortOrder || 0),
+  surchargeValue: Number(row.surchargeValue || 0),
+  transportDisclaimer: row.transportDisclaimer || '',
+});
+
+const mapCountryPricing = (row: CountryPricingRow) => ({
+  countryCode: row.countryCode,
+  countryName: row.countryName,
+  currencyCode: row.currencyCode,
+  id: row.id,
+  isActive: Boolean(row.isActive),
+  isDefault: Boolean(row.isDefault),
+  multiplier: Number(row.multiplier || 0),
 });
 
 const getServiceByPublicId = async (serviceId: string, executor?: QueryExecutor) => {
@@ -176,6 +254,8 @@ const getServiceByPublicId = async (serviceId: string, executor?: QueryExecutor)
          s.service_code AS code,
          s.service_name AS name,
          s.service_description AS description,
+         s.base_fee_amount AS baseFee,
+         s.service_icon_code AS icon,
          s.sort_order AS sortOrder,
          s.is_active AS isActive,
          ld.domain_code AS domainCode,
@@ -239,6 +319,7 @@ const getUrgencyById = async (ruleId: string) => {
          id,
          urgency_code AS code,
          label,
+         response_window_hours AS responseWindowHours,
          surcharge_type_code AS surchargeType,
          surcharge_value AS surchargeValue,
          sort_order AS sortOrder,
@@ -271,6 +352,8 @@ export const getServiceCatalog = async () => {
          s.service_code AS code,
          s.service_name AS name,
          s.service_description AS description,
+         s.base_fee_amount AS baseFee,
+         s.service_icon_code AS icon,
          s.sort_order AS sortOrder,
          s.is_active AS isActive,
          ld.domain_code AS domainCode,
@@ -293,7 +376,7 @@ export const getServiceCatalog = async () => {
 };
 
 export const getPricingRules = async () => {
-  const [slabRows, urgencyRows] = await Promise.all([
+  const [slabRows, urgencyRows, consultationRows, countryRows] = await Promise.all([
     queryRows<PricingSlabRow>(
       `SELECT
          id,
@@ -312,6 +395,7 @@ export const getPricingRules = async () => {
          id,
          urgency_code AS code,
          label,
+         response_window_hours AS responseWindowHours,
          surcharge_type_code AS surchargeType,
          surcharge_value AS surchargeValue,
          sort_order AS sortOrder,
@@ -319,9 +403,39 @@ export const getPricingRules = async () => {
        FROM pricing_urgency_rules
        ORDER BY sort_order ASC, label ASC`
     ),
+    queryRows<ConsultationModeRow>(
+      `SELECT
+         cm.code,
+         cm.label,
+         cm.description_text AS description,
+         cm.transport_disclaimer_text AS transportDisclaimer,
+         cm.sort_order AS sortOrder,
+         cm.is_active AS isActive,
+         pcmr.surcharge_value AS surchargeValue
+       FROM consultation_modes cm
+       LEFT JOIN pricing_consultation_mode_rules pcmr
+         ON pcmr.consultation_mode_code = cm.code
+        AND pcmr.is_active = 1
+       ORDER BY cm.sort_order ASC, cm.label ASC`
+    ),
+    queryRows<CountryPricingRow>(
+      `SELECT
+         public_id AS id,
+         country_code AS countryCode,
+         country_name AS countryName,
+         currency_code AS currencyCode,
+         price_multiplier AS multiplier,
+         is_default AS isDefault,
+         is_active AS isActive
+       FROM country_pricing_overrides
+       WHERE archived_at IS NULL
+       ORDER BY is_default DESC, country_name ASC`
+    ),
   ]);
 
   return {
+    consultationModes: consultationRows.map(mapConsultationMode),
+    countryPricing: countryRows.map(mapCountryPricing),
     serviceSlabs: slabRows.map(mapSlab),
     urgencyRules: urgencyRows.map(mapUrgency),
   };
@@ -370,13 +484,25 @@ export const createService = async (actor: AdminActor, payload: CreateServiceInp
          legal_domain_id,
          service_name,
          service_description,
+         base_fee_amount,
+         service_icon_code,
          sort_order,
          is_active,
          is_subscription_eligible,
          created_at,
          updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))`,
-      [createPublicId(), next.code, domain.id, next.name, next.description, next.sortOrder, next.isActive ? 1 : 0],
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))`,
+      [
+        createPublicId(),
+        next.code,
+        domain.id,
+        next.name,
+        next.description,
+        next.baseFee,
+        next.icon,
+        next.sortOrder,
+        next.isActive ? 1 : 0,
+      ],
       connection
     );
 
@@ -389,6 +515,7 @@ export const createService = async (actor: AdminActor, payload: CreateServiceInp
         changes: [
           { fieldName: 'service_code', newValue: next.code },
           { fieldName: 'service_name', newValue: next.name },
+          { fieldName: 'base_fee_amount', newValue: next.baseFee },
           { fieldName: 'domain_code', newValue: next.domainCode },
         ],
         entityPk: result.insertId,
@@ -424,6 +551,8 @@ export const updateService = async (
     description:
       payload.description === undefined ? existing.description : payload.description?.trim() || null,
     domainCode: payload.domainCode?.trim() || existing.domainCode,
+    baseFee: payload.baseFee ?? Number(existing.baseFee || 0),
+    icon: payload.icon === undefined ? existing.icon : payload.icon?.trim() || null,
     isActive: payload.isActive ?? Boolean(existing.isActive),
     name: payload.name?.trim() || existing.name,
     sortOrder: payload.sortOrder ?? Number(existing.sortOrder || 0),
@@ -432,6 +561,7 @@ export const updateService = async (
   if (next.name.length < 2 || next.name.length > 180) {
     throw badRequest('invalid_service_name', 'Service name must be between 2 and 180 characters.');
   }
+  assertNonNegativeAmount(next.baseFee, 'baseFee');
 
   return withTransaction(async (connection) => {
     const domain = firstRow(
@@ -468,11 +598,22 @@ export const updateService = async (
        SET legal_domain_id = ?,
            service_name = ?,
            service_description = ?,
+           base_fee_amount = ?,
+           service_icon_code = ?,
            sort_order = ?,
            is_active = ?,
            updated_at = UTC_TIMESTAMP(6)
        WHERE id = ?`,
-      [domain.id, next.name, next.description, next.sortOrder, next.isActive ? 1 : 0, existing.dbId],
+      [
+        domain.id,
+        next.name,
+        next.description,
+        next.baseFee,
+        next.icon,
+        next.sortOrder,
+        next.isActive ? 1 : 0,
+        existing.dbId,
+      ],
       connection
     );
 
@@ -484,6 +625,7 @@ export const updateService = async (
         actorUserId: actor.userId,
         changes: [
           { fieldName: 'service_name', oldValue: existing.name, newValue: next.name },
+          { fieldName: 'base_fee_amount', oldValue: Number(existing.baseFee || 0), newValue: next.baseFee },
           { fieldName: 'domain_code', oldValue: existing.domainCode, newValue: next.domainCode },
           { fieldName: 'is_active', oldValue: Boolean(existing.isActive), newValue: next.isActive },
         ],
@@ -686,11 +828,19 @@ const normalizeUrgencyInput = (payload: UrgencyRuleInput) => {
     throw badRequest('invalid_surcharge_type', 'Surcharge type must be flat or percent.');
   }
   assertNonNegativeAmount(payload.surchargeValue, 'surchargeValue');
+  if (
+    payload.responseWindowHours !== null &&
+    payload.responseWindowHours !== undefined &&
+    (!Number.isInteger(payload.responseWindowHours) || payload.responseWindowHours <= 0)
+  ) {
+    throw badRequest('invalid_response_window', 'Response window hours must be a positive whole number.');
+  }
 
   return {
     code,
     isActive: payload.isActive ?? true,
     label,
+    responseWindowHours: payload.responseWindowHours ?? null,
     sortOrder: payload.sortOrder ?? 0,
     surchargeType: payload.surchargeType,
     surchargeValue: payload.surchargeValue,
@@ -713,14 +863,23 @@ export const createUrgencyRule = async (actor: AdminActor, payload: UrgencyRuleI
     `INSERT INTO pricing_urgency_rules (
        urgency_code,
        label,
+       response_window_hours,
        surcharge_type_code,
        surcharge_value,
        sort_order,
        is_active,
        created_at,
        updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))`,
-    [next.code, next.label, next.surchargeType, next.surchargeValue, next.sortOrder, next.isActive ? 1 : 0]
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))`,
+    [
+      next.code,
+      next.label,
+      next.responseWindowHours,
+      next.surchargeType,
+      next.surchargeValue,
+      next.sortOrder,
+      next.isActive ? 1 : 0,
+    ]
   );
 
   await createAuditEvent({
@@ -747,6 +906,8 @@ export const updateUrgencyRule = async (
     code: existing.code,
     isActive: payload.isActive ?? Boolean(existing.isActive),
     label: payload.label || existing.label,
+    responseWindowHours:
+      payload.responseWindowHours === undefined ? existing.responseWindowHours : payload.responseWindowHours,
     sortOrder: payload.sortOrder ?? Number(existing.sortOrder || 0),
     surchargeType: payload.surchargeType || (existing.surchargeType as 'flat' | 'percent'),
     surchargeValue: payload.surchargeValue ?? Number(existing.surchargeValue || 0),
@@ -755,13 +916,22 @@ export const updateUrgencyRule = async (
   await executeStatement(
     `UPDATE pricing_urgency_rules
      SET label = ?,
+         response_window_hours = ?,
          surcharge_type_code = ?,
          surcharge_value = ?,
          sort_order = ?,
          is_active = ?,
          updated_at = UTC_TIMESTAMP(6)
      WHERE id = ?`,
-    [next.label, next.surchargeType, next.surchargeValue, next.sortOrder, next.isActive ? 1 : 0, existing.id]
+    [
+      next.label,
+      next.responseWindowHours,
+      next.surchargeType,
+      next.surchargeValue,
+      next.sortOrder,
+      next.isActive ? 1 : 0,
+      existing.id,
+    ]
   );
 
   await createAuditEvent({
@@ -798,4 +968,395 @@ export const archiveUrgencyRule = async (actor: AdminActor, ruleId: string) => {
   });
 
   return mapUrgency(await getUrgencyById(ruleId));
+};
+
+const getConsultationModeByCode = async (modeCode: string, executor?: QueryExecutor) => {
+  const row = firstRow(
+    await queryRows<ConsultationModeRow>(
+      `SELECT
+         cm.code,
+         cm.label,
+         cm.description_text AS description,
+         cm.transport_disclaimer_text AS transportDisclaimer,
+         cm.sort_order AS sortOrder,
+         cm.is_active AS isActive,
+         pcmr.surcharge_value AS surchargeValue
+       FROM consultation_modes cm
+       LEFT JOIN pricing_consultation_mode_rules pcmr
+         ON pcmr.consultation_mode_code = cm.code
+        AND pcmr.is_active = 1
+       WHERE cm.code = ?
+       LIMIT 1`,
+      [modeCode],
+      executor
+    )
+  );
+
+  if (!row) {
+    throw notFound('consultation_mode_not_found', 'Consultation mode not found.');
+  }
+
+  return row;
+};
+
+const normalizeConsultationModeInput = (payload: ConsultationModeInput) => {
+  const label = payload.label.trim();
+  const code = (payload.code?.trim() || toSlug(label)).toLowerCase();
+  if (!label) {
+    throw badRequest('invalid_consultation_label', 'Consultation mode label is required.');
+  }
+  if (!CODE_PATTERN.test(code)) {
+    throw badRequest('invalid_consultation_code', 'Consultation mode code must be a lowercase slug.');
+  }
+  assertNonNegativeAmount(payload.surchargeValue ?? 0, 'surchargeValue');
+
+  return {
+    code,
+    description: payload.description?.trim() || null,
+    isActive: payload.isActive ?? true,
+    label,
+    sortOrder: payload.sortOrder ?? 0,
+    surchargeValue: payload.surchargeValue ?? 0,
+    transportDisclaimer: payload.transportDisclaimer?.trim() || null,
+  };
+};
+
+export const createConsultationMode = async (actor: AdminActor, payload: ConsultationModeInput) => {
+  const next = normalizeConsultationModeInput(payload);
+  const duplicate = firstRow(
+    await queryRows<RowDataPacket & { code: string }>(
+      'SELECT code FROM consultation_modes WHERE code = ? LIMIT 1',
+      [next.code]
+    )
+  );
+  if (duplicate) {
+    throw new AppError(409, 'consultation_mode_duplicate', 'A consultation mode with this code already exists.');
+  }
+
+  return withTransaction(async (connection) => {
+    await executeStatement(
+      `INSERT INTO consultation_modes (
+         code, label, description_text, transport_disclaimer_text, sort_order, is_active
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        next.code,
+        next.label,
+        next.description,
+        next.transportDisclaimer,
+        next.sortOrder,
+        next.isActive ? 1 : 0,
+      ],
+      connection
+    );
+    await executeStatement(
+      `INSERT INTO pricing_consultation_mode_rules (
+         consultation_mode_code, surcharge_type_code, surcharge_value, is_active, created_at, updated_at
+       ) VALUES (?, 'flat', ?, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+       ON DUPLICATE KEY UPDATE
+         surcharge_value = VALUES(surcharge_value),
+         is_active = 1,
+         updated_at = UTC_TIMESTAMP(6)`,
+      [next.code, next.surchargeValue],
+      connection
+    );
+    await createAuditEvent(
+      {
+        actionCode: 'consultation_mode.created',
+        actionLabel: 'Consultation mode created',
+        actorRoleCode: actor.roleCodes[0] || 'ops_admin',
+        actorUserId: actor.userId,
+        entityPk: null,
+        entityTableName: 'consultation_modes',
+        sourceModule: 'settings_workspace',
+        summaryNewValue: next,
+      },
+      connection
+    );
+
+    return mapConsultationMode(await getConsultationModeByCode(next.code, connection));
+  });
+};
+
+export const updateConsultationMode = async (
+  actor: AdminActor,
+  modeCode: string,
+  payload: UpdateConsultationModeInput
+) => {
+  const existing = await getConsultationModeByCode(modeCode);
+  const next = normalizeConsultationModeInput({
+    code: existing.code,
+    description: payload.description === undefined ? existing.description : payload.description,
+    isActive: payload.isActive ?? Boolean(existing.isActive),
+    label: payload.label || existing.label,
+    sortOrder: payload.sortOrder ?? Number(existing.sortOrder || 0),
+    surchargeValue: payload.surchargeValue ?? Number(existing.surchargeValue || 0),
+    transportDisclaimer:
+      payload.transportDisclaimer === undefined
+        ? existing.transportDisclaimer
+        : payload.transportDisclaimer,
+  });
+
+  return withTransaction(async (connection) => {
+    await executeStatement(
+      `UPDATE consultation_modes
+       SET label = ?,
+           description_text = ?,
+           transport_disclaimer_text = ?,
+           sort_order = ?,
+           is_active = ?
+       WHERE code = ?`,
+      [
+        next.label,
+        next.description,
+        next.transportDisclaimer,
+        next.sortOrder,
+        next.isActive ? 1 : 0,
+        existing.code,
+      ],
+      connection
+    );
+    await executeStatement(
+      `INSERT INTO pricing_consultation_mode_rules (
+         consultation_mode_code, surcharge_type_code, surcharge_value, is_active, created_at, updated_at
+       ) VALUES (?, 'flat', ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+       ON DUPLICATE KEY UPDATE
+         surcharge_value = VALUES(surcharge_value),
+         is_active = VALUES(is_active),
+         updated_at = UTC_TIMESTAMP(6)`,
+      [existing.code, next.surchargeValue, next.isActive ? 1 : 0],
+      connection
+    );
+    await createAuditEvent(
+      {
+        actionCode: 'consultation_mode.updated',
+        actionLabel: 'Consultation mode updated',
+        actorRoleCode: actor.roleCodes[0] || 'ops_admin',
+        actorUserId: actor.userId,
+        entityPk: null,
+        entityTableName: 'consultation_modes',
+        sourceModule: 'settings_workspace',
+        summaryOldValue: mapConsultationMode(existing),
+        summaryNewValue: next,
+      },
+      connection
+    );
+
+    return mapConsultationMode(await getConsultationModeByCode(existing.code, connection));
+  });
+};
+
+export const archiveConsultationMode = async (actor: AdminActor, modeCode: string) => {
+  const existing = await getConsultationModeByCode(modeCode);
+  await executeStatement('UPDATE consultation_modes SET is_active = 0 WHERE code = ?', [existing.code]);
+  await executeStatement(
+    `UPDATE pricing_consultation_mode_rules
+     SET is_active = 0, updated_at = UTC_TIMESTAMP(6)
+     WHERE consultation_mode_code = ?`,
+    [existing.code]
+  );
+  await createAuditEvent({
+    actionCode: 'consultation_mode.archived',
+    actionLabel: 'Consultation mode archived',
+    actorRoleCode: actor.roleCodes[0] || 'ops_admin',
+    actorUserId: actor.userId,
+    entityPk: null,
+    entityTableName: 'consultation_modes',
+    sourceModule: 'settings_workspace',
+    summaryOldValue: mapConsultationMode(existing),
+  });
+
+  return mapConsultationMode(await getConsultationModeByCode(existing.code));
+};
+
+const getCountryPricingByPublicId = async (countryPricingId: string, executor?: QueryExecutor) => {
+  const row = firstRow(
+    await queryRows<CountryPricingRow>(
+      `SELECT
+         public_id AS id,
+         country_code AS countryCode,
+         country_name AS countryName,
+         currency_code AS currencyCode,
+         price_multiplier AS multiplier,
+         is_default AS isDefault,
+         is_active AS isActive
+       FROM country_pricing_overrides
+       WHERE public_id = ?
+         AND archived_at IS NULL
+       LIMIT 1`,
+      [countryPricingId],
+      executor
+    )
+  );
+
+  if (!row) {
+    throw notFound('country_pricing_not_found', 'Country pricing rule not found.');
+  }
+
+  return row;
+};
+
+const normalizeCountryPricingInput = (payload: CountryPricingInput) => {
+  const countryName = payload.countryName.trim();
+  const countryCode = normalizeCountryCode(payload.countryCode || countryName);
+  const currencyCode = normalizeCurrency(payload.currencyCode);
+  if (!countryName) {
+    throw badRequest('invalid_country_name', 'Country name is required.');
+  }
+  if (!countryCode) {
+    throw badRequest('invalid_country_code', 'Country code is required.');
+  }
+  if (!/^[A-Z]{3}$/.test(currencyCode)) {
+    throw badRequest('invalid_currency', 'Currency code must be a three-letter ISO code.');
+  }
+  assertNonNegativeAmount(payload.multiplier, 'multiplier');
+
+  return {
+    countryCode,
+    countryName,
+    currencyCode,
+    isActive: payload.isActive ?? true,
+    isDefault: payload.isDefault ?? false,
+    multiplier: payload.multiplier,
+  };
+};
+
+export const createCountryPricing = async (actor: AdminActor, payload: CountryPricingInput) => {
+  const next = normalizeCountryPricingInput(payload);
+  const duplicate = firstRow(
+    await queryRows<RowDataPacket & { id: number }>(
+      'SELECT id FROM country_pricing_overrides WHERE country_code = ? LIMIT 1',
+      [next.countryCode]
+    )
+  );
+  if (duplicate) {
+    throw new AppError(409, 'country_pricing_duplicate', 'A pricing rule for this country already exists.');
+  }
+
+  return withTransaction(async (connection) => {
+    if (next.isDefault) {
+      await executeStatement('UPDATE country_pricing_overrides SET is_default = 0', [], connection);
+    }
+    const result = await executeStatement<ResultSetHeader>(
+      `INSERT INTO country_pricing_overrides (
+         public_id, country_code, country_name, currency_code, price_multiplier,
+         is_default, is_active, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))`,
+      [
+        createPublicId(),
+        next.countryCode,
+        next.countryName,
+        next.currencyCode,
+        next.multiplier,
+        next.isDefault ? 1 : 0,
+        next.isActive ? 1 : 0,
+      ],
+      connection
+    );
+    await createAuditEvent(
+      {
+        actionCode: 'country_pricing.created',
+        actionLabel: 'Country pricing created',
+        actorRoleCode: actor.roleCodes[0] || 'ops_admin',
+        actorUserId: actor.userId,
+        entityPk: result.insertId,
+        entityTableName: 'country_pricing_overrides',
+        sourceModule: 'settings_workspace',
+        summaryNewValue: next,
+      },
+      connection
+    );
+
+    const created = firstRow(
+      await queryRows<RowDataPacket & { id: string }>(
+        'SELECT public_id AS id FROM country_pricing_overrides WHERE id = ? LIMIT 1',
+        [result.insertId],
+        connection
+      )
+    );
+    return mapCountryPricing(await getCountryPricingByPublicId(created!.id, connection));
+  });
+};
+
+export const updateCountryPricing = async (
+  actor: AdminActor,
+  countryPricingId: string,
+  payload: UpdateCountryPricingInput
+) => {
+  const existing = await getCountryPricingByPublicId(countryPricingId);
+  const next = normalizeCountryPricingInput({
+    countryCode: existing.countryCode,
+    countryName: payload.countryName || existing.countryName,
+    currencyCode: payload.currencyCode || existing.currencyCode,
+    isActive: payload.isActive ?? Boolean(existing.isActive),
+    isDefault: payload.isDefault ?? Boolean(existing.isDefault),
+    multiplier: payload.multiplier ?? Number(existing.multiplier || 1),
+  });
+
+  return withTransaction(async (connection) => {
+    if (next.isDefault) {
+      await executeStatement('UPDATE country_pricing_overrides SET is_default = 0', [], connection);
+    }
+    await executeStatement(
+      `UPDATE country_pricing_overrides
+       SET country_name = ?,
+           currency_code = ?,
+           price_multiplier = ?,
+           is_default = ?,
+           is_active = ?,
+           updated_at = UTC_TIMESTAMP(6)
+       WHERE public_id = ?`,
+      [
+        next.countryName,
+        next.currencyCode,
+        next.multiplier,
+        next.isDefault ? 1 : 0,
+        next.isActive ? 1 : 0,
+        countryPricingId,
+      ],
+      connection
+    );
+    await createAuditEvent(
+      {
+        actionCode: 'country_pricing.updated',
+        actionLabel: 'Country pricing updated',
+        actorRoleCode: actor.roleCodes[0] || 'ops_admin',
+        actorUserId: actor.userId,
+        entityPk: null,
+        entityTableName: 'country_pricing_overrides',
+        sourceModule: 'settings_workspace',
+        summaryOldValue: mapCountryPricing(existing),
+        summaryNewValue: next,
+      },
+      connection
+    );
+
+    return mapCountryPricing(await getCountryPricingByPublicId(countryPricingId, connection));
+  });
+};
+
+export const archiveCountryPricing = async (actor: AdminActor, countryPricingId: string) => {
+  const existing = await getCountryPricingByPublicId(countryPricingId);
+  if (existing.isDefault) {
+    throw badRequest('default_country_pricing_protected', 'The default country pricing rule cannot be archived.');
+  }
+  await executeStatement(
+    `UPDATE country_pricing_overrides
+     SET is_active = 0,
+         archived_at = UTC_TIMESTAMP(6),
+         updated_at = UTC_TIMESTAMP(6)
+     WHERE public_id = ?`,
+    [countryPricingId]
+  );
+  await createAuditEvent({
+    actionCode: 'country_pricing.archived',
+    actionLabel: 'Country pricing archived',
+    actorRoleCode: actor.roleCodes[0] || 'ops_admin',
+    actorUserId: actor.userId,
+    entityPk: null,
+    entityTableName: 'country_pricing_overrides',
+    sourceModule: 'settings_workspace',
+    summaryOldValue: mapCountryPricing(existing),
+  });
+
+  return { id: countryPricingId, status: 'archived' as const };
 };

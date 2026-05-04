@@ -329,7 +329,7 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
           <h1 className="text-2xl font-medium text-gray-900" style={{ fontFamily: "'Playfair Display', serif" }}>Communications Desk</h1>
           <p className="text-sm text-gray-500 mt-1">Manage client correspondence and internal thread routing.</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <button
             className="px-4 py-2 bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 text-sm font-medium rounded-lg transition"
             onClick={() => navigate('/reports?drilldown=waiting-threads')}
@@ -348,10 +348,10 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 grid lg:grid-cols-[340px_1fr_320px] xl:grid-cols-[380px_1fr_360px] gap-6">
+      <div className="grid min-h-0 min-w-0 flex-1 gap-6 xl:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)_minmax(18rem,22rem)]">
         
         {/* Left: Thread List */}
-        <div className="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col overflow-hidden">
+        <div className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="p-4 border-b border-gray-100 space-y-4 bg-gray-50/50">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -402,8 +402,8 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                 {selectedThreadId === thread.id && (
                   <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-600" />
                 )}
-                <div className="flex justify-between items-start mb-1.5">
-                  <h3 className={`text-sm truncate pr-2 ${thread.unreadCount > 0 ? 'font-bold text-gray-900' : 'font-medium text-gray-800'}`}>
+                <div className="mb-1.5 flex min-w-0 items-start justify-between">
+                  <h3 className={`min-w-0 truncate pr-2 text-sm ${thread.unreadCount > 0 ? 'font-bold text-gray-900' : 'font-medium text-gray-800'}`}>
                     {thread.clientName}
                   </h3>
                   <div className="flex items-center gap-2 shrink-0">
@@ -450,11 +450,11 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
 
         {/* Middle: Active Conversation */}
         {activeThread ? (
-          <div className="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col overflow-hidden relative">
+          <div className="relative flex min-w-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
             {/* Chat Header */}
-            <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between z-10 shrink-0">
+            <div className="z-10 flex shrink-0 flex-col gap-3 border-b border-gray-100 bg-gray-50/50 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
               <div className="min-w-0">
-                <div className="flex items-center gap-3 mb-1">
+                <div className="mb-1 flex flex-wrap items-center gap-3">
                   <h2 className="text-lg font-medium text-gray-900 truncate">{activeThread.clientName}</h2>
                   <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${getUrgencyColor(activeThread.urgency)} uppercase tracking-wider`}>
                     {getUrgencyLabel(activeThread.urgency)}
@@ -463,7 +463,7 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                     {activeThread.status === 'waiting' ? 'Needs Action' : 'Resolved/Active'}
                   </span>
                 </div>
-                <div className="flex items-center gap-2 text-xs text-gray-500">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
                   <Briefcase className="w-3.5 h-3.5" />
                   <span className="font-medium text-gray-700">{activeThread.matterTitle}</span>
                   <span className="text-gray-300">•</span>
@@ -507,7 +507,7 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
             </div>
 
             {/* Messages Area */}
-            <div className="flex-1 overflow-y-auto p-6 bg-[#FCFBF8]">
+            <div className="flex-1 overflow-y-auto bg-[#FCFBF8] p-4 sm:p-6">
               {Object.entries(groupedMessages).map(([date, messages]) => (
                 <div key={date} className="mb-8">
                   <div className="flex justify-center mb-6">
@@ -524,7 +524,7 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                       if (isSystem) {
                         return (
                           <div key={msg.id} className="flex justify-center">
-                            <div className="bg-gray-50 border border-gray-100 text-gray-500 text-xs px-4 py-2 rounded-lg flex items-center gap-2">
+                            <div className="flex max-w-full items-center gap-2 rounded-lg border border-gray-100 bg-gray-50 px-4 py-2 text-xs text-gray-500 admin-wrap-anywhere">
                               <ShieldAlert className="w-3.5 h-3.5" />
                               {msg.content}
                               <span className="text-gray-400 ml-2">
@@ -537,19 +537,19 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
 
                       return (
                         <div key={msg.id} className={`flex flex-col ${isClient ? 'items-start' : 'items-end'}`}>
-                          <div className="flex items-end gap-2 max-w-[80%]">
+                          <div className="flex max-w-full items-end gap-2 sm:max-w-[80%]">
                             {isClient && (
                               <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 text-sm font-bold shadow-sm">
                                 {msg.senderName.charAt(0)}
                               </div>
                             )}
                             
-                            <div className={`flex flex-col ${isClient ? 'items-start' : 'items-end'}`}>
+                            <div className={`flex min-w-0 flex-col ${isClient ? 'items-start' : 'items-end'}`}>
                               <span className="text-[11px] text-gray-500 mb-1 px-1 font-medium">
                                 {msg.senderName} <span className="font-normal opacity-70 ml-1">{new Date(msg.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
                               </span>
                               
-                              <div className={`p-3.5 rounded-2xl text-sm shadow-sm ${
+                              <div className={`max-w-full p-3.5 rounded-2xl text-sm shadow-sm admin-wrap-anywhere ${
                                 isClient 
                                   ? 'bg-white border border-gray-200 text-gray-800 rounded-bl-sm' 
                                   : 'bg-gray-900 text-white rounded-br-sm'
@@ -561,7 +561,7 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                                     {msg.attachments.map((att, i) => (
                                       <button
                                         key={`${msg.id}-${att.documentId}-${i}`}
-                                        className={`flex items-center gap-2 p-2 rounded border text-left ${
+                                        className={`flex min-w-0 max-w-full items-center gap-2 rounded border p-2 text-left ${
                                           isClient ? 'bg-gray-50 border-gray-100' : 'bg-gray-800 border-gray-700'
                                         }`}
                                         disabled={!onDownloadAttachment}
@@ -607,8 +607,8 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
                   }
                   className="w-full bg-transparent p-3 text-sm outline-none resize-none"
                 />
-                <div className="px-3 py-2 flex items-center justify-between border-t border-gray-200 bg-white">
-                  <div className="flex items-center gap-1">
+                <div className="flex flex-col gap-3 border-t border-gray-200 bg-white px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 flex-wrap items-center gap-1">
                     <button
                       className="p-2 text-gray-300 rounded-lg cursor-not-allowed"
                       disabled
@@ -683,7 +683,7 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
             </div>
           </div>
         ) : (
-          <div className="bg-white border border-gray-200 rounded-xl shadow-sm flex items-center justify-center p-8">
+          <div className="flex min-w-0 items-center justify-center rounded-xl border border-gray-200 bg-white p-8 shadow-sm">
             <EmptyState 
               icon={MessageSquare} 
               title="No Thread Selected" 
@@ -694,15 +694,15 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
 
         {/* Right: Contextual Metadata */}
         {activeThread && activeClient ? (
-          <div className="flex flex-col gap-6 overflow-y-auto">
+          <div className="flex min-w-0 flex-col gap-6 overflow-y-auto">
             {/* Client Context Card */}
-            <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+            <div className="min-w-0 rounded-xl border border-gray-200 bg-white p-5 shadow-sm admin-wrap-anywhere">
               <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Client Profile</h3>
               <div className="flex items-center gap-3 mb-4">
                 <div className="w-12 h-12 rounded-full bg-blue-50 text-blue-700 flex items-center justify-center text-lg font-bold border border-blue-100">
                   {activeClient.name.charAt(0)}
                 </div>
-                <div>
+                <div className="min-w-0">
                   <h4 className="font-medium text-gray-900">{activeClient.name}</h4>
                   <p className="text-xs text-gray-500">
                     {activeClient.lifecycle === 'client' ? 'Client' : 'Prospect / Lead'}
@@ -730,7 +730,7 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
 
             {/* Matter Context Card */}
             {activeMatter ? (
-              <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+              <div className="min-w-0 rounded-xl border border-gray-200 bg-white p-5 shadow-sm admin-wrap-anywhere">
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Linked Matter</h3>
                 <div className="mb-4">
                   <h4 className="font-medium text-gray-900 mb-1">{activeMatter.title}</h4>
@@ -762,7 +762,7 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
 
             {/* Upcoming Meetings */}
             {clientEvents.length > 0 && (
-              <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+              <div className="min-w-0 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center justify-between">
                   Upcoming Events
                   <span className="bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded text-[10px]">{clientEvents.length}</span>
@@ -799,17 +799,17 @@ export const MessagesDeskAdmin: React.FC<MessagesDeskAdminProps> = ({
 
             {/* Recent Invoices */}
             {clientInvoices.length > 0 && (
-              <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+              <div className="min-w-0 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Recent Invoices</h3>
                 <div className="space-y-3">
                   {clientInvoices.map(inv => (
                     <button
                       key={inv.id}
-                      className="w-full flex items-center justify-between p-3 rounded-lg border border-gray-100 bg-gray-50 hover:border-gray-200 transition text-left"
+                      className="flex w-full items-center justify-between gap-3 rounded-lg border border-gray-100 bg-gray-50 p-3 text-left transition hover:border-gray-200"
                       onClick={() => navigate(`/billing?clientId=${activeThread.clientId}`)}
                       type="button"
                     >
-                      <div>
+                      <div className="min-w-0">
                         <p className="text-sm font-medium text-gray-900">{formatCurrency(inv.totalAmount)}</p>
                         <p className="text-xs text-gray-500 mt-0.5">Due {formatDate(inv.dueDate)}</p>
                       </div>

@@ -60,6 +60,10 @@ export const SettingsPage = () => {
         await adminApi.archiveTemplate(templateId);
         await refresh();
       }}
+      onArchiveTeamMember={async (memberId) => {
+        await adminApi.archiveTeamMember(memberId);
+        await refresh();
+      }}
       onCreateDocumentType={async (payload) => {
         await adminApi.createDocumentType(payload);
         await refresh();
@@ -86,6 +90,10 @@ export const SettingsPage = () => {
       }}
       onCreateTemplate={async (payload) => {
         await adminApi.createTemplate(payload);
+        await refresh();
+      }}
+      onCreateTeamMember={async (payload) => {
+        await adminApi.createTeamMember(payload);
         await refresh();
       }}
       onSetDefaultTemplate={async (templateId) => {
@@ -130,6 +138,10 @@ export const SettingsPage = () => {
       }}
       onUpdateTemplate={async (templateId, payload) => {
         await adminApi.updateTemplate(templateId, payload);
+        await refresh();
+      }}
+      onUpdateTeamMember={async (memberId, payload) => {
+        await adminApi.updateTeamMember(memberId, payload);
         await refresh();
       }}
       onUpdateInvoiceSettings={async (payload) => {

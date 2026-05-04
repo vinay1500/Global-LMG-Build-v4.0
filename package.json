@@ -4,5 +4,9 @@
   "scripts": {
     "smoke:beta": "node scripts/beta-smoke.mjs",
     "smoke:deployment": "node scripts/deployment-smoke.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "playwright": "^1.59.1"
   }
 }

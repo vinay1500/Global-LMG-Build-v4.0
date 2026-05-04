@@ -389,8 +389,14 @@ export const MatterDetailSection = ({
 
             {selectedMatter.assignedCounsel && (
               <div className="space-y-2 rounded-xl bg-gray-50 p-4">
-                <h3 className="text-xs uppercase tracking-wider text-gray-400">Assigned Counsel</h3>
+                <h3 className="text-xs uppercase tracking-wider text-gray-400">External Counsel Contact</h3>
                 <p className="text-sm">{selectedMatter.assignedCounsel}</p>
+              </div>
+            )}
+            {selectedMatter.assignedStaff && (
+              <div className="space-y-2 rounded-xl bg-gray-50 p-4">
+                <h3 className="text-xs uppercase tracking-wider text-gray-400">Coordination Contact</h3>
+                <p className="text-sm">{selectedMatter.assignedStaff}</p>
               </div>
             )}
 

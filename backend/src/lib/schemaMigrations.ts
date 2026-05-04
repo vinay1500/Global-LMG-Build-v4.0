@@ -3026,4 +3026,471 @@ export const NORMALIZED_MIGRATIONS: SchemaMigrationDefinition[] = [
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`
     ],
   },
+  {
+    id: '020-counsel-staff-registry',
+    description:
+      'Add registry metadata for external counsel, field partners, and client-visible matter assignments.',
+    statements: [
+      `SET @counsel_partners_has_partner_type := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'counsel_partners'
+          AND column_name = 'partner_type_code'
+      )`,
+      `SET @add_counsel_partners_partner_type_sql := IF(
+        @counsel_partners_has_partner_type = 0,
+        'ALTER TABLE counsel_partners ADD COLUMN partner_type_code VARCHAR(32) NOT NULL DEFAULT ''external_counsel'' AFTER organization_name',
+        'DO 0'
+      )`,
+      `PREPARE add_counsel_partners_partner_type_stmt FROM @add_counsel_partners_partner_type_sql`,
+      `EXECUTE add_counsel_partners_partner_type_stmt`,
+      `DEALLOCATE PREPARE add_counsel_partners_partner_type_stmt`,
+      `SET @counsel_partners_has_specialization := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'counsel_partners'
+          AND column_name = 'specialization_text'
+      )`,
+      `SET @add_counsel_partners_specialization_sql := IF(
+        @counsel_partners_has_specialization = 0,
+        'ALTER TABLE counsel_partners ADD COLUMN specialization_text VARCHAR(255) NULL AFTER bar_registration_number',
+        'DO 0'
+      )`,
+      `PREPARE add_counsel_partners_specialization_stmt FROM @add_counsel_partners_specialization_sql`,
+      `EXECUTE add_counsel_partners_specialization_stmt`,
+      `DEALLOCATE PREPARE add_counsel_partners_specialization_stmt`,
+      `SET @matter_assignments_has_visible_to_client := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'matter_assignments'
+          AND column_name = 'visible_to_client'
+      )`,
+      `SET @add_matter_assignments_visible_to_client_sql := IF(
+        @matter_assignments_has_visible_to_client = 0,
+        'ALTER TABLE matter_assignments ADD COLUMN visible_to_client TINYINT(1) NOT NULL DEFAULT 1 AFTER is_primary',
+        'DO 0'
+      )`,
+      `PREPARE add_matter_assignments_visible_to_client_stmt FROM @add_matter_assignments_visible_to_client_sql`,
+      `EXECUTE add_matter_assignments_visible_to_client_stmt`,
+      `DEALLOCATE PREPARE add_matter_assignments_visible_to_client_stmt`,
+      `SET @counsel_partners_has_registry_index := (
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'counsel_partners'
+          AND index_name = 'idx_counsel_partners_registry'
+      )`,
+      `SET @add_counsel_partners_registry_index_sql := IF(
+        @counsel_partners_has_registry_index = 0,
+        'ALTER TABLE counsel_partners ADD INDEX idx_counsel_partners_registry (partner_type_code, partner_status_code, archived_at, full_name)',
+        'DO 0'
+      )`,
+      `PREPARE add_counsel_partners_registry_index_stmt FROM @add_counsel_partners_registry_index_sql`,
+      `EXECUTE add_counsel_partners_registry_index_stmt`,
+      `DEALLOCATE PREPARE add_counsel_partners_registry_index_stmt`,
+      `SET @matter_assignments_has_visibility_index := (
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'matter_assignments'
+          AND index_name = 'idx_matter_assignments_client_visibility'
+      )`,
+      `SET @add_matter_assignments_visibility_index_sql := IF(
+        @matter_assignments_has_visibility_index = 0,
+        'ALTER TABLE matter_assignments ADD INDEX idx_matter_assignments_client_visibility (matter_id, visible_to_client, assignment_status_code, removed_at)',
+        'DO 0'
+      )`,
+      `PREPARE add_matter_assignments_visibility_index_stmt FROM @add_matter_assignments_visibility_index_sql`,
+      `EXECUTE add_matter_assignments_visibility_index_stmt`,
+      `DEALLOCATE PREPARE add_matter_assignments_visibility_index_stmt`
+    ],
+  },
+  {
+    id: '021-client-account-settings',
+    description:
+      'Persist client WhatsApp contact metadata, expanded communication preferences, and email-change verification targets.',
+    statements: [
+      `SET @contacts_has_mobile_number := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'client_account_contacts'
+          AND column_name = 'mobile_number'
+      )`,
+      `SET @add_contacts_mobile_number_sql := IF(
+        @contacts_has_mobile_number = 0,
+        'ALTER TABLE client_account_contacts ADD COLUMN mobile_number VARCHAR(40) NULL AFTER is_billing',
+        'DO 0'
+      )`,
+      `PREPARE add_contacts_mobile_number_stmt FROM @add_contacts_mobile_number_sql`,
+      `EXECUTE add_contacts_mobile_number_stmt`,
+      `DEALLOCATE PREPARE add_contacts_mobile_number_stmt`,
+      `SET @contacts_has_whatsapp_number := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'client_account_contacts'
+          AND column_name = 'whatsapp_number'
+      )`,
+      `SET @add_contacts_whatsapp_number_sql := IF(
+        @contacts_has_whatsapp_number = 0,
+        'ALTER TABLE client_account_contacts ADD COLUMN whatsapp_number VARCHAR(40) NULL AFTER mobile_number',
+        'DO 0'
+      )`,
+      `PREPARE add_contacts_whatsapp_number_stmt FROM @add_contacts_whatsapp_number_sql`,
+      `EXECUTE add_contacts_whatsapp_number_stmt`,
+      `DEALLOCATE PREPARE add_contacts_whatsapp_number_stmt`,
+      `SET @contacts_has_whatsapp_same := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'client_account_contacts'
+          AND column_name = 'whatsapp_same_as_mobile'
+      )`,
+      `SET @add_contacts_whatsapp_same_sql := IF(
+        @contacts_has_whatsapp_same = 0,
+        'ALTER TABLE client_account_contacts ADD COLUMN whatsapp_same_as_mobile TINYINT(1) NOT NULL DEFAULT 1 AFTER whatsapp_number',
+        'DO 0'
+      )`,
+      `PREPARE add_contacts_whatsapp_same_stmt FROM @add_contacts_whatsapp_same_sql`,
+      `EXECUTE add_contacts_whatsapp_same_stmt`,
+      `DEALLOCATE PREPARE add_contacts_whatsapp_same_stmt`,
+      `SET @requests_has_whatsapp_snapshot := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'service_requests'
+          AND column_name = 'contact_whatsapp_snapshot'
+      )`,
+      `SET @add_requests_whatsapp_snapshot_sql := IF(
+        @requests_has_whatsapp_snapshot = 0,
+        'ALTER TABLE service_requests ADD COLUMN contact_whatsapp_snapshot VARCHAR(40) NULL AFTER contact_mobile_snapshot',
+        'DO 0'
+      )`,
+      `PREPARE add_requests_whatsapp_snapshot_stmt FROM @add_requests_whatsapp_snapshot_sql`,
+      `EXECUTE add_requests_whatsapp_snapshot_stmt`,
+      `DEALLOCATE PREPARE add_requests_whatsapp_snapshot_stmt`,
+      `SET @email_tokens_has_email_snapshot := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'email_verification_tokens'
+          AND column_name = 'email_snapshot'
+      )`,
+      `SET @add_email_tokens_email_snapshot_sql := IF(
+        @email_tokens_has_email_snapshot = 0,
+        'ALTER TABLE email_verification_tokens ADD COLUMN email_snapshot VARCHAR(255) NULL AFTER user_id',
+        'DO 0'
+      )`,
+      `PREPARE add_email_tokens_email_snapshot_stmt FROM @add_email_tokens_email_snapshot_sql`,
+      `EXECUTE add_email_tokens_email_snapshot_stmt`,
+      `DEALLOCATE PREPARE add_email_tokens_email_snapshot_stmt`,
+      `SET @preferences_has_in_app_alerts := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'user_notification_preferences'
+          AND column_name = 'in_app_alerts'
+      )`,
+      `SET @add_preferences_in_app_alerts_sql := IF(
+        @preferences_has_in_app_alerts = 0,
+        'ALTER TABLE user_notification_preferences ADD COLUMN in_app_alerts TINYINT(1) NOT NULL DEFAULT 1 AFTER user_id',
+        'DO 0'
+      )`,
+      `PREPARE add_preferences_in_app_alerts_stmt FROM @add_preferences_in_app_alerts_sql`,
+      `EXECUTE add_preferences_in_app_alerts_stmt`,
+      `DEALLOCATE PREPARE add_preferences_in_app_alerts_stmt`,
+      `SET @preferences_has_whatsapp_alerts := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'user_notification_preferences'
+          AND column_name = 'whatsapp_alerts'
+      )`,
+      `SET @add_preferences_whatsapp_alerts_sql := IF(
+        @preferences_has_whatsapp_alerts = 0,
+        'ALTER TABLE user_notification_preferences ADD COLUMN whatsapp_alerts TINYINT(1) NOT NULL DEFAULT 0 AFTER sms_alerts',
+        'DO 0'
+      )`,
+      `PREPARE add_preferences_whatsapp_alerts_stmt FROM @add_preferences_whatsapp_alerts_sql`,
+      `EXECUTE add_preferences_whatsapp_alerts_stmt`,
+      `DEALLOCATE PREPARE add_preferences_whatsapp_alerts_stmt`,
+      `SET @email_tokens_has_change_lookup := (
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'email_verification_tokens'
+          AND index_name = 'idx_email_verification_user_purpose'
+      )`,
+      `SET @add_email_tokens_change_lookup_sql := IF(
+        @email_tokens_has_change_lookup = 0,
+        'ALTER TABLE email_verification_tokens ADD INDEX idx_email_verification_user_purpose (user_id, purpose_code, expires_at)',
+        'DO 0'
+      )`,
+      `PREPARE add_email_tokens_change_lookup_stmt FROM @add_email_tokens_change_lookup_sql`,
+      `EXECUTE add_email_tokens_change_lookup_stmt`,
+      `DEALLOCATE PREPARE add_email_tokens_change_lookup_stmt`,
+      `SET @phone_tokens_has_change_lookup := (
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'phone_verification_tokens'
+          AND index_name = 'idx_phone_verification_user_purpose'
+      )`,
+      `SET @add_phone_tokens_change_lookup_sql := IF(
+        @phone_tokens_has_change_lookup = 0,
+        'ALTER TABLE phone_verification_tokens ADD INDEX idx_phone_verification_user_purpose (user_id, purpose_code, expires_at)',
+        'DO 0'
+      )`,
+      `PREPARE add_phone_tokens_change_lookup_stmt FROM @add_phone_tokens_change_lookup_sql`,
+      `EXECUTE add_phone_tokens_change_lookup_stmt`,
+      `DEALLOCATE PREPARE add_phone_tokens_change_lookup_stmt`
+    ],
+  },
+  {
+    id: '022-request-pricing-configuration',
+    description:
+      'Make request services, consultation modes, urgency hours, and country pricing configurable with historical request snapshots.',
+    statements: [
+      `SET @services_has_base_fee := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'services'
+          AND column_name = 'base_fee_amount'
+      )`,
+      `SET @add_services_base_fee_sql := IF(
+        @services_has_base_fee = 0,
+        'ALTER TABLE services ADD COLUMN base_fee_amount DECIMAL(14,2) NOT NULL DEFAULT 1000.00 AFTER service_description',
+        'DO 0'
+      )`,
+      `PREPARE add_services_base_fee_stmt FROM @add_services_base_fee_sql`,
+      `EXECUTE add_services_base_fee_stmt`,
+      `DEALLOCATE PREPARE add_services_base_fee_stmt`,
+      `SET @services_has_icon_code := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'services'
+          AND column_name = 'service_icon_code'
+      )`,
+      `SET @add_services_icon_code_sql := IF(
+        @services_has_icon_code = 0,
+        'ALTER TABLE services ADD COLUMN service_icon_code VARCHAR(64) NULL AFTER base_fee_amount',
+        'DO 0'
+      )`,
+      `PREPARE add_services_icon_code_stmt FROM @add_services_icon_code_sql`,
+      `EXECUTE add_services_icon_code_stmt`,
+      `DEALLOCATE PREPARE add_services_icon_code_stmt`,
+      `UPDATE services
+       SET base_fee_amount = 1000.00
+       WHERE base_fee_amount IS NULL OR base_fee_amount = 0`,
+      `UPDATE services
+       SET service_icon_code = CASE service_code
+         WHEN 'get-counsel' THEN 'Users'
+         WHEN 'document-review' THEN 'FileCheck'
+         WHEN 'legal-drafting' THEN 'FileText'
+         WHEN 'case-assessment' THEN 'Target'
+         WHEN 'litigation-monitoring' THEN 'Eye'
+         WHEN 'liaison-support' THEN 'Briefcase'
+         WHEN 'court-technology' THEN 'Monitor'
+         ELSE COALESCE(service_icon_code, 'Briefcase')
+       END
+       WHERE service_icon_code IS NULL`,
+      `SET @consultation_modes_has_description := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'consultation_modes'
+          AND column_name = 'description_text'
+      )`,
+      `SET @add_consultation_modes_description_sql := IF(
+        @consultation_modes_has_description = 0,
+        'ALTER TABLE consultation_modes ADD COLUMN description_text VARCHAR(255) NULL AFTER label',
+        'DO 0'
+      )`,
+      `PREPARE add_consultation_modes_description_stmt FROM @add_consultation_modes_description_sql`,
+      `EXECUTE add_consultation_modes_description_stmt`,
+      `DEALLOCATE PREPARE add_consultation_modes_description_stmt`,
+      `SET @consultation_modes_has_transport_note := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'consultation_modes'
+          AND column_name = 'transport_disclaimer_text'
+      )`,
+      `SET @add_consultation_modes_transport_note_sql := IF(
+        @consultation_modes_has_transport_note = 0,
+        'ALTER TABLE consultation_modes ADD COLUMN transport_disclaimer_text VARCHAR(500) NULL AFTER description_text',
+        'DO 0'
+      )`,
+      `PREPARE add_consultation_modes_transport_note_stmt FROM @add_consultation_modes_transport_note_sql`,
+      `EXECUTE add_consultation_modes_transport_note_stmt`,
+      `DEALLOCATE PREPARE add_consultation_modes_transport_note_stmt`,
+      `UPDATE consultation_modes
+       SET transport_disclaimer_text = 'Transportation cost is extra and borne by the client. Final travel support cost depends on city and country.'
+       WHERE code = 'in-person'
+         AND (transport_disclaimer_text IS NULL OR transport_disclaimer_text = '')`,
+      `SET @urgency_rules_has_response_hours := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'pricing_urgency_rules'
+          AND column_name = 'response_window_hours'
+      )`,
+      `SET @add_urgency_rules_response_hours_sql := IF(
+        @urgency_rules_has_response_hours = 0,
+        'ALTER TABLE pricing_urgency_rules ADD COLUMN response_window_hours INT UNSIGNED NULL AFTER label',
+        'DO 0'
+      )`,
+      `PREPARE add_urgency_rules_response_hours_stmt FROM @add_urgency_rules_response_hours_sql`,
+      `EXECUTE add_urgency_rules_response_hours_stmt`,
+      `DEALLOCATE PREPARE add_urgency_rules_response_hours_stmt`,
+      `UPDATE pricing_urgency_rules
+       SET response_window_hours = CASE urgency_code
+         WHEN 'within-2hrs' THEN 2
+         WHEN 'within-6hrs' THEN 6
+         WHEN 'standard' THEN 48
+         ELSE COALESCE(response_window_hours, 48)
+       END
+       WHERE response_window_hours IS NULL`,
+      `CREATE TABLE IF NOT EXISTS country_pricing_overrides (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        public_id CHAR(26) NOT NULL,
+        country_code VARCHAR(8) NOT NULL,
+        country_name VARCHAR(120) NOT NULL,
+        currency_code CHAR(3) NOT NULL,
+        price_multiplier DECIMAL(14,6) NOT NULL DEFAULT 1.000000,
+        is_default TINYINT(1) NOT NULL DEFAULT 0,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at DATETIME(6) NOT NULL,
+        updated_at DATETIME(6) NOT NULL,
+        archived_at DATETIME(6) NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_country_pricing_public_id (public_id),
+        UNIQUE KEY uq_country_pricing_country (country_code),
+        INDEX idx_country_pricing_active (country_code, is_active, archived_at),
+        CONSTRAINT chk_country_pricing_multiplier CHECK (price_multiplier >= 0)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+      `INSERT INTO country_pricing_overrides (
+         public_id, country_code, country_name, currency_code, price_multiplier, is_default, is_active, created_at, updated_at
+       ) VALUES
+         (UPPER(SUBSTRING(REPLACE(UUID(), '-', ''), 1, 26)), 'DEFAULT', 'Default', 'INR', 1.000000, 1, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+         (UPPER(SUBSTRING(REPLACE(UUID(), '-', ''), 1, 26)), 'IN', 'India', 'INR', 1.000000, 0, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+         (UPPER(SUBSTRING(REPLACE(UUID(), '-', ''), 1, 26)), 'US', 'United States', 'USD', 0.012000, 0, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+         (UPPER(SUBSTRING(REPLACE(UUID(), '-', ''), 1, 26)), 'AU', 'Australia', 'AUD', 0.018000, 0, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+       ON DUPLICATE KEY UPDATE
+         country_name = VALUES(country_name),
+         currency_code = VALUES(currency_code),
+         updated_at = VALUES(updated_at)`,
+      `SET @service_requests_has_country_snapshot := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'service_requests'
+          AND column_name = 'country_code_snapshot'
+      )`,
+      `SET @add_service_requests_country_snapshot_sql := IF(
+        @service_requests_has_country_snapshot = 0,
+        'ALTER TABLE service_requests ADD COLUMN country_code_snapshot VARCHAR(8) NULL AFTER whatsapp_same_as_mobile',
+        'DO 0'
+      )`,
+      `PREPARE add_service_requests_country_snapshot_stmt FROM @add_service_requests_country_snapshot_sql`,
+      `EXECUTE add_service_requests_country_snapshot_stmt`,
+      `DEALLOCATE PREPARE add_service_requests_country_snapshot_stmt`,
+      `SET @service_requests_has_currency_snapshot := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'service_requests'
+          AND column_name = 'currency_code'
+      )`,
+      `SET @add_service_requests_currency_snapshot_sql := IF(
+        @service_requests_has_currency_snapshot = 0,
+        'ALTER TABLE service_requests ADD COLUMN currency_code CHAR(3) NULL AFTER country_code_snapshot',
+        'DO 0'
+      )`,
+      `PREPARE add_service_requests_currency_snapshot_stmt FROM @add_service_requests_currency_snapshot_sql`,
+      `EXECUTE add_service_requests_currency_snapshot_stmt`,
+      `DEALLOCATE PREPARE add_service_requests_currency_snapshot_stmt`,
+      `SET @request_services_has_name_snapshot := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'request_services'
+          AND column_name = 'service_name_snapshot'
+      )`,
+      `SET @add_request_services_name_snapshot_sql := IF(
+        @request_services_has_name_snapshot = 0,
+        'ALTER TABLE request_services ADD COLUMN service_name_snapshot VARCHAR(180) NULL AFTER service_id',
+        'DO 0'
+      )`,
+      `PREPARE add_request_services_name_snapshot_stmt FROM @add_request_services_name_snapshot_sql`,
+      `EXECUTE add_request_services_name_snapshot_stmt`,
+      `DEALLOCATE PREPARE add_request_services_name_snapshot_stmt`,
+      `SET @request_services_has_currency := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'request_services'
+          AND column_name = 'currency_code'
+      )`,
+      `SET @add_request_services_currency_sql := IF(
+        @request_services_has_currency = 0,
+        'ALTER TABLE request_services ADD COLUMN currency_code CHAR(3) NULL AFTER quoted_base_fee',
+        'DO 0'
+      )`,
+      `PREPARE add_request_services_currency_stmt FROM @add_request_services_currency_sql`,
+      `EXECUTE add_request_services_currency_stmt`,
+      `DEALLOCATE PREPARE add_request_services_currency_stmt`,
+      `SET @request_services_has_country_pricing := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'request_services'
+          AND column_name = 'country_pricing_override_id'
+      )`,
+      `SET @add_request_services_country_pricing_sql := IF(
+        @request_services_has_country_pricing = 0,
+        'ALTER TABLE request_services ADD COLUMN country_pricing_override_id BIGINT UNSIGNED NULL AFTER currency_code',
+        'DO 0'
+      )`,
+      `PREPARE add_request_services_country_pricing_stmt FROM @add_request_services_country_pricing_sql`,
+      `EXECUTE add_request_services_country_pricing_stmt`,
+      `DEALLOCATE PREPARE add_request_services_country_pricing_stmt`,
+      `SET @pricing_quotes_has_country_snapshot := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'pricing_quotes'
+          AND column_name = 'country_code'
+      )`,
+      `SET @add_pricing_quotes_country_snapshot_sql := IF(
+        @pricing_quotes_has_country_snapshot = 0,
+        'ALTER TABLE pricing_quotes ADD COLUMN country_code VARCHAR(8) NULL AFTER currency_code',
+        'DO 0'
+      )`,
+      `PREPARE add_pricing_quotes_country_snapshot_stmt FROM @add_pricing_quotes_country_snapshot_sql`,
+      `EXECUTE add_pricing_quotes_country_snapshot_stmt`,
+      `DEALLOCATE PREPARE add_pricing_quotes_country_snapshot_stmt`,
+      `SET @pricing_quotes_has_country_pricing := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'pricing_quotes'
+          AND column_name = 'country_pricing_override_id'
+      )`,
+      `SET @add_pricing_quotes_country_pricing_sql := IF(
+        @pricing_quotes_has_country_pricing = 0,
+        'ALTER TABLE pricing_quotes ADD COLUMN country_pricing_override_id BIGINT UNSIGNED NULL AFTER country_code',
+        'DO 0'
+      )`,
+      `PREPARE add_pricing_quotes_country_pricing_stmt FROM @add_pricing_quotes_country_pricing_sql`,
+      `EXECUTE add_pricing_quotes_country_pricing_stmt`,
+      `DEALLOCATE PREPARE add_pricing_quotes_country_pricing_stmt`
+    ],
+  },
 ];

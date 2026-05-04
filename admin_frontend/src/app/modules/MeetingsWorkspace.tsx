@@ -458,10 +458,10 @@ export const MeetingsWorkspace: React.FC<MeetingsWorkspaceProps> = ({
         </div>
       ) : null}
 
-      <div className="flex-1 min-h-0 grid lg:grid-cols-[1fr_360px] xl:grid-cols-[1fr_400px] gap-6">
+      <div className="grid min-h-0 min-w-0 flex-1 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,25rem)]">
         
         {/* Left Column: Agenda/Calendar */}
-        <div className="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col overflow-hidden">
+        <div className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           {/* Controls Bar */}
           <div className="p-4 border-b border-gray-100 flex flex-wrap items-center justify-between gap-4 bg-gray-50/50">
             <div className="flex items-center gap-4">

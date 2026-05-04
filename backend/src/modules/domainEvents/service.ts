@@ -7,6 +7,39 @@ interface RecipientRow extends RowDataPacket {
   user_id: number;
 }
 
+interface NotificationPreferenceRow extends RowDataPacket {
+  case_activity_alerts: number;
+  in_app_alerts: number;
+  invoice_reminders: number;
+  product_announcements: number;
+  user_id: number;
+}
+
+const shouldSuppressInAppNotification = (
+  preferences: NotificationPreferenceRow | undefined,
+  notificationTypeCode: string
+) => {
+  if (!preferences) {
+    return false;
+  }
+
+  if (preferences.in_app_alerts === 0) {
+    return true;
+  }
+
+  if (
+    ['payment_reminder', 'invoice_issued', 'invoice_paid', 'billing_update'].includes(notificationTypeCode)
+  ) {
+    return preferences.invoice_reminders === 0;
+  }
+
+  if (['product_announcement', 'platform_announcement'].includes(notificationTypeCode)) {
+    return preferences.product_announcements === 0;
+  }
+
+  return preferences.case_activity_alerts === 0;
+};
+
 const insertAuditEvent = async (
   connection: PoolConnection,
   input: {
@@ -70,8 +103,32 @@ const insertNotifications = async (
   }
 
   const createdAt = input.createdAt || toMysqlDateTime(nowUtc());
+  const preferenceRows = await selectAll<NotificationPreferenceRow>(
+    connection,
+    `SELECT
+       user_id,
+       in_app_alerts,
+       invoice_reminders,
+       case_activity_alerts,
+       product_announcements
+     FROM user_notification_preferences
+     WHERE user_id IN (${recipientUserIds.map(() => '?').join(', ')})`,
+    recipientUserIds
+  );
+  const preferencesByUserId = new Map(
+    preferenceRows.map((row) => [Number(row.user_id), row])
+  );
 
   for (const recipientUserId of recipientUserIds) {
+    if (
+      shouldSuppressInAppNotification(
+        preferencesByUserId.get(recipientUserId),
+        input.notificationTypeCode
+      )
+    ) {
+      continue;
+    }
+
     await connection.execute(
       `INSERT INTO notifications (
         public_id, recipient_user_id, notification_type_code, title, body_text, priority_code,

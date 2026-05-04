@@ -15,9 +15,39 @@ export const meRouter = Router();
 const notificationPreferencesSchema = z.object({
   caseActivityAlerts: z.boolean(),
   emailUpdates: z.boolean(),
+  inAppAlerts: z.boolean().default(true),
   invoiceReminders: z.boolean(),
   productAnnouncements: z.boolean(),
   smsAlerts: z.boolean(),
+  whatsappAlerts: z.boolean().default(false),
+});
+
+const accountContactSchema = z.object({
+  whatsappNumber: z.string().trim().min(8).max(40),
+  whatsappSameAsMobile: z.boolean(),
+});
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(10).max(200),
+});
+
+const emailChangeRequestSchema = z.object({
+  email: z.string().trim().email(),
+});
+
+const emailChangeConfirmSchema = z.object({
+  code: z.string().trim().min(4).max(12),
+  email: z.string().trim().email(),
+});
+
+const phoneChangeRequestSchema = z.object({
+  phone: z.string().trim().min(8).max(40),
+});
+
+const phoneChangeConfirmSchema = z.object({
+  code: z.string().trim().min(4).max(12),
+  phone: z.string().trim().min(8).max(40),
 });
 
 const requireClientActor = async (request: Parameters<typeof requireActor>[0], response: Parameters<typeof requireActor>[1]) => {
@@ -60,6 +90,90 @@ meRouter.put(
       preferences
     );
     response.json(nextPreferences);
+  })
+);
+
+meRouter.get(
+  '/me/account-settings',
+  asyncHandler(async (request, response) => {
+    const authenticatedUser = await requireAuthenticatedUser(request, response);
+    response.json(await clientAccountsService.getAccountSettings(authenticatedUser.id));
+  })
+);
+
+meRouter.patch(
+  '/me/account/contact',
+  asyncHandler(async (request, response) => {
+    requireCsrf(request);
+    const authenticatedUser = await requireAuthenticatedUser(request, response);
+    response.json(
+      await clientAccountsService.updateContactSettings(
+        authenticatedUser.id,
+        accountContactSchema.parse(request.body)
+      )
+    );
+  })
+);
+
+meRouter.post(
+  '/me/account/password',
+  asyncHandler(async (request, response) => {
+    requireCsrf(request);
+    const authenticatedUser = await requireAuthenticatedUser(request, response);
+    response.json(
+      await clientAccountsService.changePassword(
+        authenticatedUser.id,
+        changePasswordSchema.parse(request.body)
+      )
+    );
+  })
+);
+
+meRouter.post(
+  '/me/account/email-change/request',
+  asyncHandler(async (request, response) => {
+    requireCsrf(request);
+    const authenticatedUser = await requireAuthenticatedUser(request, response);
+    const payload = emailChangeRequestSchema.parse(request.body);
+    response.json(await clientAccountsService.requestEmailChange(authenticatedUser.id, payload.email));
+  })
+);
+
+meRouter.post(
+  '/me/account/email-change/confirm',
+  asyncHandler(async (request, response) => {
+    requireCsrf(request);
+    const authenticatedUser = await requireAuthenticatedUser(request, response);
+    response.json(
+      await clientAccountsService.confirmEmailChange(
+        authenticatedUser.id,
+        emailChangeConfirmSchema.parse(request.body)
+      )
+    );
+  })
+);
+
+meRouter.post(
+  '/me/account/phone-change/request',
+  asyncHandler(async (request, response) => {
+    requireCsrf(request);
+    const authenticatedUser = await requireAuthenticatedUser(request, response);
+    const payload = phoneChangeRequestSchema.parse(request.body);
+    response.json(await clientAccountsService.requestPhoneChange(authenticatedUser.id, payload.phone));
+  })
+);
+
+meRouter.post(
+  '/me/account/phone-change/confirm',
+  asyncHandler(async (request, response) => {
+    requireCsrf(request);
+    const authenticatedUser = await requireAuthenticatedUser(request, response);
+    response.json(
+      await clientAccountsService.confirmPhoneChange(
+        authenticatedUser.id,
+        phoneChangeConfirmSchema.parse(request.body)
+      )
+    );
   })
 );
 

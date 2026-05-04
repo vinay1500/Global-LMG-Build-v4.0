@@ -263,6 +263,16 @@ export class MysqlAuthStore implements AuthStore {
           existing.id,
         ]
       );
+      await connection.execute(
+        `UPDATE client_account_contacts
+         SET mobile_number = COALESCE(mobile_number, ?),
+             whatsapp_number = CASE WHEN whatsapp_same_as_mobile = 1 THEN ? ELSE whatsapp_number END,
+             updated_at = ?
+         WHERE client_account_id = ?
+           AND user_id = ?
+           AND archived_at IS NULL`,
+        [normalizePhone(phone), normalizePhone(phone), timestamp, existing.id, userId]
+      );
 
       await this.upsertPrimaryClientAddress(connection, existing.id, country);
 
@@ -301,18 +311,18 @@ export class MysqlAuthStore implements AuthStore {
     await connection.execute(
       `INSERT INTO client_account_contacts (
         client_account_id, user_id, contact_role_code, is_primary, is_billing,
-        portal_access_enabled, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [clientAccountId, userId, 'primary', 1, 1, 1, timestamp, timestamp]
+        mobile_number, whatsapp_number, whatsapp_same_as_mobile, portal_access_enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [clientAccountId, userId, 'primary', 1, 1, normalizePhone(phone), normalizePhone(phone), 1, 1, timestamp, timestamp]
     );
 
     await this.upsertPrimaryClientAddress(connection, clientAccountId, country);
 
     await connection.execute(
       `INSERT INTO user_notification_preferences (
-        user_id, email_updates, sms_alerts, invoice_reminders, case_activity_alerts, product_announcements, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [userId, 1, 1, 1, 1, 0, timestamp]
+        user_id, in_app_alerts, email_updates, sms_alerts, whatsapp_alerts, invoice_reminders, case_activity_alerts, product_announcements, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [userId, 1, 1, 1, 0, 1, 1, 0, timestamp]
     );
 
     await connection.execute(

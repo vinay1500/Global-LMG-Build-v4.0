@@ -537,13 +537,13 @@ export const GlobalFinder = ({ isOpen, onClose, onSelect }: GlobalFinderProps) =
           className="relative w-full max-w-[1100px] h-[85vh] bg-white rounded-2xl shadow-2xl overflow-hidden border border-[#E6E4DD] flex flex-col"
         >
           {/* Top Command Search */}
-          <div className="flex items-center px-6 h-[72px] border-b border-[#E6E4DD] shrink-0 bg-white shadow-[0_4px_20px_-10px_rgba(0,0,0,0.05)] z-10 relative">
+          <div className="relative z-10 flex h-[72px] shrink-0 items-center border-b border-[#E6E4DD] bg-white px-4 shadow-[0_4px_20px_-10px_rgba(0,0,0,0.05)] sm:px-6">
             <Search className="w-6 h-6 text-[#A8A69F] mr-4 shrink-0" />
             <input 
               autoFocus
               type="text"
               placeholder="Search clients, matters, documents, or use syntax 'type:invoice'"
-              className="flex-1 bg-transparent border-none outline-none text-xl text-[#2C2B29] placeholder:text-[#A8A69F] font-medium"
+              className="min-w-0 flex-1 border-none bg-transparent text-base font-medium text-[#2C2B29] outline-none placeholder:text-[#A8A69F] sm:text-xl"
               value={query}
               onChange={e => setQuery(e.target.value)}
             />
@@ -557,9 +557,9 @@ export const GlobalFinder = ({ isOpen, onClose, onSelect }: GlobalFinderProps) =
             </div>
           </div>
 
-          <div className="flex flex-1 min-h-0 bg-[#FCFBF8]">
+          <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-[#FCFBF8]">
             {/* Left Filter Rail */}
-            <div className="w-56 border-r border-[#E6E4DD] bg-[#F9F8F6] p-4 flex flex-col gap-6 shrink-0 overflow-y-auto">
+            <div className="hidden w-56 shrink-0 flex-col gap-6 overflow-y-auto border-r border-[#E6E4DD] bg-[#F9F8F6] p-4 md:flex">
               
               <div>
                 <h4 className="text-[10px] font-bold text-[#8C8981] uppercase tracking-wider mb-3 px-2">Filters</h4>
@@ -628,7 +628,7 @@ export const GlobalFinder = ({ isOpen, onClose, onSelect }: GlobalFinderProps) =
             </div>
 
             {/* Middle: Results List */}
-            <div className="w-[360px] border-r border-[#E6E4DD] bg-white flex flex-col min-h-0">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col border-r border-[#E6E4DD] bg-white md:max-w-[360px]">
               <div className="flex-1 overflow-y-auto custom-scrollbar">
                 {flatGroupedResults.length === 0 ? (
                    <div className="py-12">
@@ -684,13 +684,13 @@ export const GlobalFinder = ({ isOpen, onClose, onSelect }: GlobalFinderProps) =
             </div>
 
             {/* Right: Rich Preview Panel */}
-            <div className="flex-1 bg-[#F9F8F6] min-h-0 relative">
+            <div className="relative hidden min-h-0 min-w-0 flex-1 bg-[#F9F8F6] lg:block">
                {renderPreview()}
             </div>
           </div>
           
-          <div className="bg-white px-6 py-3 border-t border-[#E6E4DD] flex items-center justify-between text-xs text-[#8C8981] shrink-0">
-            <div className="flex items-center gap-6">
+          <div className="flex shrink-0 flex-col gap-2 border-t border-[#E6E4DD] bg-white px-4 py-3 text-xs text-[#8C8981] sm:flex-row sm:items-center sm:justify-between sm:px-6">
+            <div className="flex flex-wrap items-center gap-3 sm:gap-6">
               <span className="flex items-center gap-1.5 font-medium"><kbd className="bg-[#F4F1EA] px-1.5 rounded border border-[#E6E4DD] text-[#5A7C96]">⌘</kbd> <kbd className="bg-[#F4F1EA] px-1.5 rounded border border-[#E6E4DD] text-[#5A7C96]">K</kbd> <span className="ml-1">Search</span></span>
               <span className="flex items-center gap-1.5 font-medium"><kbd className="bg-[#F4F1EA] px-1.5 rounded border border-[#E6E4DD] text-[#5A7C96]">↑</kbd> <kbd className="bg-[#F4F1EA] px-1.5 rounded border border-[#E6E4DD] text-[#5A7C96]">↓</kbd> <span className="ml-1">Navigate</span></span>
               <span className="flex items-center gap-1.5 font-medium"><kbd className="bg-[#F4F1EA] px-1.5 rounded border border-[#E6E4DD] text-[#5A7C96]">↵</kbd> <span className="ml-1">Open</span></span>

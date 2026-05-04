@@ -565,10 +565,10 @@ export const BillingWorkspace: React.FC<{
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 grid lg:grid-cols-[320px_1fr_300px] xl:grid-cols-[360px_1fr_340px] gap-6">
+      <div className="grid min-h-0 min-w-0 flex-1 gap-6 xl:grid-cols-[minmax(18rem,22rem)_minmax(0,1fr)_minmax(18rem,21rem)]">
         
         {/* Left: Invoice Queue */}
-        <div className="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col overflow-hidden">
+        <div className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="p-4 border-b border-gray-100 bg-gray-50/50 space-y-3">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
@@ -632,11 +632,11 @@ export const BillingWorkspace: React.FC<{
         </div>
 
         {/* Middle: PDF Preview Document */}
-        <div className="bg-gray-100/50 border border-gray-200 rounded-xl shadow-inner flex flex-col overflow-y-auto relative">
+        <div className="relative flex min-w-0 flex-col overflow-y-auto rounded-xl border border-gray-200 bg-gray-100/50 shadow-inner">
           {activeInvoice ? (
-            <div className="p-8 mx-auto w-full max-w-2xl min-h-full flex items-center justify-center">
+            <div className="mx-auto flex min-h-full w-full max-w-2xl items-center justify-center p-4 sm:p-8">
               {/* Paper Document */}
-              <div className="bg-white w-full shadow-md rounded-sm overflow-hidden border border-gray-200">
+              <div className="min-w-0 w-full overflow-hidden rounded-sm border border-gray-200 bg-white shadow-md">
                 {/* Ribbon Top */}
                 <div
                   className={`h-2 w-full ${
@@ -654,10 +654,10 @@ export const BillingWorkspace: React.FC<{
                   }`}
                 />
                 
-                <div className="p-10">
+                <div className="p-4 sm:p-8 lg:p-10">
                   {/* Header */}
-                  <div className="flex justify-between items-start mb-12">
-                    <div>
+                  <div className="mb-12 flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
                       <h1 className="text-3xl font-medium text-gray-900 mb-1" style={{ fontFamily: "'Playfair Display', serif" }}>INVOICE</h1>
                       <p className="text-sm font-medium text-gray-500">{activeInvoice.id}</p>
                       
@@ -669,7 +669,7 @@ export const BillingWorkspace: React.FC<{
                       </div>
                     </div>
                     
-                    <div className="text-right">
+                    <div className="min-w-0 text-left sm:text-right">
                       <div className="mb-6">
                         <h2 className="text-xl font-bold text-gray-900" style={{ fontFamily: "'Playfair Display', serif" }}>LegalConnect</h2>
                         <p className="text-xs text-gray-500 mt-1">101 Heritage Building, Fort<br/>Mumbai, MH 400001</p>
@@ -703,37 +703,39 @@ export const BillingWorkspace: React.FC<{
                   )}
 
                   {/* Line Items */}
-                  <table className="w-full mb-8">
-                    <thead>
-                      <tr className="border-b-2 border-gray-900 text-xs font-bold text-gray-500 uppercase tracking-wider">
-                        <th className="text-left py-3">Description</th>
-                        <th className="text-center py-3 w-20">Qty</th>
-                        <th className="text-right py-3 w-32">Rate</th>
-                        <th className="text-right py-3 w-32">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 text-sm">
-                      {activeInvoice.items.map((item, idx) => (
-                        <tr key={idx}>
-                          <td className="py-4 text-gray-900">
-                            {item.description}
-                            {item.taxes?.length ? (
-                              <p className="mt-1 text-xs text-gray-400">
-                                {item.taxes.map((tax) => `${tax.name} ${tax.percent.toFixed(2)}%`).join(' · ')}
-                              </p>
-                            ) : null}
-                          </td>
-                          <td className="py-4 text-center text-gray-600">{item.quantity}</td>
-                          <td className="py-4 text-right text-gray-600">{formatCurrency(item.rate)}</td>
-                          <td className="py-4 text-right font-medium text-gray-900">{formatCurrency(item.amount)}</td>
+                  <div className="admin-table-scroll mb-8">
+                    <table className="min-w-[520px] w-full">
+                      <thead>
+                        <tr className="border-b-2 border-gray-900 text-xs font-bold text-gray-500 uppercase tracking-wider">
+                          <th className="py-3 text-left">Description</th>
+                          <th className="w-20 py-3 text-center">Qty</th>
+                          <th className="w-32 py-3 text-right">Rate</th>
+                          <th className="w-32 py-3 text-right">Amount</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 text-sm">
+                        {activeInvoice.items.map((item, idx) => (
+                          <tr key={idx}>
+                            <td className="py-4 text-gray-900 admin-wrap-anywhere">
+                              {item.description}
+                              {item.taxes?.length ? (
+                                <p className="mt-1 text-xs text-gray-400">
+                                  {item.taxes.map((tax) => `${tax.name} ${tax.percent.toFixed(2)}%`).join(' · ')}
+                                </p>
+                              ) : null}
+                            </td>
+                            <td className="py-4 text-center text-gray-600">{item.quantity}</td>
+                            <td className="py-4 text-right text-gray-600">{formatCurrency(item.rate)}</td>
+                            <td className="py-4 text-right font-medium text-gray-900">{formatCurrency(item.amount)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
 
                   {/* Totals */}
                   <div className="flex justify-end">
-                    <div className="w-64 space-y-3 text-sm">
+                    <div className="w-full max-w-64 space-y-3 text-sm">
                       <div className="flex justify-between text-gray-600">
                         <span>Subtotal</span>
                         <span>{formatCurrency(activeInvoice.amount)}</span>
@@ -791,7 +793,7 @@ export const BillingWorkspace: React.FC<{
 
         {/* Right: Context & Actions */}
         {activeInvoice && (
-          <div className="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col overflow-hidden">
+          <div className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
             <div className="p-5 border-b border-gray-100 bg-gray-50/50">
               <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Quick Actions</h3>
               <div className="grid grid-cols-2 gap-2">

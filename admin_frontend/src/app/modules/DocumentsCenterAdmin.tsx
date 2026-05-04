@@ -431,7 +431,7 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
           className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm"
           onSubmit={(event) => void handleUploadSubmit(event)}
         >
-          <div className="grid gap-3 md:grid-cols-[2fr_1.4fr_1fr_1fr_1.5fr_auto] md:items-end">
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.5fr)_auto] lg:items-end">
             <label className="text-xs font-medium text-gray-500">
               Matter
               <select
@@ -521,10 +521,10 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
         </div>
       )}
 
-      <div className="flex-1 min-h-0 grid lg:grid-cols-[1fr_380px] xl:grid-cols-[1fr_420px] gap-6">
-        <div className="bg-white border border-gray-200 rounded-xl shadow-sm flex flex-col overflow-hidden">
+      <div className="grid min-h-0 min-w-0 flex-1 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)]">
+        <div className="flex min-w-0 flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="p-4 border-b border-gray-100 flex flex-wrap items-center gap-4 bg-gray-50/50">
-            <div className="relative flex-1 min-w-[200px]">
+            <div className="relative min-w-0 flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
               <input
                 className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg outline-none focus:border-gray-400 bg-white"

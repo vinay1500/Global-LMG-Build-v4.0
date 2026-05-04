@@ -22,7 +22,7 @@ import type {
   PlatformEvent,
   PlatformUser,
 } from '../../../data/dashboardTypes';
-import type { PortalNotificationResponse } from '../../../lib/api/contracts';
+import type { ClientAccountSettingsResponse, PortalNotificationResponse } from '../../../lib/api/contracts';
 
 interface DashboardMessagesSectionProps {
   myThreads: MessageThread[];
@@ -424,7 +424,9 @@ interface DashboardSettingsSectionProps {
   totalNotifications: number;
   preferences: {
     emailUpdates: boolean;
+    inAppAlerts: boolean;
     smsAlerts: boolean;
+    whatsappAlerts: boolean;
     invoiceReminders: boolean;
     caseActivityAlerts: boolean;
     productAnnouncements: boolean;
@@ -432,12 +434,27 @@ interface DashboardSettingsSectionProps {
   onPreferenceChange: (
     key:
       | 'emailUpdates'
+      | 'inAppAlerts'
       | 'smsAlerts'
+      | 'whatsappAlerts'
       | 'invoiceReminders'
       | 'caseActivityAlerts'
       | 'productAnnouncements',
     value: boolean
   ) => void;
+  accountSettings: ClientAccountSettingsResponse | null;
+  accountSettingsError?: string | null;
+  isAccountSettingsLoading?: boolean;
+  onChangePassword: (payload: { currentPassword: string; newPassword: string }) => Promise<void>;
+  onConfirmEmailChange: (payload: { code: string; email: string }) => Promise<ClientAccountSettingsResponse>;
+  onConfirmPhoneChange: (payload: { code: string; phone: string }) => Promise<ClientAccountSettingsResponse>;
+  onRefreshAccountSettings: () => Promise<void>;
+  onRequestEmailChange: (payload: { email: string }) => Promise<{ deliveryHint?: string; providerMode: string }>;
+  onRequestPhoneChange: (payload: { phone: string }) => Promise<{ deliveryHint?: string; providerMode: string }>;
+  onUpdateWhatsApp: (payload: {
+    whatsappNumber: string;
+    whatsappSameAsMobile: boolean;
+  }) => Promise<ClientAccountSettingsResponse>;
   onOpenNotifications: () => void;
   onSignOut: () => void;
 }
@@ -446,186 +463,378 @@ export const DashboardSettingsSection = ({
   user,
   totalNotifications,
   preferences,
+  accountSettings,
+  accountSettingsError,
+  isAccountSettingsLoading = false,
+  onChangePassword,
+  onConfirmEmailChange,
+  onConfirmPhoneChange,
+  onRefreshAccountSettings,
+  onRequestEmailChange,
+  onRequestPhoneChange,
+  onUpdateWhatsApp,
   onPreferenceChange,
   onOpenNotifications,
   onSignOut,
-}: DashboardSettingsSectionProps) => (
-  <div className="space-y-6">
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <div>
-        <h1 className="text-2xl" style={{ fontFamily: "'Playfair Display', serif" }}>
-          Settings
-        </h1>
-        <p className="mt-1 text-sm text-gray-500">
-          These preferences are saved through the account API for your signed-in portal profile and
-          take effect on future notifications delivered by the backend.
-        </p>
-      </div>
-      <button
-        type="button"
-        onClick={onOpenNotifications}
-        className="inline-flex items-center gap-2 self-start rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50"
-      >
-        <Bell className="h-4 w-4" /> Review Notifications ({totalNotifications})
-      </button>
-    </div>
+}: DashboardSettingsSectionProps) => {
+  const [passwordForm, setPasswordForm] = React.useState({ currentPassword: '', newPassword: '' });
+  const [emailForm, setEmailForm] = React.useState({ code: '', email: '' });
+  const [phoneForm, setPhoneForm] = React.useState({ code: '', phone: '' });
+  const [whatsappForm, setWhatsappForm] = React.useState({
+    whatsappNumber: accountSettings?.account.whatsappNumber || user.phone,
+    whatsappSameAsMobile: accountSettings?.account.whatsappSameAsMobile ?? true,
+  });
+  const [statusMessage, setStatusMessage] = React.useState('');
+  const [actionError, setActionError] = React.useState('');
+  const [isSavingAccount, setIsSavingAccount] = React.useState(false);
 
-    <div className="grid gap-4 lg:grid-cols-3">
-      <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
-        <div className="mb-3 flex items-center gap-2 text-gray-900">
-          <User className="h-4 w-4" />
-          <h2 className="text-sm">Account Details</h2>
+  React.useEffect(() => {
+    if (!accountSettings) {
+      return;
+    }
+    setWhatsappForm({
+      whatsappNumber: accountSettings.account.whatsappNumber || accountSettings.account.phone,
+      whatsappSameAsMobile: accountSettings.account.whatsappSameAsMobile,
+    });
+    setEmailForm((current) => ({ ...current, email: accountSettings.account.email }));
+    setPhoneForm((current) => ({ ...current, phone: accountSettings.account.phone }));
+  }, [accountSettings]);
+
+  const runAccountAction = async (action: () => Promise<void>) => {
+    setStatusMessage('');
+    setActionError('');
+    setIsSavingAccount(true);
+    try {
+      await action();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Account action failed.');
+    } finally {
+      setIsSavingAccount(false);
+    }
+  };
+
+  const providerStatus = accountSettings?.providerMode;
+  const emailProviderDisabled = providerStatus?.email === 'disabled';
+  const smsProviderDisabled = providerStatus?.sms === 'disabled';
+
+  const preferenceItems = [
+    {
+      key: 'inAppAlerts' as const,
+      label: 'In-app notifications',
+      description: 'Portal notifications for messages, billing, documents, events, and matter activity.',
+      icon: Bell,
+    },
+    {
+      key: 'emailUpdates' as const,
+      label: 'Email updates',
+      description: emailProviderDisabled
+        ? 'Email provider is disabled; this preference is saved for when delivery is configured.'
+        : 'Matter progress, event reminders, and billing updates by email.',
+      icon: Bell,
+    },
+    {
+      key: 'smsAlerts' as const,
+      label: 'SMS and phone alerts',
+      description: smsProviderDisabled
+        ? 'SMS provider is disabled; this preference is saved but no SMS is sent in this environment.'
+        : 'Urgent notices and verification-related mobile updates.',
+      icon: Smartphone,
+    },
+    {
+      key: 'whatsappAlerts' as const,
+      label: 'WhatsApp preference',
+      description: 'Saved as an informational preference. No WhatsApp delivery provider is configured.',
+      icon: Smartphone,
+    },
+    {
+      key: 'invoiceReminders' as const,
+      label: 'Invoice reminders',
+      description: 'Reminders when an invoice is sent, due soon, or overdue.',
+      icon: CreditCard,
+    },
+    {
+      key: 'caseActivityAlerts' as const,
+      label: 'Case activity alerts',
+      description: 'Notifications when documents, notes, or milestones change.',
+      icon: MessageSquare,
+    },
+    {
+      key: 'productAnnouncements' as const,
+      label: 'Product announcements',
+      description: 'Future portal release notes and account feature updates.',
+      icon: Shield,
+    },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl" style={{ fontFamily: "'Playfair Display', serif" }}>
+            Settings
+          </h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Account security, verified contact details, and communication preferences for your portal profile.
+          </p>
         </div>
-        <div className="space-y-3 text-sm text-gray-600">
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Name</p>
-            <p className="mt-1 text-gray-900">{user.name}</p>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Email</p>
-            <p className="mt-1 text-gray-900">{user.email}</p>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Phone</p>
-            <p className="mt-1 text-gray-900">{user.phone}</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
-        <div className="mb-3 flex items-center gap-2 text-gray-900">
-          <Bell className="h-4 w-4" />
-          <h2 className="text-sm">Notification Status</h2>
-        </div>
-        <p className="text-3xl text-gray-900" style={{ fontFamily: "'Playfair Display', serif" }}>
-          {totalNotifications}
-        </p>
-        <p className="mt-2 text-sm text-gray-500">
-          Active alerts across unread threads, upcoming events, and billing reminders.
-        </p>
-      </div>
-
-      <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
-        <div className="mb-3 flex items-center gap-2 text-gray-900">
-          <Shield className="h-4 w-4" />
-          <h2 className="text-sm">Security Preview</h2>
-        </div>
-        <p className="text-sm text-gray-600">
-          Authentication now runs through the Express trust boundary with secure session cookies,
-          CSRF protection, verification flows, MySQL-backed persistence, and server-owned password
-          recovery.
-        </p>
-      </div>
-    </div>
-
-    <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
-      <div className="mb-5 flex items-center gap-2">
-        <Settings className="h-4 w-4 text-gray-500" />
-        <h2 className="text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>
-          Communication Preferences
-        </h2>
-      </div>
-
-      <div className="space-y-4">
-        {[
-          {
-            key: 'emailUpdates' as const,
-            label: 'Email updates',
-            description: 'Matter progress, event reminders, and billing updates by email.',
-            icon: Bell,
-          },
-          {
-            key: 'smsAlerts' as const,
-            label: 'SMS and phone alerts',
-            description: 'Urgent notices and verification-related mobile updates.',
-            icon: Smartphone,
-          },
-          {
-            key: 'invoiceReminders' as const,
-            label: 'Invoice reminders',
-            description: 'Reminders when an invoice is sent, due soon, or overdue.',
-            icon: CreditCard,
-          },
-          {
-            key: 'caseActivityAlerts' as const,
-            label: 'Case activity alerts',
-            description: 'Notifications when documents, notes, or milestones change.',
-            icon: MessageSquare,
-          },
-          {
-            key: 'productAnnouncements' as const,
-            label: 'Product announcements',
-            description: 'Future portal release notes and account feature updates.',
-            icon: Shield,
-          },
-        ].map((preference) => {
-          const Icon = preference.icon;
-          const isEnabled = preferences[preference.key];
-
-          return (
-            <label
-              key={preference.key}
-              className="flex cursor-pointer items-start gap-4 rounded-xl border border-gray-100 px-4 py-4 transition hover:border-gray-200 hover:bg-gray-50/50"
-            >
-              <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-full bg-gray-100">
-                <Icon className="h-4 w-4 text-gray-600" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm text-gray-900">{preference.label}</p>
-                <p className="mt-1 text-sm text-gray-500">{preference.description}</p>
-              </div>
-              <input
-                type="checkbox"
-                checked={isEnabled}
-                onChange={(event) => onPreferenceChange(preference.key, event.target.checked)}
-                className="mt-1 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-300"
-              />
-            </label>
-          );
-        })}
-      </div>
-    </div>
-
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
-      <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
-        <h2 className="text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>
-          Legal and Privacy Controls
-        </h2>
-        <p className="mt-2 text-sm text-gray-500">
-          Public legal documents remain available from inside the dashboard while your account and
-          preferences are managed by the backend API.
-        </p>
-        <div className="mt-4 flex flex-wrap gap-3">
-          <Link
-            to="/privacy"
-            className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50"
-          >
-            Privacy Policy
-          </Link>
-          <Link
-            to="/legal-disclaimer"
-            className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50"
-          >
-            Legal Disclaimer
-          </Link>
-        </div>
-      </div>
-
-      <div className="rounded-xl border border-red-100 bg-red-50/60 p-6 shadow-sm">
-        <h2 className="text-lg text-red-700" style={{ fontFamily: "'Playfair Display', serif" }}>
-          Session Controls
-        </h2>
-        <p className="mt-2 text-sm text-red-700/80">
-          Use sign out to clear the active secure portal session on this device.
-        </p>
         <button
           type="button"
-          onClick={onSignOut}
-          className="mt-4 inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm text-white transition hover:bg-red-700"
+          onClick={onOpenNotifications}
+          className="inline-flex items-center gap-2 self-start rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50"
         >
-          <LogOut className="h-4 w-4" /> Sign out
+          <Bell className="h-4 w-4" /> Review Notifications ({totalNotifications})
         </button>
       </div>
+
+      {accountSettingsError ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          {accountSettingsError}{' '}
+          <button className="font-medium underline" onClick={() => void onRefreshAccountSettings()} type="button">
+            Retry
+          </button>
+        </div>
+      ) : null}
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
+          <div className="mb-3 flex items-center gap-2 text-gray-900">
+            <User className="h-4 w-4" />
+            <h2 className="text-sm">Account Details</h2>
+          </div>
+          <div className="space-y-3 text-sm text-gray-600">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Name</p>
+              <p className="mt-1 text-gray-900">{accountSettings?.account.name || user.name}</p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Email</p>
+              <p className="mt-1 text-gray-900">{accountSettings?.account.email || user.email}</p>
+              <p className="text-xs text-gray-400">
+                {accountSettings?.account.emailVerified ? 'Verified' : 'Verification pending'}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Phone</p>
+              <p className="mt-1 text-gray-900">{accountSettings?.account.phone || user.phone}</p>
+              <p className="text-xs text-gray-400">
+                {accountSettings?.account.phoneVerified ? 'Verified' : 'Verification pending'}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
+          <div className="mb-3 flex items-center gap-2 text-gray-900">
+            <Bell className="h-4 w-4" />
+            <h2 className="text-sm">Delivery Modes</h2>
+          </div>
+          <div className="space-y-2 text-sm text-gray-600">
+            <p>In-app: local</p>
+            <p>Email: {providerStatus?.email || 'loading'}</p>
+            <p>SMS: {providerStatus?.sms || 'loading'}</p>
+            <p>WhatsApp: informational only</p>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
+          <div className="mb-3 flex items-center gap-2 text-gray-900">
+            <Shield className="h-4 w-4" />
+            <h2 className="text-sm">Security</h2>
+          </div>
+          <p className="text-sm text-gray-600">
+            Password changes require your current password. Email and phone changes become active only after verification.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <form
+          className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void runAccountAction(async () => {
+              await onChangePassword(passwordForm);
+              setPasswordForm({ currentPassword: '', newPassword: '' });
+              setStatusMessage('Password changed.');
+            });
+          }}
+        >
+          <h2 className="text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>
+            Change Password
+          </h2>
+          <div className="mt-4 space-y-3">
+            <input
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+              onChange={(event) => setPasswordForm((current) => ({ ...current, currentPassword: event.target.value }))}
+              placeholder="Current password"
+              type="password"
+              value={passwordForm.currentPassword}
+            />
+            <input
+              className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+              onChange={(event) => setPasswordForm((current) => ({ ...current, newPassword: event.target.value }))}
+              placeholder="New strong password"
+              type="password"
+              value={passwordForm.newPassword}
+            />
+            <button
+              className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-50"
+              disabled={isSavingAccount || !passwordForm.currentPassword || !passwordForm.newPassword}
+              type="submit"
+            >
+              Save Password
+            </button>
+          </div>
+        </form>
+
+        <form
+          className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void runAccountAction(async () => {
+              await onUpdateWhatsApp(whatsappForm);
+              setStatusMessage('WhatsApp contact preference saved.');
+            });
+          }}
+        >
+          <h2 className="text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>
+            WhatsApp Contact
+          </h2>
+          <label className="mt-4 flex items-center gap-2 text-sm text-gray-700">
+            <input
+              checked={whatsappForm.whatsappSameAsMobile}
+              onChange={(event) =>
+                setWhatsappForm((current) => ({
+                  ...current,
+                  whatsappNumber: event.target.checked ? accountSettings?.account.phone || user.phone : current.whatsappNumber,
+                  whatsappSameAsMobile: event.target.checked,
+                }))
+              }
+              type="checkbox"
+            />
+            WhatsApp number is same as mobile
+          </label>
+          <input
+            className="mt-3 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm disabled:bg-gray-50"
+            disabled={whatsappForm.whatsappSameAsMobile}
+            onChange={(event) => setWhatsappForm((current) => ({ ...current, whatsappNumber: event.target.value }))}
+            placeholder="WhatsApp number"
+            type="tel"
+            value={whatsappForm.whatsappNumber}
+          />
+          <button className="mt-3 rounded-lg bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-50" disabled={isSavingAccount} type="submit">
+            Save Contact
+          </button>
+        </form>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+          <h2 className="text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>Email Change</h2>
+          <div className="mt-4 space-y-3">
+            <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" onChange={(event) => setEmailForm((current) => ({ ...current, email: event.target.value }))} placeholder="New email" type="email" value={emailForm.email} />
+            <div className="flex flex-wrap gap-2">
+              <button className="rounded-lg border border-gray-200 px-4 py-2 text-sm" disabled={isSavingAccount || emailProviderDisabled} onClick={() => void runAccountAction(async () => { const result = await onRequestEmailChange({ email: emailForm.email }); setStatusMessage(result.deliveryHint || 'Verification code sent to the new email.'); })} type="button">
+                Send Code
+              </button>
+              <input className="min-w-32 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm" onChange={(event) => setEmailForm((current) => ({ ...current, code: event.target.value }))} placeholder="Code" value={emailForm.code} />
+              <button className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-50" disabled={isSavingAccount || !emailForm.code} onClick={() => void runAccountAction(async () => { await onConfirmEmailChange(emailForm); setStatusMessage('Email verified and updated.'); })} type="button">
+                Confirm
+              </button>
+            </div>
+            {emailProviderDisabled ? <p className="text-xs text-amber-700">Email provider is disabled, so email changes cannot be verified in this environment.</p> : null}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+          <h2 className="text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>Phone Change</h2>
+          <div className="mt-4 space-y-3">
+            <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" onChange={(event) => setPhoneForm((current) => ({ ...current, phone: event.target.value }))} placeholder="New phone" type="tel" value={phoneForm.phone} />
+            <div className="flex flex-wrap gap-2">
+              <button className="rounded-lg border border-gray-200 px-4 py-2 text-sm" disabled={isSavingAccount || smsProviderDisabled} onClick={() => void runAccountAction(async () => { const result = await onRequestPhoneChange({ phone: phoneForm.phone }); setStatusMessage(result.deliveryHint || 'OTP sent to the new phone.'); })} type="button">
+                Send OTP
+              </button>
+              <input className="min-w-32 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm" onChange={(event) => setPhoneForm((current) => ({ ...current, code: event.target.value }))} placeholder="OTP" value={phoneForm.code} />
+              <button className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-50" disabled={isSavingAccount || !phoneForm.code} onClick={() => void runAccountAction(async () => { await onConfirmPhoneChange(phoneForm); setStatusMessage('Phone verified and updated.'); })} type="button">
+                Confirm
+              </button>
+            </div>
+            {smsProviderDisabled ? <p className="text-xs text-amber-700">SMS provider is disabled, so phone changes cannot be verified in this environment.</p> : null}
+          </div>
+        </div>
+      </div>
+
+      {isAccountSettingsLoading ? <p className="text-sm text-gray-500">Loading account settings...</p> : null}
+      {actionError ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div> : null}
+      {statusMessage ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{statusMessage}</div> : null}
+
+      <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+        <div className="mb-5 flex items-center gap-2">
+          <Settings className="h-4 w-4 text-gray-500" />
+          <h2 className="text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>
+            Communication Preferences
+          </h2>
+        </div>
+
+        <div className="space-y-4">
+          {preferenceItems.map((preference) => {
+            const Icon = preference.icon;
+            const isEnabled = preferences[preference.key];
+
+            return (
+              <label
+                key={preference.key}
+                className="flex cursor-pointer items-start gap-4 rounded-xl border border-gray-100 px-4 py-4 transition hover:border-gray-200 hover:bg-gray-50/50"
+              >
+                <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-full bg-gray-100">
+                  <Icon className="h-4 w-4 text-gray-600" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-gray-900">{preference.label}</p>
+                  <p className="mt-1 text-sm text-gray-500">{preference.description}</p>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={isEnabled}
+                  onChange={(event) => onPreferenceChange(preference.key, event.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-300"
+                />
+              </label>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+          <h2 className="text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>
+            Legal and Privacy Controls
+          </h2>
+          <p className="mt-2 text-sm text-gray-500">
+            Public legal documents remain available from inside the dashboard while account settings are managed by the backend API.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <Link to="/privacy" className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50">
+              Privacy Policy
+            </Link>
+            <Link to="/legal-disclaimer" className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50">
+              Legal Disclaimer
+            </Link>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-red-100 bg-red-50/60 p-6 shadow-sm">
+          <h2 className="text-lg text-red-700" style={{ fontFamily: "'Playfair Display', serif" }}>
+            Session Controls
+          </h2>
+          <p className="mt-2 text-sm text-red-700/80">
+            Use sign out to clear the active secure portal session on this device.
+          </p>
+          <button type="button" onClick={onSignOut} className="mt-4 inline-flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm text-white transition hover:bg-red-700">
+            <LogOut className="h-4 w-4" /> Sign out
+          </button>
+        </div>
+      </div>
     </div>
-  </div>
-);
+  );
+};

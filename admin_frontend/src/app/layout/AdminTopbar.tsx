@@ -71,7 +71,7 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
 
   return (
     <header className="sticky top-0 z-30 bg-[#F4F1EA] border-b border-[#E6E4DD] h-16 flex items-center justify-between px-4 sm:px-6 shadow-sm">
-      <div className="flex items-center gap-4">
+      <div className="flex min-w-0 items-center gap-4">
         <button
           className="lg:hidden p-2 -ml-2 text-[#8C8981] hover:text-[#2C2B29] hover:bg-[#E6E4DD] rounded-lg transition"
           onClick={onToggleSidebar}
@@ -79,12 +79,12 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
         >
           {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
         </button>
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <div className="w-8 h-8 bg-[#2C2B29] rounded flex items-center justify-center shadow-sm">
             <Scale className="w-4.5 h-4.5 text-[#C19A5B]" />
           </div>
           <span
-            className="font-bold text-xl tracking-tight text-[#2C2B29]"
+            className="truncate text-xl font-bold tracking-tight text-[#2C2B29]"
             style={{ fontFamily: "'Playfair Display', serif" }}
           >
             LegalConnect
@@ -95,7 +95,7 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
         </div>
       </div>
 
-      <div className="flex-1 max-w-xl mx-8 hidden md:block">
+      <div className="mx-8 hidden min-w-0 max-w-xl flex-1 lg:block">
         <button className="relative w-full flex items-center text-left" onClick={onOpenSearch} type="button">
           <Search className="w-4 h-4 text-[#8C8981] absolute left-3 top-1/2 -translate-y-1/2" />
           <div className="pl-9 pr-4 py-2 text-sm bg-white border border-[#E6E4DD] rounded-lg w-full text-[#A8A69F] hover:border-[#C19A5B] transition-colors cursor-text shadow-sm">
@@ -117,7 +117,7 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
         >
           <Search className="w-5 h-5" />
         </button>
-        <div className="relative hidden sm:block" ref={actionsMenuRef}>
+        <div className="relative hidden lg:block" ref={actionsMenuRef}>
           <button
             aria-expanded={actionsOpen}
             aria-haspopup="menu"
@@ -203,7 +203,7 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
             }}
             type="button"
           >
-            <div className="hidden sm:block text-right">
+            <div className="hidden text-right md:block">
               <p className="text-sm font-medium text-[#2C2B29]">
                 {currentUser?.displayName || 'Admin User'}
               </p>

@@ -7,6 +7,7 @@ import { getInvoiceSettings } from './invoiceSettings.js';
 import { getNotificationSettings } from './notificationSettings.js';
 import { getPlatformSettings } from './platformSettings.js';
 import { getDocumentTypes, getTemplates } from './templatesDocuments.js';
+import { getTeamRegistry } from './teamRegistry.js';
 
 type TaxRateRow = RowDataPacket & {
   code: string;
@@ -46,6 +47,7 @@ export const getWorkspace = async (actor: AdminActor) => {
     invoiceSettings,
     notificationSettings,
     platformSettings,
+    teamRegistry,
   ] = await Promise.all([
     getServiceCatalog(),
     getPricingRules(),
@@ -93,6 +95,7 @@ export const getWorkspace = async (actor: AdminActor) => {
     getInvoiceSettings(),
     getNotificationSettings(),
     getPlatformSettings(),
+    getTeamRegistry(actor),
   ]);
 
   const canManageRbac = actor.permissionCodes.includes('rbac.manage');
@@ -137,6 +140,7 @@ export const getWorkspace = async (actor: AdminActor) => {
     },
     serviceDomains: serviceCatalog.domains,
     services: serviceCatalog.services,
+    teamRegistry,
     templates: templateRegistry.templates,
   };
 };

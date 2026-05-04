@@ -632,7 +632,7 @@ export const ClientDetailAdmin: React.FC<ClientDetailAdminProps> = ({
         )}
 
         {activeTab === 'activity' && (
-          <div className="grid lg:grid-cols-2 gap-6">
+          <div className="grid min-w-0 gap-6 xl:grid-cols-2">
             <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-hidden">
               <div className="p-5 border-b border-gray-100">
                 <h3 className="font-bold text-gray-900 flex items-center gap-2">

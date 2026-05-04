@@ -32,4 +32,45 @@ export const clientAccountsService = {
     const repository = await getRepository();
     return repository.updateNotificationPreferences(userPublicId, preferences);
   },
+
+  async getAccountSettings(userPublicId: string) {
+    const repository = await getRepository();
+    return repository.getAccountSettings(userPublicId);
+  },
+
+  async updateContactSettings(
+    userPublicId: string,
+    payload: { whatsappNumber: string; whatsappSameAsMobile: boolean }
+  ) {
+    const repository = await getRepository();
+    return repository.updateContactSettings(userPublicId, payload);
+  },
+
+  async changePassword(
+    userPublicId: string,
+    payload: { currentPassword: string; newPassword: string }
+  ) {
+    const repository = await getRepository();
+    return repository.changePassword(userPublicId, payload);
+  },
+
+  async requestEmailChange(userPublicId: string, email: string) {
+    const repository = await getRepository();
+    return repository.requestEmailChange(userPublicId, email);
+  },
+
+  async confirmEmailChange(userPublicId: string, payload: { code: string; email: string }) {
+    const repository = await getRepository();
+    return repository.confirmEmailChange(userPublicId, payload);
+  },
+
+  async requestPhoneChange(userPublicId: string, phone: string) {
+    const repository = await getRepository();
+    return repository.requestPhoneChange(userPublicId, phone);
+  },
+
+  async confirmPhoneChange(userPublicId: string, payload: { code: string; phone: string }) {
+    const repository = await getRepository();
+    return repository.confirmPhoneChange(userPublicId, payload);
+  },
 };

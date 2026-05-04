@@ -18,16 +18,17 @@ const dashboardRequestSchema = z.object({
   fullName: z.string().trim().min(2).max(120),
   email: z.string().trim().email(),
   mobile: z.string().trim().min(8).max(40),
+  whatsappNumber: z.string().trim().min(8).max(40).optional(),
   whatsappSame: z.boolean(),
   services: z.array(z.string().trim().min(1)).min(1),
   legalDomain: z.string().trim().min(2).max(80),
   caseDetails: z.string().trim().min(10).max(5000),
   documentUploadIds: z.array(z.string().trim().min(1).max(96)).max(12).default([]),
   documents: z.array(requestDocumentSchema).max(12),
-  consultationMode: z.enum(['video', 'phone', 'in-person']),
+  consultationMode: z.string().trim().min(1).max(32),
   preferredDate: z.string().trim().min(1),
   preferredTime: z.string().trim().min(1),
-  urgency: z.enum(['standard', 'within-6hrs', 'within-2hrs']),
+  urgency: z.string().trim().min(1).max(32),
   pastLegalAction: z.boolean(),
 });
 
@@ -72,6 +73,14 @@ dashboardRouter.get(
     const authenticatedUser = await requireAuthenticatedUser(request, response);
     const snapshot = await dashboardService.getSnapshot(toDashboardUser(authenticatedUser));
     respondWithSnapshot(response, snapshot);
+  })
+);
+
+dashboardRouter.get(
+  '/dashboard/request-config',
+  asyncHandler(async (request, response) => {
+    const authenticatedUser = await requireAuthenticatedUser(request, response);
+    response.json(await dashboardService.getRequestPricingConfig(toDashboardUser(authenticatedUser)));
   })
 );
 

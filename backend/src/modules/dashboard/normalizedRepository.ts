@@ -22,6 +22,7 @@ import type {
   PlatformDocument,
   PlatformEvent,
   PlatformUser,
+  RequestPricingConfig,
 } from './types.js';
 
 const AUTOMATIC_REQUEST_ACKNOWLEDGEMENT =
@@ -38,6 +39,97 @@ interface ClientContextRow extends RowDataPacket {
   region: string | null;
   user_public_id: string;
 }
+
+interface ClientContext {
+  clientAccountId: number;
+  countryCode: string;
+  currentClient: PlatformUser;
+}
+
+interface CountryPricingRow extends RowDataPacket {
+  country_code: string;
+  country_name: string;
+  currency_code: string;
+  id: number;
+  price_multiplier: string | number;
+  public_id: string;
+}
+
+interface RequestServicePricingRow extends RowDataPacket {
+  base_fee_amount: string | number;
+  description: string | null;
+  icon: string | null;
+  id: number;
+  name: string;
+  service_code: string;
+}
+
+interface ConsultationModePricingRow extends RowDataPacket {
+  code: string;
+  description_text: string | null;
+  is_active: number;
+  label: string;
+  surcharge_value: string | number | null;
+  transport_disclaimer_text: string | null;
+}
+
+interface UrgencyPricingRow extends RowDataPacket {
+  id: number;
+  label: string;
+  response_window_hours: number | null;
+  surcharge_type_code: string;
+  surcharge_value: string | number;
+  urgency_code: string;
+}
+
+interface NotificationPreferenceRow extends RowDataPacket {
+  case_activity_alerts: number;
+  in_app_alerts: number;
+  invoice_reminders: number;
+  product_announcements: number;
+  user_id: number;
+}
+
+const shouldSuppressInAppNotification = (
+  preferences: NotificationPreferenceRow | undefined,
+  notificationTypeCode: string
+) => {
+  if (!preferences) {
+    return false;
+  }
+
+  if (preferences.in_app_alerts === 0) {
+    return true;
+  }
+
+  if (
+    ['payment_reminder', 'invoice_issued', 'invoice_paid', 'billing_update'].includes(notificationTypeCode)
+  ) {
+    return preferences.invoice_reminders === 0;
+  }
+
+  if (['product_announcement', 'platform_announcement'].includes(notificationTypeCode)) {
+    return preferences.product_announcements === 0;
+  }
+
+  return preferences.case_activity_alerts === 0;
+};
+
+const normalizeCountryCode = (value: string | null | undefined) => {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (!normalized || normalized === 'INDIA') {
+    return 'IN';
+  }
+  if (normalized === 'USA' || normalized === 'UNITED STATES') {
+    return 'US';
+  }
+  if (normalized === 'AUSTRALIA') {
+    return 'AU';
+  }
+  return normalized.slice(0, 8);
+};
+
+const toMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
 interface MatterRow extends RowDataPacket {
   consultation_mode_code: string;
@@ -427,7 +519,7 @@ export class NormalizedDashboardRepository {
     await ensurePlatformReady();
   }
 
-  private async resolveClientContext(connection: PoolConnection, userPublicId: string) {
+  private async resolveClientContext(connection: PoolConnection, userPublicId: string): Promise<ClientContext> {
     const row = await selectOne<ClientContextRow>(
       connection,
       `SELECT
@@ -464,6 +556,7 @@ export class NormalizedDashboardRepository {
 
     return {
       clientAccountId: row.client_account_id,
+      countryCode: normalizeCountryCode(row.country_code),
       currentClient: {
         avatar: '',
         email: row.email,
@@ -588,6 +681,149 @@ export class NormalizedDashboardRepository {
     } satisfies DashboardSnapshot;
   }
 
+  private async getCountryPricing(
+    connection: PoolConnection,
+    countryCode: string
+  ): Promise<CountryPricingRow> {
+    const normalizedCountry = normalizeCountryCode(countryCode);
+    const row = await selectOne<CountryPricingRow>(
+      connection,
+      `SELECT id, public_id, country_code, country_name, currency_code, price_multiplier
+       FROM country_pricing_overrides
+       WHERE country_code = ?
+         AND is_active = 1
+         AND archived_at IS NULL
+       LIMIT 1`,
+      [normalizedCountry]
+    );
+
+    if (row) {
+      return row;
+    }
+
+    const fallback = await selectOne<CountryPricingRow>(
+      connection,
+      `SELECT id, public_id, country_code, country_name, currency_code, price_multiplier
+       FROM country_pricing_overrides
+       WHERE is_default = 1
+         AND is_active = 1
+         AND archived_at IS NULL
+       ORDER BY updated_at DESC
+       LIMIT 1`
+    );
+
+    if (fallback) {
+      return fallback;
+    }
+
+    return {
+      country_code: 'IN',
+      country_name: 'India',
+      currency_code: 'INR',
+      id: 0,
+      price_multiplier: 1,
+      public_id: 'default',
+    } as CountryPricingRow;
+  }
+
+  public async getRequestPricingConfig(currentClient: PlatformUser): Promise<RequestPricingConfig> {
+    await this.initialize();
+
+    return withConnection(this.pool, async (connection) => {
+      const context = await this.resolveClientContext(connection, currentClient.id);
+      const countryPricing = await this.getCountryPricing(connection, context.countryCode);
+      const multiplier = toAmount(countryPricing.price_multiplier) || 1;
+
+      const [serviceRows, consultationRows, urgencyRows] = await Promise.all([
+        selectAll<RequestServicePricingRow>(
+          connection,
+          `SELECT
+             service_code,
+             service_name AS name,
+             service_description AS description,
+             base_fee_amount,
+             service_icon_code AS icon,
+             id
+           FROM services
+           WHERE is_active = 1
+           ORDER BY sort_order ASC, service_name ASC`
+        ),
+        selectAll<ConsultationModePricingRow>(
+          connection,
+          `SELECT
+             cm.code,
+             cm.label,
+             cm.description_text,
+             cm.transport_disclaimer_text,
+             cm.is_active,
+             pcmr.surcharge_value
+           FROM consultation_modes cm
+           LEFT JOIN pricing_consultation_mode_rules pcmr
+             ON pcmr.consultation_mode_code = cm.code
+            AND pcmr.is_active = 1
+           WHERE cm.is_active = 1
+           ORDER BY cm.sort_order ASC, cm.label ASC`
+        ),
+        selectAll<UrgencyPricingRow>(
+          connection,
+          `SELECT
+             id,
+             urgency_code,
+             label,
+             response_window_hours,
+             surcharge_type_code,
+             surcharge_value
+           FROM pricing_urgency_rules
+           WHERE is_active = 1
+           ORDER BY sort_order ASC, label ASC`
+        ),
+      ]);
+
+      return {
+        consultationModes: consultationRows.map((row) => ({
+          description: row.description_text || '',
+          fee: toMoney(toAmount(row.surcharge_value) * multiplier),
+          id: row.code,
+          isInPerson: row.code === 'in-person',
+          label: row.label,
+          transportDisclaimer: row.transport_disclaimer_text || null,
+        })),
+        countryPricing: {
+          countryCode: countryPricing.country_code,
+          countryName: countryPricing.country_name,
+          currencyCode: countryPricing.currency_code,
+          multiplier,
+        },
+        currencyCode: countryPricing.currency_code,
+        services: serviceRows.map((row) => ({
+          baseFee: toMoney(toAmount(row.base_fee_amount) * multiplier),
+          description: row.description || '',
+          icon: row.icon || 'Briefcase',
+          id: row.service_code,
+          name: row.name,
+        })),
+        urgencyOptions: urgencyRows.map((row) => {
+          const responseWindowHours =
+            row.response_window_hours === null ? null : Number(row.response_window_hours);
+
+          return {
+            id: row.urgency_code,
+            isImmediate:
+              responseWindowHours !== null
+                ? responseWindowHours < 24
+                : row.urgency_code !== 'standard',
+            label: row.label,
+            responseWindowHours,
+            surcharge:
+              row.surcharge_type_code === 'percent'
+                ? toAmount(row.surcharge_value)
+                : toMoney(toAmount(row.surcharge_value) * multiplier),
+          };
+        }),
+      };
+    });
+  }
+
   public async getSnapshot(currentClient: PlatformUser) {
     await this.initialize();
     return withConnection(this.pool, (connection) => this.buildSnapshot(connection, currentClient));
@@ -613,33 +849,78 @@ export class NormalizedDashboardRepository {
         'SELECT id, domain_name FROM legal_domains WHERE domain_code = ? AND is_active = 1 LIMIT 1',
         [request.legalDomain]
       );
-      const urgencyRuleRow = await selectOne<RowDataPacket>(
+      const urgencyRuleRow = await selectOne<UrgencyPricingRow>(
         connection,
-        'SELECT id, urgency_code, surcharge_value FROM pricing_urgency_rules WHERE urgency_code = ? AND is_active = 1 LIMIT 1',
+        `SELECT id, urgency_code, label, response_window_hours, surcharge_type_code, surcharge_value
+         FROM pricing_urgency_rules
+         WHERE urgency_code = ?
+           AND is_active = 1
+         LIMIT 1`,
         [request.urgency]
       );
-      const consultationRuleRow = await selectOne<RowDataPacket>(
+      const consultationRuleRow = await selectOne<ConsultationModePricingRow>(
         connection,
-        'SELECT surcharge_value FROM pricing_consultation_mode_rules WHERE consultation_mode_code = ? LIMIT 1',
+        `SELECT
+           cm.code,
+           cm.label,
+           cm.description_text,
+           cm.transport_disclaimer_text,
+           cm.is_active,
+           pcmr.surcharge_value
+         FROM consultation_modes cm
+         LEFT JOIN pricing_consultation_mode_rules pcmr
+           ON pcmr.consultation_mode_code = cm.code
+          AND pcmr.is_active = 1
+         WHERE cm.code = ?
+           AND cm.is_active = 1
+         LIMIT 1`,
         [request.consultationMode]
       );
-      const pricingSlabRow = await selectOne<RowDataPacket>(
-        connection,
-        `SELECT min_service_count, max_service_count, base_amount, per_extra_service_amount
-         FROM pricing_service_slabs
-         WHERE is_active = 1
-           AND effective_from <= CURDATE()
-           AND (effective_to IS NULL OR effective_to >= CURDATE())
-           AND min_service_count <= ?
-           AND (max_service_count IS NULL OR max_service_count >= ?)
-         ORDER BY effective_from DESC, min_service_count DESC
-         LIMIT 1`,
-        [request.services.length, request.services.length]
-      );
 
-      if (!legalDomainRow || !urgencyRuleRow || !pricingSlabRow) {
+      if (!legalDomainRow || !urgencyRuleRow || !consultationRuleRow) {
         throw conflict('pricing_reference_missing', 'Pricing or legal domain configuration is incomplete.');
       }
+
+      if (
+        request.consultationMode === 'in-person' &&
+        urgencyRuleRow.response_window_hours !== null &&
+        Number(urgencyRuleRow.response_window_hours) < 24
+      ) {
+        throw conflict(
+          'in_person_urgency_not_available',
+          'In-person consultation is available only for standard 24-48 hour scheduling.'
+        );
+      }
+
+      const requestedServiceCodes = [...new Set(request.services.map((value) => value.trim()).filter(Boolean))];
+      const servicePlaceholders = requestedServiceCodes.map(() => '?').join(', ');
+      const selectedServiceRows = await selectAll<RequestServicePricingRow>(
+        connection,
+        `SELECT id, service_code, service_name AS name, service_description AS description, base_fee_amount, service_icon_code AS icon
+         FROM services
+         WHERE is_active = 1
+           AND service_code IN (${servicePlaceholders})`,
+        requestedServiceCodes
+      );
+
+      if (selectedServiceRows.length !== requestedServiceCodes.length) {
+        throw conflict('service_unavailable', 'One or more selected services are no longer available.');
+      }
+
+      const servicesByCode = new Map(selectedServiceRows.map((row) => [row.service_code, row]));
+      const orderedServiceRows = requestedServiceCodes.map((code) => servicesByCode.get(code)!);
+      const countryPricing = await this.getCountryPricing(connection, context.countryCode);
+      const countryMultiplier = toAmount(countryPricing.price_multiplier) || 1;
+      const serviceLineAmounts = orderedServiceRows.map((service) =>
+        toMoney(toAmount(service.base_fee_amount) * countryMultiplier)
+      );
+      const scaledAmount = toMoney(serviceLineAmounts.reduce((sum, amount) => sum + amount, 0));
+      const consultationSurcharge = toMoney(toAmount(consultationRuleRow.surcharge_value) * countryMultiplier);
+      const urgencySurcharge =
+        urgencyRuleRow.surcharge_type_code === 'percent'
+          ? toMoney((scaledAmount * toAmount(urgencyRuleRow.surcharge_value)) / 100)
+          : toMoney(toAmount(urgencyRuleRow.surcharge_value) * countryMultiplier);
+      const quotedAmount = toMoney(scaledAmount + consultationSurcharge + urgencySurcharge);
 
       const requestNumber = await allocateBusinessNumber(connection, 'service_request', 'REQ');
       const matterNumber = await allocateBusinessNumber(connection, 'matter', 'GLMG');
@@ -648,15 +929,6 @@ export class NormalizedDashboardRepository {
       const matterPublicId = createPublicId();
       const threadPublicId = createPublicId();
       const documentTimestamp = toMysqlDateTime(nowUtc());
-      const baseAmount = toAmount(pricingSlabRow.base_amount);
-      const perExtra = toAmount(pricingSlabRow.per_extra_service_amount);
-      const consultationSurcharge = toAmount(consultationRuleRow?.surcharge_value);
-      const urgencySurcharge = toAmount(urgencyRuleRow.surcharge_value);
-      const scaledAmount =
-        request.services.length <= 2
-          ? baseAmount
-          : baseAmount + Math.max(request.services.length - 2, 0) * perExtra;
-      const quotedAmount = scaledAmount + consultationSurcharge + urgencySurcharge;
       const title = `${String(legalDomainRow.domain_name)} Request`;
       const summary = request.caseDetails.trim().slice(0, 500);
       const preferredWindow = this.parsePreferredWindow(request.preferredDate, request.preferredTime);
@@ -742,9 +1014,10 @@ export class NormalizedDashboardRepository {
           public_id, request_number, client_account_id, requested_by_user_id, status_code, title,
           issue_summary, detailed_description, legal_domain_id, consultation_mode_code, urgency_rule_id,
           preferred_start_at, preferred_end_at, contact_name_snapshot, contact_email_snapshot,
-          contact_mobile_snapshot, whatsapp_same_as_mobile, past_legal_action_flag, quote_total_amount,
+          contact_mobile_snapshot, contact_whatsapp_snapshot, whatsapp_same_as_mobile, country_code_snapshot,
+          currency_code, past_legal_action_flag, quote_total_amount,
           submitted_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           serviceRequestPublicId,
           requestNumber,
@@ -762,7 +1035,10 @@ export class NormalizedDashboardRepository {
           request.fullName.trim(),
           request.email.trim().toLowerCase(),
           request.mobile.trim(),
+          (request.whatsappSame ? request.mobile : request.whatsappNumber || request.mobile).trim(),
           request.whatsappSame ? 1 : 0,
+          countryPricing.country_code,
+          countryPricing.currency_code,
           request.pastLegalAction ? 1 : 0,
           quotedAmount,
           createdAt,
@@ -772,22 +1048,41 @@ export class NormalizedDashboardRepository {
       );
       const serviceRequestId = Number((requestInsert as { insertId: number }).insertId);
 
-      for (const [index, serviceCode] of request.services.entries()) {
-        const serviceRow = await selectOne<RowDataPacket>(
-          connection,
-          'SELECT id FROM services WHERE service_code = ? AND is_active = 1 LIMIT 1',
-          [serviceCode]
-        );
+      await connection.execute(
+        `UPDATE client_account_contacts
+         SET mobile_number = ?,
+             whatsapp_number = ?,
+             whatsapp_same_as_mobile = ?,
+             updated_at = ?
+         WHERE client_account_id = ?
+           AND user_id = ?
+           AND archived_at IS NULL`,
+        [
+          request.mobile.trim(),
+          (request.whatsappSame ? request.mobile : request.whatsappNumber || request.mobile).trim(),
+          request.whatsappSame ? 1 : 0,
+          createdAt,
+          context.clientAccountId,
+          currentUserId,
+        ]
+      );
 
-        if (!serviceRow?.id) {
-          continue;
-        }
-
+      for (const [index, serviceRow] of orderedServiceRows.entries()) {
         await connection.execute(
           `INSERT INTO request_services (
-            service_request_id, service_id, sort_order, quoted_base_fee, created_at
-          ) VALUES (?, ?, ?, ?, ?)`,
-          [serviceRequestId, Number(serviceRow.id), index + 1, 0, createdAt]
+            service_request_id, service_id, service_name_snapshot, sort_order, quoted_base_fee,
+            currency_code, country_pricing_override_id, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            serviceRequestId,
+            Number(serviceRow.id),
+            serviceRow.name,
+            index + 1,
+            serviceLineAmounts[index] || 0,
+            countryPricing.currency_code,
+            countryPricing.id || null,
+            createdAt,
+          ]
         );
       }
 
@@ -795,20 +1090,22 @@ export class NormalizedDashboardRepository {
         `INSERT INTO pricing_quotes (
           public_id, service_request_id, version_no, service_count, base_amount, urgency_surcharge_amount,
           consultation_mode_surcharge_amount, discount_amount, tax_amount, total_amount, currency_code,
-          is_final, accepted_at, created_by_user_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          country_code, country_pricing_override_id, is_final, accepted_at, created_by_user_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           createPublicId(),
           serviceRequestId,
           1,
-          request.services.length,
+          orderedServiceRows.length,
           scaledAmount,
           urgencySurcharge,
           consultationSurcharge,
           0,
           0,
           quotedAmount,
-          'INR',
+          countryPricing.currency_code,
+          countryPricing.country_code,
+          countryPricing.id || null,
           1,
           createdAt,
           ownerUserId,
@@ -818,9 +1115,19 @@ export class NormalizedDashboardRepository {
       const quoteId = Number((quoteInsert as { insertId: number }).insertId);
 
       const quoteLines: Array<[string, number | null, string, number, number, number]> = [
-        ['service-bundle', null, `${request.services.length} services selected`, 1, scaledAmount, scaledAmount],
-        ['urgency', null, `Urgency: ${request.urgency}`, 1, urgencySurcharge, urgencySurcharge],
-        ['consultation', null, `Consultation: ${request.consultationMode}`, 1, consultationSurcharge, consultationSurcharge],
+        ...orderedServiceRows.map(
+          (service, index) =>
+            [
+              'service',
+              Number(service.id),
+              service.name,
+              1,
+              serviceLineAmounts[index] || 0,
+              serviceLineAmounts[index] || 0,
+            ] satisfies [string, number | null, string, number, number, number]
+        ),
+        ['urgency', null, `Urgency: ${urgencyRuleRow.label}`, 1, urgencySurcharge, urgencySurcharge],
+        ['consultation', null, `Consultation: ${consultationRuleRow.label}`, 1, consultationSurcharge, consultationSurcharge],
       ];
 
       for (const [index, [lineTypeCode, serviceId, description, quantity, unitAmount, lineAmount]] of quoteLines.entries()) {
@@ -875,22 +1182,12 @@ export class NormalizedDashboardRepository {
       );
       const matterId = Number((matterInsert as { insertId: number }).insertId);
 
-      for (const serviceCode of request.services) {
-        const serviceRow = await selectOne<RowDataPacket>(
-          connection,
-          'SELECT id FROM services WHERE service_code = ? AND is_active = 1 LIMIT 1',
-          [serviceCode]
-        );
-
-        if (!serviceRow?.id) {
-          continue;
-        }
-
+      for (const [index, serviceRow] of orderedServiceRows.entries()) {
         await connection.execute(
           `INSERT INTO matter_services (
             matter_id, service_id, final_fee, service_status_code, completed_at, created_at
           ) VALUES (?, ?, ?, ?, ?, ?)`,
-          [matterId, Number(serviceRow.id), 0, 'selected', null, createdAt]
+          [matterId, Number(serviceRow.id), serviceLineAmounts[index] || 0, 'selected', null, createdAt]
         );
       }
 
@@ -1668,8 +1965,32 @@ export class NormalizedDashboardRepository {
     }
 
     const createdAt = toMysqlDateTime(nowUtc());
+    const preferenceRows = await selectAll<NotificationPreferenceRow>(
+      connection,
+      `SELECT
+         user_id,
+         in_app_alerts,
+         invoice_reminders,
+         case_activity_alerts,
+         product_announcements
+       FROM user_notification_preferences
+       WHERE user_id IN (${recipientUserIds.map(() => '?').join(', ')})`,
+      recipientUserIds
+    );
+    const preferencesByUserId = new Map(
+      preferenceRows.map((row) => [Number(row.user_id), row])
+    );
 
     for (const recipientUserId of recipientUserIds) {
+      if (
+        shouldSuppressInAppNotification(
+          preferencesByUserId.get(recipientUserId),
+          input.notificationTypeCode
+        )
+      ) {
+        continue;
+      }
+
       await connection.execute(
         `INSERT INTO notifications (
            public_id,
@@ -2217,7 +2538,10 @@ export class NormalizedDashboardRepository {
        FROM matter_assignments ma
        LEFT JOIN users u ON u.id = ma.internal_user_id
        LEFT JOIN counsel_partners cp ON cp.id = ma.counsel_partner_id
-       WHERE ma.matter_id IN (${matterIdPlaceholders}) AND ma.assignment_status_code = 'active'`,
+       WHERE ma.matter_id IN (${matterIdPlaceholders})
+         AND ma.assignment_status_code = 'active'
+         AND ma.removed_at IS NULL
+         AND COALESCE(ma.visible_to_client, 1) = 1`,
       matterIds
     );
     const services = await selectAll<MatterServiceRow>(

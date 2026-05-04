@@ -41,6 +41,7 @@ interface MatterDetailAdminProps {
     internalUserId?: string;
     isPrimary?: boolean;
     notes?: string;
+    visibleToClient?: boolean;
   }) => Promise<void>;
   onBack: () => void;
   onChat: (threadId: string | null) => void;
@@ -147,6 +148,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
   const [assignmentDraft, setAssignmentDraft] = useState({
     counselPartnerId: '',
     internalUserId: '',
+    visibleToClient: true,
   });
   
   // Add Event state
@@ -372,15 +374,15 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
     packageWorkspace?.linkedInvoiceSummary || packageWorkspace?.active?.linkedInvoice || null;
 
   return (
-    <div className="space-y-6">
+    <div className="max-w-full min-w-0 space-y-6 overflow-x-hidden">
       <button onClick={onBack} className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900 transition">
         <ArrowLeft className="w-4 h-4" /> Back to Matter List
       </button>
 
-      <div className="bg-white border border-gray-100 rounded-xl p-6 shadow-sm">
+      <div className="min-w-0 rounded-xl border border-gray-100 bg-white p-4 shadow-sm sm:p-6">
         {/* Header */}
         <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4 mb-6">
-          <div>
+          <div className="min-w-0">
             <div className="flex items-center gap-2 flex-wrap mb-1">
               <h1 className="text-xl font-medium" style={{ fontFamily: "'Playfair Display', serif" }}>{matter.title}</h1>
               <span className="text-xs text-gray-400 font-mono bg-gray-50 px-2 py-0.5 rounded">{matter.referenceCode}</span>
@@ -388,7 +390,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
             <div className="flex items-center gap-2 flex-wrap text-sm text-gray-500 mb-3">
               <span>Client: <span className="font-medium text-gray-900">{matter.clientName}</span></span>
               <span>•</span>
-              <span>Counsel: <span className="font-medium text-gray-900">{matter.assignedCounsel || 'Unassigned'}</span></span>
+              <span>External contact: <span className="font-medium text-gray-900">{matter.assignedCounsel || 'Unassigned'}</span></span>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <select 
@@ -485,7 +487,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-6 border-b border-gray-200 mb-8">
+        <div className="mb-8 flex gap-6 overflow-x-auto border-b border-gray-200 pb-px">
           {[
             { id: 'overview', label: 'Matter Overview' },
             { id: 'events', label: `Events & Meetings (${localEvents.length})` },
@@ -494,25 +496,25 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`pb-3 text-sm font-medium transition border-b-2 ${activeTab === tab.id ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              className={`whitespace-nowrap pb-3 text-sm font-medium transition border-b-2 ${activeTab === tab.id ? 'border-gray-900 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
             >
               {tab.label}
             </button>
           ))}
         </div>
 
-        <div className="grid lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 space-y-8">
+        <div className="grid min-w-0 gap-8 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,22rem)]">
+          <div className="min-w-0 space-y-8">
             {activeTab === 'overview' && (
               <>
                 {/* Package Builder Section */}
                 <div className="border-t border-gray-100 pt-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-medium flex items-center gap-2" style={{ fontFamily: "'Playfair Display', serif" }}>
+                  <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <h3 className="flex min-w-0 items-center gap-2 text-lg font-medium" style={{ fontFamily: "'Playfair Display', serif" }}>
                       <Package className="w-5 h-5 text-gray-400" />
                       Service Packages & Quoting
                     </h3>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       {packageWorkspace?.draft && onArchiveProposal ? (
                         <button
                           className="rounded-lg border border-gray-200 px-3 py-2 text-xs font-medium text-gray-600 transition hover:bg-gray-50"
@@ -546,7 +548,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                   ) : (
                     <div className="space-y-5">
                       <div className="grid gap-4 md:grid-cols-3">
-                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                        <div className="min-w-0 rounded-xl border border-gray-200 bg-gray-50 p-4 admin-wrap-anywhere">
                           <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">
                             Draft Workspace
                           </p>
@@ -556,7 +558,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                               : 'No draft exists yet. Save the package builder to create one.'}
                           </p>
                         </div>
-                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                        <div className="min-w-0 rounded-xl border border-gray-200 bg-gray-50 p-4 admin-wrap-anywhere">
                           <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">
                             Active Proposal
                           </p>
@@ -566,7 +568,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                               : 'No proposal has been published to the client yet.'}
                           </p>
                         </div>
-                        <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                        <div className="min-w-0 rounded-xl border border-gray-200 bg-gray-50 p-4 admin-wrap-anywhere">
                           <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400">
                             Invoice Link
                           </p>
@@ -587,9 +589,9 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                       />
 
                       {packageWorkspace?.active ? (
-                        <div className="space-y-4 rounded-xl border border-gray-200 bg-white p-5">
-                          <div className="flex items-center justify-between gap-3">
-                            <div>
+                        <div className="min-w-0 space-y-4 rounded-xl border border-gray-200 bg-white p-4 sm:p-5">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div className="min-w-0">
                               <h4 className="text-base font-medium text-gray-900">Client-Facing Proposal</h4>
                               <p className="text-sm text-gray-500">
                                 Version {packageWorkspace.active.proposalVersion} · {packageWorkspace.active.status}
@@ -606,29 +608,29 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                             )}
                           </div>
 
-                          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                          <div className="grid gap-4 admin-card-grid">
                             {packageWorkspace.active.packages.map((pkg) => (
                               <div
                                 key={pkg.id}
-                                className={`flex flex-col rounded-xl border p-5 shadow-sm ${
+                                className={`flex min-w-0 max-w-full flex-col rounded-xl border p-5 shadow-sm admin-wrap-anywhere ${
                                   pkg.isRecommended ? 'border-gray-900 ring-1 ring-gray-900/10' : 'border-gray-200'
                                 }`}
                               >
-                                <div className="mb-3 flex items-start justify-between gap-3">
-                                  <div>
+                                <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                  <div className="min-w-0">
                                     <h5 className="font-medium text-gray-900">{pkg.name}</h5>
                                     <p className="mt-1 text-sm text-gray-500">
                                       {pkg.description || 'Client-facing package description pending.'}
                                     </p>
                                   </div>
-                                  <div className="flex flex-col items-end gap-2">
+                                  <div className="flex shrink-0 flex-wrap items-start gap-2 sm:flex-col sm:items-end">
                                     {pkg.isRecommended ? (
-                                      <span className="rounded-full bg-gray-900 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-white">
+                                      <span className="max-w-full rounded-full bg-gray-900 px-2.5 py-1 text-center text-[10px] font-semibold uppercase tracking-wider text-white">
                                         Recommended
                                       </span>
                                     ) : null}
                                     {pkg.isSelected ? (
-                                      <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
+                                      <span className="max-w-full rounded-full bg-emerald-50 px-2.5 py-1 text-center text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
                                         Selected
                                       </span>
                                     ) : null}
@@ -641,9 +643,9 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
 
                                 <div className="flex-1 space-y-2">
                                   {pkg.featurePoints.map((point, index) => (
-                                    <div key={`${pkg.id}-${index}`} className="flex items-start gap-2 text-sm text-gray-700">
+                                    <div key={`${pkg.id}-${index}`} className="flex min-w-0 items-start gap-2 text-sm text-gray-700">
                                       <Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-500" />
-                                      <span>{point}</span>
+                                      <span className="min-w-0">{point}</span>
                                     </div>
                                   ))}
                                 </div>
@@ -665,8 +667,8 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                       ) : null}
 
                       {packageWorkspace?.history.length ? (
-                        <div className="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-5">
-                          <div className="flex items-center justify-between">
+                        <div className="min-w-0 space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4 sm:p-5">
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                             <h4 className="text-base font-medium text-gray-900">Proposal History</h4>
                             <span className="text-xs uppercase tracking-wider text-gray-400">
                               {packageWorkspace.history.length} archived record(s)
@@ -676,9 +678,9 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                             {packageWorkspace.history.map((proposal) => (
                               <div
                                 key={proposal.proposalVersion}
-                                className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3"
+                                className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
                               >
-                                <div>
+                                <div className="min-w-0">
                                   <p className="text-sm font-medium text-gray-900">
                                     Version {proposal.proposalVersion}
                                   </p>
@@ -722,7 +724,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                     className="w-full text-sm text-gray-700 bg-white border border-gray-300 rounded-lg px-4 py-3 min-h-[100px] outline-none focus:border-gray-500"
                   />
                 ) : (
-                  <p className="text-sm text-gray-700 bg-gray-50 border border-gray-100 rounded-lg px-4 py-3">{matter.issueSummary}</p>
+                  <p className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-sm text-gray-700 admin-wrap-anywhere">{matter.issueSummary}</p>
                 )}
               </div>
 
@@ -756,7 +758,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                 ) : (
                   <div className="flex flex-wrap gap-2">
                     {matter.selectedServices.map(sId => (
-                      <span key={sId} className="px-3 py-1 text-xs bg-gray-100 text-gray-700 rounded-full">{getServiceName(sId)}</span>
+                      <span key={sId} className="max-w-full rounded-full bg-gray-100 px-3 py-1 text-xs text-gray-700 admin-wrap-anywhere">{getServiceName(sId)}</span>
                     ))}
                   </div>
                 )}
@@ -793,7 +795,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                 {matter.clientVisibleNotes.length > 0 ? (
                   <div className="space-y-2">
                     {matter.clientVisibleNotes.map((note, i) => (
-                      <div key={i} className="flex items-start gap-2 text-sm text-gray-700 bg-blue-50/50 p-3 rounded-lg border border-blue-100">
+                      <div key={i} className="flex min-w-0 items-start gap-2 rounded-lg border border-blue-100 bg-blue-50/50 p-3 text-sm text-gray-700 admin-wrap-anywhere">
                         <div className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-2 flex-shrink-0" />
                         {note}
                       </div>
@@ -835,7 +837,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                 {matter.internalNotes && matter.internalNotes.length > 0 ? (
                   <div className="space-y-2">
                     {matter.internalNotes.map((note, i) => (
-                      <div key={i} className="flex items-start gap-2 text-sm text-gray-700 bg-amber-50/50 p-3 rounded-lg border border-amber-100">
+                      <div key={i} className="flex min-w-0 items-start gap-2 rounded-lg border border-amber-100 bg-amber-50/50 p-3 text-sm text-gray-700 admin-wrap-anywhere">
                         <div className="w-1.5 h-1.5 rounded-full bg-amber-400 mt-2 flex-shrink-0" />
                         {note}
                       </div>
@@ -851,8 +853,8 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
 
             {activeTab === 'events' && (
               <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
                     <h3 className="text-lg font-medium" style={{ fontFamily: "'Playfair Display', serif" }}>Events & Meetings</h3>
                     <p className="text-sm text-gray-500">Manage case deadlines, hearings, and Google Meet calls.</p>
                   </div>
@@ -864,7 +866,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                 {showEventForm && (
                   <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm space-y-4">
                     <h4 className="font-medium text-gray-900">New Event or Meeting</h4>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div className="col-span-2">
                         <label className="block text-xs text-gray-500 mb-1">Type</label>
                         <select 
@@ -920,23 +922,23 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
 
                 <div className="space-y-3">
                   {localEvents.map(evt => (
-                    <div key={evt.id} className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
-                      <div className="flex items-start gap-4">
+                    <div key={evt.id} className="flex flex-col gap-4 rounded-xl border border-gray-100 bg-white p-4 shadow-sm md:flex-row md:items-center md:justify-between">
+                      <div className="flex min-w-0 items-start gap-4">
                         <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-lg flex flex-col items-center justify-center flex-shrink-0">
                           <span className="text-xs font-bold">{evt.date.split('-')[2] || 'TBD'}</span>
                           <span className="text-[10px] uppercase">{evt.date ? new Date(evt.date).toLocaleString('default', { month: 'short' }) : ''}</span>
                         </div>
-                        <div>
-                          <div className="flex items-center gap-2">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
                             <p className="font-medium text-gray-900">{evt.title}</p>
                             <StatusBadge status={evt.type} />
                           </div>
-                          <p className="text-sm text-gray-500 flex items-center gap-1.5 mt-0.5">
+                          <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-sm text-gray-500">
                             <Clock className="w-3.5 h-3.5"/> {evt.time} {evt.duration ? `(${evt.duration}m)` : ''} {evt.location ? `• ${evt.location}` : ''}
                           </p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         {evt.meetLink && evt.type === 'consultation' && (
                           <a href={evt.meetLink} target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 text-sm bg-blue-50 text-blue-700 hover:bg-blue-100 rounded flex items-center gap-1.5 transition">
                             <Video className="w-3.5 h-3.5" /> Join Meet
@@ -953,8 +955,8 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
 
             {activeTab === 'documents' && (
               <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
                     <h3 className="text-lg font-medium" style={{ fontFamily: "'Playfair Display', serif" }}>Matter Documents</h3>
                     <p className="text-sm text-gray-500">Manage case files and adjust client visibility.</p>
                   </div>
@@ -970,10 +972,10 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                 </div>
 
                 <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
-                  <div className="grid gap-3 md:grid-cols-[1.5fr_1fr_1fr] md:items-center">
+                  <div className="grid gap-3 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)] md:items-center">
                     <input
                       accept={ACCEPTED_UPLOAD_TYPES}
-                      className="text-sm text-gray-700 file:mr-3 file:rounded-lg file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:text-sm file:text-gray-700"
+                      className="min-w-0 text-sm text-gray-700 file:mr-3 file:rounded-lg file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:text-sm file:text-gray-700"
                       onChange={(event) => setDocumentUploadFile(event.target.files?.[0] || null)}
                       type="file"
                     />
@@ -1003,11 +1005,11 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
 
                 <div className="space-y-3">
                   {myDocs.map(doc => (
-                    <div key={doc.id} className="bg-white border border-gray-100 rounded-xl p-4 shadow-sm flex items-center gap-4">
+                    <div key={doc.id} className="flex flex-col gap-4 rounded-xl border border-gray-100 bg-white p-4 shadow-sm sm:flex-row sm:items-center">
                       <div className="p-2 bg-gray-50 rounded text-gray-400"><FileText className="w-5 h-5" /></div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-900 truncate">{doc.name}</p>
-                        <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
+                        <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-gray-500 sm:gap-3">
                           <span>{formatSize(doc.size)}</span>
                           <span>•</span>
                           <span>{formatDate(doc.uploadedAt)}</span>
@@ -1075,8 +1077,8 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
           </div>
 
           {/* Right sidebar */}
-          <div className="space-y-4">
-            <div className="bg-white border border-gray-200 shadow-sm rounded-xl p-5 space-y-4 relative overflow-hidden">
+          <div className="min-w-0 space-y-4">
+            <div className="relative min-w-0 space-y-4 overflow-hidden rounded-xl border border-gray-200 bg-white p-5 shadow-sm admin-wrap-anywhere">
               <div className="absolute top-0 left-0 w-full h-1 bg-gray-900" />
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Fee & Billing Summary</h3>
@@ -1088,7 +1090,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
               </div>
               
               <div className="space-y-3 text-sm">
-                <div className="flex justify-between items-center bg-gray-50 p-2 rounded">
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded bg-gray-50 p-2">
                   <span className="text-gray-500 font-medium">Total Fee</span>
                   {isEditingFee ? (
                     <div className="flex items-center gap-1 bg-white border border-gray-300 rounded px-2 py-1 w-24">
@@ -1104,8 +1106,8 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                     <span className="font-semibold text-gray-900">{formatCurrency(matter.totalFee)}</span>
                   )}
                 </div>
-                <div className="flex justify-between px-2"><span className="text-gray-500">Paid</span><span className="text-emerald-600 font-medium">{formatCurrency(matter.paidAmount)}</span></div>
-                <div className="flex justify-between border-t border-gray-200 pt-3 px-2"><span className="text-gray-500 font-medium">Due Balance</span><span className={`font-bold ${matter.dueAmount > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{formatCurrency(matter.dueAmount)}</span></div>
+                <div className="flex flex-wrap justify-between gap-2 px-2"><span className="text-gray-500">Paid</span><span className="text-emerald-600 font-medium">{formatCurrency(matter.paidAmount)}</span></div>
+                <div className="flex flex-wrap justify-between gap-2 border-t border-gray-200 px-2 pt-3"><span className="text-gray-500 font-medium">Due Balance</span><span className={`font-bold ${matter.dueAmount > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{formatCurrency(matter.dueAmount)}</span></div>
               </div>
               {linkedPackageInvoice ? (
                 <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
@@ -1119,7 +1121,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
             </div>
 
             {selectedPackage ? (
-              <div className="bg-gray-50 border border-gray-100 rounded-xl p-5 space-y-2">
+              <div className="min-w-0 space-y-2 rounded-xl border border-gray-100 bg-gray-50 p-5 admin-wrap-anywhere">
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Selected Package</h3>
                 <p className="text-sm font-medium text-gray-900">{selectedPackage.name}</p>
                 <p className="text-xs text-gray-500">
@@ -1129,7 +1131,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
               </div>
             ) : null}
 
-            <div className="bg-gray-50 border border-gray-100 rounded-xl p-5 space-y-3">
+            <div className="min-w-0 space-y-3 rounded-xl border border-gray-100 bg-gray-50 p-5 admin-wrap-anywhere">
               <div className="flex justify-between items-center mb-2">
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Internal Details</h3>
                 <button className="text-xs text-blue-600 hover:underline" onClick={() => setIsEditingMatter(true)} type="button">
@@ -1137,15 +1139,15 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                 </button>
               </div>
               <div className="space-y-2 text-sm text-gray-600">
-                <div className="flex justify-between"><span className="text-gray-400">Expertise:</span> <span>{matter.expertiseArea}</span></div>
-                <div className="flex justify-between"><span className="text-gray-400">Mode:</span> <span className="capitalize">{matter.consultationMode}</span></div>
-                <div className="flex justify-between"><span className="text-gray-400">Created:</span> <span>{formatDate(matter.createdAt)}</span></div>
-                <div className="flex justify-between"><span className="text-gray-400">Updated:</span> <span>{formatDate(matter.lastUpdated)}</span></div>
+                <div className="flex flex-wrap justify-between gap-2"><span className="text-gray-400">Expertise:</span> <span>{matter.expertiseArea}</span></div>
+                <div className="flex flex-wrap justify-between gap-2"><span className="text-gray-400">Mode:</span> <span className="capitalize">{matter.consultationMode}</span></div>
+                <div className="flex flex-wrap justify-between gap-2"><span className="text-gray-400">Created:</span> <span>{formatDate(matter.createdAt)}</span></div>
+                <div className="flex flex-wrap justify-between gap-2"><span className="text-gray-400">Updated:</span> <span>{formatDate(matter.lastUpdated)}</span></div>
               </div>
               {isEditingMatter && assignmentOptions ? (
                 <div className="pt-3 border-t border-gray-200 space-y-3">
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1">Assigned Staff</label>
+                    <label className="block text-xs text-gray-500 mb-1">Coordination Staff</label>
                     <select
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
                       onChange={(event) =>
@@ -1165,7 +1167,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs text-gray-500 mb-1">Assigned Counsel</label>
+                    <label className="block text-xs text-gray-500 mb-1">External Counsel / Field Partner</label>
                     <select
                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
                       onChange={(event) =>
@@ -1180,10 +1182,25 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                       {assignmentOptions.counsel.map((counsel) => (
                         <option key={counsel.id} value={counsel.id}>
                           {counsel.name}
+                          {counsel.type === 'field_partner' ? ' · Field partner' : ''}
                         </option>
                       ))}
                     </select>
                   </div>
+                  <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600">
+                    <input
+                      checked={assignmentDraft.visibleToClient}
+                      className="h-4 w-4 accent-[#C19A5B]"
+                      onChange={(event) =>
+                        setAssignmentDraft((current) => ({
+                          ...current,
+                          visibleToClient: event.target.checked,
+                        }))
+                      }
+                      type="checkbox"
+                    />
+                    Show selected assignment to client
+                  </label>
                   <button
                     className="w-full text-xs font-medium bg-white border border-gray-200 rounded-lg py-2 text-gray-700 disabled:opacity-50"
                     disabled={!assignmentDraft.counselPartnerId && !assignmentDraft.internalUserId}
@@ -1197,6 +1214,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                           assignmentRoleCode: 'internal_owner',
                           internalUserId: assignmentDraft.internalUserId,
                           isPrimary: true,
+                          visibleToClient: assignmentDraft.visibleToClient,
                         }).then(() =>
                           setAssignmentDraft((current) => ({ ...current, internalUserId: '' }))
                         );
@@ -1207,6 +1225,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                           assignmentRoleCode: 'lead_counsel',
                           counselPartnerId: assignmentDraft.counselPartnerId,
                           isPrimary: true,
+                          visibleToClient: assignmentDraft.visibleToClient,
                         }).then(() =>
                           setAssignmentDraft((current) => ({ ...current, counselPartnerId: '' }))
                         );
@@ -1221,12 +1240,12 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
             </div>
 
             {myInvoices.length > 0 && (
-              <div className="bg-gray-50 border border-gray-100 rounded-xl p-5 space-y-3">
+              <div className="min-w-0 space-y-3 rounded-xl border border-gray-100 bg-gray-50 p-5 admin-wrap-anywhere">
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Recent Invoices</h3>
                 <div className="space-y-2">
                   {myInvoices.slice(0, 3).map(inv => (
-                    <div key={inv.id} className="flex items-center justify-between bg-white p-2 rounded border border-gray-100 text-sm">
-                      <div>
+                    <div key={inv.id} className="flex items-center justify-between gap-3 rounded border border-gray-100 bg-white p-2 text-sm">
+                      <div className="min-w-0">
                         <p className="font-medium text-gray-900">{formatCurrency(inv.totalAmount)}</p>
                         <p className="text-xs text-gray-400">{inv.id}</p>
                       </div>
@@ -1239,7 +1258,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
             )}
 
             {myThreads.length > 0 && (
-              <div className="bg-gray-50 border border-gray-100 rounded-xl p-5 space-y-3">
+              <div className="min-w-0 space-y-3 rounded-xl border border-gray-100 bg-gray-50 p-5">
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Linked Messages</h3>
                 <div className="space-y-2">
                   {myThreads.slice(0, 3).map(thread => (

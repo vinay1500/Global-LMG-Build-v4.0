@@ -127,6 +127,7 @@
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-body-stack);
+    overflow-x: hidden;
   }
 
   /**
@@ -136,6 +137,11 @@
 
   html {
     font-size: var(--font-size);
+    min-width: 0;
+  }
+
+  #root {
+    min-width: 0;
   }
 
   h1 {
@@ -178,5 +184,25 @@
     font-size: var(--text-base);
     font-weight: var(--font-weight-normal);
     line-height: 1.5;
+  }
+}
+
+@layer utilities {
+  .admin-content {
+    overflow-wrap: break-word;
+  }
+
+  .admin-card-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  }
+
+  .admin-table-scroll {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .admin-wrap-anywhere {
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
 }

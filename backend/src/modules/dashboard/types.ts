@@ -6,7 +6,7 @@ export type UserLifecycle =
   | 'fee-pending'
   | 'client';
 
-export type ConsultationMode = 'video' | 'phone' | 'in-person';
+export type ConsultationMode = string;
 export type LifecycleStage =
   | 'request-received'
   | 'verification-call'
@@ -37,7 +37,7 @@ export type InvoiceStatus = 'draft' | 'sent' | 'pending' | 'paid' | 'overdue' | 
 export type EventType = 'consultation' | 'hearing' | 'verification-call';
 export type DocReviewState = 'unreviewed' | 'reviewed' | 'needs-client-action';
 export type AdminRole = 'case-manager' | 'billing-admin' | 'ops-admin';
-export type UrgencyLevel = 'standard' | 'within-6hrs' | 'within-2hrs';
+export type UrgencyLevel = string;
 export type MatterPackageProposalStatus =
   | 'draft'
   | 'published'
@@ -301,12 +301,45 @@ export interface DashboardRequestInput {
   fullName: string;
   legalDomain: string;
   mobile: string;
+  whatsappNumber?: string;
   pastLegalAction: boolean;
   preferredDate: string;
   preferredTime: string;
   services: string[];
   urgency: UrgencyLevel;
   whatsappSame: boolean;
+}
+
+export interface RequestPricingConfig {
+  consultationModes: Array<{
+    description: string;
+    fee: number;
+    id: string;
+    isInPerson: boolean;
+    label: string;
+    transportDisclaimer: string | null;
+  }>;
+  countryPricing: {
+    countryCode: string;
+    countryName: string;
+    currencyCode: string;
+    multiplier: number;
+  };
+  currencyCode: string;
+  services: Array<{
+    baseFee: number;
+    description: string;
+    icon: string;
+    id: string;
+    name: string;
+  }>;
+  urgencyOptions: Array<{
+    id: string;
+    isImmediate: boolean;
+    label: string;
+    responseWindowHours: number | null;
+    surcharge: number;
+  }>;
 }
 
 export interface DashboardSnapshot {

@@ -26,7 +26,7 @@ export const listMatters = async (options: { limit: number; search?: string }) =
 };
 
 type InternalUserRow = RowDataPacket & { id: string; name: string };
-type CounselRow = RowDataPacket & { id: string; name: string };
+type CounselRow = RowDataPacket & { id: string; name: string; type: string };
 type ClientOptionRow = RowDataPacket & { email: string; id: string; name: string };
 type DomainOptionRow = RowDataPacket & { code: string; name: string };
 type ServiceOptionRow = RowDataPacket & {
@@ -209,21 +209,20 @@ const getAssignmentOptions = async () => {
     queryRows<InternalUserRow>(
       `SELECT u.public_id AS id, u.display_name AS name
        FROM users u
-       LEFT JOIN user_roles ur
-         ON ur.user_id = u.id
-        AND ur.is_active = 1
-        AND (ur.starts_at IS NULL OR ur.starts_at <= UTC_TIMESTAMP(6))
-        AND (ur.ends_at IS NULL OR ur.ends_at >= UTC_TIMESTAMP(6))
+       INNER JOIN staff_profiles sp ON sp.user_id = u.id
        WHERE u.archived_at IS NULL
-         AND u.login_enabled = 1
          AND u.actor_type_code <> 'client'
-       GROUP BY u.public_id, u.display_name
+         AND sp.employment_status_code = 'active'
        ORDER BY u.display_name ASC`
     ),
     queryRows<CounselRow>(
-      `SELECT public_id AS id, full_name AS name
+      `SELECT
+         public_id AS id,
+         full_name AS name,
+         COALESCE(partner_type_code, 'external_counsel') AS type
        FROM counsel_partners
        WHERE archived_at IS NULL
+         AND partner_status_code = 'active'
        ORDER BY full_name ASC`
     ),
   ]);
@@ -817,6 +816,7 @@ export const createMatterAssignment = async (
     internalUserId?: string;
     isPrimary?: boolean;
     notes?: string;
+    visibleToClient?: boolean;
   }
 ) => {
   return withTransaction(async (connection) => {
@@ -843,6 +843,45 @@ export const createMatterAssignment = async (
     const counsel = payload.counselPartnerId
       ? await resolveCounselByPublicId(payload.counselPartnerId, connection)
       : null;
+
+    if (internalUser) {
+      const staffRow = firstRow(
+        await queryRows<RowDataPacket & { id: number }>(
+          `SELECT sp.user_id AS id
+           FROM staff_profiles sp
+           INNER JOIN users u ON u.id = sp.user_id
+           WHERE sp.user_id = ?
+             AND sp.employment_status_code = 'active'
+             AND u.archived_at IS NULL
+           LIMIT 1`,
+          [internalUser.id],
+          connection
+        )
+      );
+
+      if (!staffRow) {
+        throw badRequest('invalid_assignment_staff', 'Select an active internal coordination staff entry.');
+      }
+    }
+
+    if (counsel) {
+      const counselRow = firstRow(
+        await queryRows<RowDataPacket & { id: number }>(
+          `SELECT id
+           FROM counsel_partners
+           WHERE id = ?
+             AND archived_at IS NULL
+             AND partner_status_code = 'active'
+           LIMIT 1`,
+          [counsel.id],
+          connection
+        )
+      );
+
+      if (!counselRow) {
+        throw badRequest('invalid_assignment_counsel', 'Select an active external counsel or field partner entry.');
+      }
+    }
 
     if (!internalUser && !counsel) {
       throw badRequest(
@@ -871,6 +910,7 @@ export const createMatterAssignment = async (
          internal_user_id,
          counsel_partner_id,
          is_primary,
+         visible_to_client,
          fee_agreed_amount,
          fee_paid_amount,
          fee_due_amount,
@@ -879,13 +919,14 @@ export const createMatterAssignment = async (
          removed_at,
          assignment_status_code,
          notes
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), NULL, 'active', ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), NULL, 'active', ?)`,
       [
         matter.id,
         payload.assignmentRoleCode,
         internalUser?.id || null,
         counsel?.id || null,
         payload.isPrimary ? 1 : 0,
+        (payload.visibleToClient ?? true) ? 1 : 0,
         payload.feeAgreedAmount ?? null,
         payload.feePaidAmount ?? null,
         payload.feeDueAmount ?? null,
@@ -907,6 +948,7 @@ export const createMatterAssignment = async (
           { fieldName: 'assignment_role_code', newValue: payload.assignmentRoleCode },
           { fieldName: 'internal_user_id', newValue: payload.internalUserId },
           { fieldName: 'counsel_partner_id', newValue: payload.counselPartnerId },
+          { fieldName: 'visible_to_client', newValue: payload.visibleToClient ?? true },
         ],
         entityPk: matter.id,
         entityTableName: 'matters',

@@ -194,7 +194,7 @@ export interface MattersListResponse {
 
 export interface MatterWorkspaceResponse {
   assignmentOptions: {
-    counsel: Array<{ id: string; name: string }>;
+    counsel: Array<{ id: string; name: string; type?: 'external_counsel' | 'field_partner' }>;
     staff: Array<{ id: string; name: string }>;
   };
   documents: PlatformDocument[];
@@ -721,10 +721,12 @@ export interface SettingsServiceDomain {
 }
 
 export interface SettingsService {
+  baseFee: number;
   code: string;
   description: string;
   domainCode: string;
   domainName: string;
+  icon: string;
   id: string;
   isActive: boolean;
   name: string;
@@ -747,9 +749,30 @@ export interface SettingsUrgencyRule {
   id: string;
   isActive: boolean;
   label: string;
+  responseWindowHours: number | null;
   sortOrder: number;
   surchargeType: 'flat' | 'percent' | string;
   surchargeValue: number;
+}
+
+export interface SettingsConsultationMode {
+  code: string;
+  description: string;
+  isActive: boolean;
+  label: string;
+  sortOrder: number;
+  surchargeValue: number;
+  transportDisclaimer: string;
+}
+
+export interface SettingsCountryPricing {
+  countryCode: string;
+  countryName: string;
+  currencyCode: string;
+  id: string;
+  isActive: boolean;
+  isDefault: boolean;
+  multiplier: number;
 }
 
 export interface ServiceCatalogResponse {
@@ -758,14 +781,18 @@ export interface ServiceCatalogResponse {
 }
 
 export interface PricingRulesResponse {
+  consultationModes: SettingsConsultationMode[];
+  countryPricing: SettingsCountryPricing[];
   serviceSlabs: SettingsPricingSlab[];
   urgencyRules: SettingsUrgencyRule[];
 }
 
 export interface CreateServiceCatalogPayload {
+  baseFee?: number;
   code?: string;
   description?: string | null;
   domainCode: string;
+  icon?: string | null;
   isActive?: boolean;
   name: string;
   sortOrder?: number;
@@ -787,12 +814,36 @@ export interface UrgencyRulePayload {
   code?: string;
   isActive?: boolean;
   label: string;
+  responseWindowHours?: number | null;
   sortOrder?: number;
   surchargeType: 'flat' | 'percent';
   surchargeValue: number;
 }
 
 export type UpdateUrgencyRulePayload = Partial<Omit<UrgencyRulePayload, 'code'>>;
+
+export interface ConsultationModePayload {
+  code?: string;
+  description?: string | null;
+  isActive?: boolean;
+  label: string;
+  sortOrder?: number;
+  surchargeValue?: number;
+  transportDisclaimer?: string | null;
+}
+
+export type UpdateConsultationModePayload = Partial<Omit<ConsultationModePayload, 'code'>>;
+
+export interface CountryPricingPayload {
+  countryCode?: string;
+  countryName: string;
+  currencyCode: string;
+  isActive?: boolean;
+  isDefault?: boolean;
+  multiplier: number;
+}
+
+export type UpdateCountryPricingPayload = Partial<Omit<CountryPricingPayload, 'countryCode'>>;
 
 export type TemplateType = 'document_checklist' | 'general' | 'invoice' | 'message' | 'notification';
 
@@ -919,6 +970,41 @@ export interface ReminderSettingPayload {
 
 export type UpdateReminderSettingPayload = Partial<ReminderSettingPayload>;
 
+export type TeamMemberType = 'external_counsel' | 'field_partner' | 'internal_staff';
+
+export interface TeamRegistryMember {
+  active: boolean;
+  assignmentCount: number;
+  city: string;
+  country: string;
+  email: string;
+  id: string;
+  name: string;
+  phone: string;
+  specialization: string;
+  state: string;
+  type: TeamMemberType;
+}
+
+export interface TeamRegistryResponse {
+  canManage: boolean;
+  members: TeamRegistryMember[];
+}
+
+export interface TeamMemberPayload {
+  active?: boolean;
+  city?: string | null;
+  country?: string | null;
+  email?: string | null;
+  name: string;
+  phone?: string | null;
+  specialization?: string | null;
+  state?: string | null;
+  type: TeamMemberType;
+}
+
+export type UpdateTeamMemberPayload = Partial<Omit<TeamMemberPayload, 'type'>>;
+
 export interface SettingsWorkspaceResponse {
   consultationModes: Array<{
     code: string;
@@ -961,5 +1047,6 @@ export interface SettingsWorkspaceResponse {
   };
   serviceDomains: SettingsServiceDomain[];
   services: SettingsService[];
+  teamRegistry: TeamRegistryResponse;
   templates: AdminTemplate[];
 }

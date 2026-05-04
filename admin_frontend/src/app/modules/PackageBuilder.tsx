@@ -122,13 +122,13 @@ export const PackageBuilder: React.FC<PackageBuilderProps> = ({
   };
 
   return (
-    <div className="space-y-6 bg-white p-6 rounded-2xl border border-gray-200">
+    <div className="max-w-full min-w-0 space-y-6 overflow-hidden rounded-2xl border border-gray-200 bg-white p-4 sm:p-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <h3 className="text-xl font-medium" style={{ fontFamily: "'Playfair Display', serif" }}>Service Proposal Studio</h3>
           <p className="text-sm text-gray-500">Design custom service tiers, preview the client experience, and publish the proposal.</p>
         </div>
-        <div className="flex gap-2 shrink-0">
+        <div className="flex shrink-0 flex-wrap gap-2">
           {!previewMode && (
             <button 
               onClick={addPackage}
@@ -154,7 +154,7 @@ export const PackageBuilder: React.FC<PackageBuilderProps> = ({
       </div>
 
       {previewMode ? (
-        <div className="bg-[#fafafa] rounded-xl p-8 border border-gray-200 flex flex-col items-center">
+        <div className="flex min-w-0 flex-col items-center rounded-xl border border-gray-200 bg-[#fafafa] p-4 sm:p-8">
           <div className="w-full max-w-4xl text-center mb-8">
             <div className="inline-flex items-center gap-2 mb-4 text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest">
               <Eye className="w-3.5 h-3.5" /> Client Portal Preview
@@ -163,16 +163,16 @@ export const PackageBuilder: React.FC<PackageBuilderProps> = ({
             <p className="text-gray-600 max-w-2xl mx-auto">This is exactly how the client will see and select their package in their dashboard. Once they select a package, an invoice will automatically be generated in their ledger.</p>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-6 w-full">
+          <div className="grid w-full gap-6 admin-card-grid">
             {packages.map(pkg => (
-              <div key={pkg.id} className={`bg-white rounded-xl p-6 text-left relative flex flex-col ${pkg.isRecommended ? 'ring-2 ring-gray-900 shadow-lg' : 'border border-gray-200 shadow-sm'}`}>
+              <div key={pkg.id} className={`relative flex min-w-0 max-w-full flex-col rounded-xl bg-white p-5 text-left admin-wrap-anywhere sm:p-6 ${pkg.isRecommended ? 'ring-2 ring-gray-900 shadow-lg' : 'border border-gray-200 shadow-sm'}`}>
                 {pkg.isRecommended && (
-                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-[10px] font-bold px-3 py-1 rounded-full uppercase tracking-widest whitespace-nowrap">
+                  <span className="absolute -top-3 left-1/2 max-w-[calc(100%-2rem)] -translate-x-1/2 rounded-full bg-gray-900 px-3 py-1 text-center text-[10px] font-bold uppercase tracking-widest text-white sm:whitespace-nowrap">
                     Recommended
                   </span>
                 )}
-                <h3 className="text-lg font-bold text-gray-900 mb-1">{pkg.name}</h3>
-                <div className="flex items-baseline gap-1 mb-3">
+                <h3 className="mb-1 text-lg font-bold text-gray-900">{pkg.name}</h3>
+                <div className="mb-3 flex flex-wrap items-baseline gap-1">
                   <span className="text-2xl font-bold text-gray-900">{formatCurrency(pkg.price)}</span>
                   <span className="text-xs text-gray-500">flat fee</span>
                 </div>
@@ -181,8 +181,8 @@ export const PackageBuilder: React.FC<PackageBuilderProps> = ({
                 <div className="space-y-3 mb-8 flex-1">
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Includes</p>
                   {pkg.points.map((pt, idx) => (
-                    <div key={idx} className="flex items-start gap-2 text-sm text-gray-700">
-                      <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" /> {pt}
+                    <div key={idx} className="flex min-w-0 items-start gap-2 text-sm text-gray-700">
+                      <Check className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" /> <span className="min-w-0">{pt}</span>
                     </div>
                   ))}
                 </div>
@@ -195,9 +195,9 @@ export const PackageBuilder: React.FC<PackageBuilderProps> = ({
           </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 2xl:grid-cols-3">
           {packages.map((pkg, index) => (
-            <div key={pkg.id} className="relative bg-white border border-gray-200 rounded-2xl p-6 shadow-sm group">
+            <div key={pkg.id} className="group relative min-w-0 max-w-full rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-6">
               {packages.length > 1 && (
                 <button 
                   onClick={() => removePackage(pkg.id)}
@@ -210,12 +210,12 @@ export const PackageBuilder: React.FC<PackageBuilderProps> = ({
               <div className="space-y-4">
                 <div>
                   <label className="text-xs text-gray-500 uppercase tracking-wider mb-1 block">Package Name</label>
-                  <div className="flex items-center gap-2 mb-1">
+                  <div className="mb-1 flex min-w-0 flex-wrap items-center gap-2">
                     <input 
                       type="text" 
                       value={pkg.name}
                       onChange={(e) => updatePackage(pkg.id, 'name', e.target.value)}
-                      className="flex-1 text-lg font-medium bg-transparent border-b border-gray-200 focus:border-gray-900 outline-none pb-1 transition"
+                      className="min-w-0 flex-1 border-b border-gray-200 bg-transparent pb-1 text-lg font-medium outline-none transition focus:border-gray-900"
                       placeholder="e.g. Premium Suite"
                     />
                     <label className="flex items-center gap-1.5 text-xs text-gray-500 cursor-pointer hover:text-gray-900 transition">
@@ -232,11 +232,11 @@ export const PackageBuilder: React.FC<PackageBuilderProps> = ({
 
                 <div>
                   <label className="text-xs text-gray-500 uppercase tracking-wider mb-1 block">Description</label>
-                  <input 
-                    type="text" 
-                    value={pkg.description || ''}
-                    onChange={(e) => updatePackage(pkg.id, 'description', e.target.value)}
-                    className="w-full text-sm bg-transparent border-b border-gray-200 focus:border-gray-900 outline-none pb-1 transition"
+                    <input 
+                      type="text" 
+                      value={pkg.description || ''}
+                      onChange={(e) => updatePackage(pkg.id, 'description', e.target.value)}
+                    className="w-full min-w-0 border-b border-gray-200 bg-transparent pb-1 text-sm outline-none transition focus:border-gray-900"
                     placeholder="e.g. End-to-end management..."
                   />
                 </div>
@@ -249,20 +249,20 @@ export const PackageBuilder: React.FC<PackageBuilderProps> = ({
                       type="number" 
                       value={pkg.price}
                       onChange={(e) => updatePackage(pkg.id, 'price', parseInt(e.target.value) || 0)}
-                      className="w-full text-2xl font-semibold bg-transparent border-b border-gray-200 focus:border-gray-900 outline-none pl-5 pb-1 transition"
+                      className="w-full min-w-0 border-b border-gray-200 bg-transparent pb-1 pl-5 text-2xl font-semibold outline-none transition focus:border-gray-900"
                       placeholder="0"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="text-xs text-gray-500 uppercase tracking-wider mb-2 flex items-center justify-between">
+                  <label className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs uppercase tracking-wider text-gray-500">
                     <span>Included Features</span>
                     <button onClick={() => addPoint(pkg.id)} className="text-blue-600 hover:text-blue-700 flex items-center gap-1"><Plus className="w-3 h-3"/> Add</button>
                   </label>
                   <div className="space-y-2">
                     {pkg.points.map((point, pIndex) => (
-                      <div key={pIndex} className="flex items-start gap-2">
+                      <div key={pIndex} className="flex min-w-0 items-start gap-2">
                         <div className="mt-1 flex-shrink-0 w-4 h-4 rounded-full bg-emerald-100 flex items-center justify-center">
                           <Check className="w-2.5 h-2.5 text-emerald-600" />
                         </div>
@@ -270,7 +270,7 @@ export const PackageBuilder: React.FC<PackageBuilderProps> = ({
                           type="text" 
                           value={point}
                           onChange={(e) => updatePoint(pkg.id, pIndex, e.target.value)}
-                          className="flex-1 text-sm bg-transparent border-b border-transparent hover:border-gray-200 focus:border-gray-900 outline-none transition"
+                          className="min-w-0 flex-1 border-b border-transparent bg-transparent text-sm outline-none transition hover:border-gray-200 focus:border-gray-900"
                         />
                         <button 
                           onClick={() => removePoint(pkg.id, pIndex)}
@@ -284,7 +284,7 @@ export const PackageBuilder: React.FC<PackageBuilderProps> = ({
                 </div>
               </div>
               
-              <div className="mt-6 pt-4 border-t border-gray-100 flex gap-2">
+              <div className="mt-6 flex flex-wrap gap-2 border-t border-gray-100 pt-4">
                 <button disabled className="flex-1 py-2.5 rounded-lg text-sm font-medium border border-gray-200 text-gray-400 bg-gray-50 cursor-not-allowed">
                   Client Preview
                 </button>

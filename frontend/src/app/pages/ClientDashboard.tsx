@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { AnimatePresence } from 'motion/react';
 import {
@@ -33,7 +33,7 @@ import { BRAND_NAME } from '../config/brand';
 import { useAuth } from '../contexts/useAuth';
 import { useDashboard } from '../contexts/useDashboard';
 import type { Matter } from '../data/dashboardTypes';
-import type { InvoiceDetailResponse } from '../lib/api/contracts';
+import type { ClientAccountSettingsResponse, InvoiceDetailResponse } from '../lib/api/contracts';
 import { dashboardApi } from '../lib/api/dashboard';
 import { uploadsApi } from '../lib/api/uploads';
 import { buildWebPageJsonLd } from '../seo/jsonLd';
@@ -110,6 +110,9 @@ export const ClientDashboard = () => {
   const [invoiceDetail, setInvoiceDetail] = useState<InvoiceDetailResponse | null>(null);
   const [invoiceDetailError, setInvoiceDetailError] = useState<string | null>(null);
   const [isLoadingInvoiceDetail, setIsLoadingInvoiceDetail] = useState(false);
+  const [accountSettings, setAccountSettings] = useState<ClientAccountSettingsResponse | null>(null);
+  const [accountSettingsError, setAccountSettingsError] = useState<string | null>(null);
+  const [isLoadingAccountSettings, setIsLoadingAccountSettings] = useState(false);
   const requestedPanel = searchParams.get('panel');
   const activeTab: DashboardTabId = isDashboardTabId(requestedPanel)
     ? requestedPanel
@@ -201,6 +204,28 @@ export const ClientDashboard = () => {
       cancelled = true;
     };
   }, [activeTab, selectedInvoiceId]);
+
+  const loadAccountSettings = useCallback(async () => {
+    setIsLoadingAccountSettings(true);
+    setAccountSettingsError(null);
+
+    try {
+      const nextSettings = await dashboardApi.getAccountSettings();
+      setAccountSettings(nextSettings);
+    } catch (error) {
+      setAccountSettingsError(
+        error instanceof Error ? error.message : 'We could not load account settings right now.'
+      );
+    } finally {
+      setIsLoadingAccountSettings(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === 'settings') {
+      void loadAccountSettings();
+    }
+  }, [activeTab, loadAccountSettings]);
 
   const handlePreferenceChange = (
     key: keyof typeof notificationPreferences,
@@ -631,11 +656,38 @@ export const ClientDashboard = () => {
       case 'settings':
         return (
           <DashboardSettingsSection
+            accountSettings={accountSettings}
+            accountSettingsError={accountSettingsError}
+            isAccountSettingsLoading={isLoadingAccountSettings}
             user={user}
             totalNotifications={totalNotifications}
             preferences={notificationPreferences}
+            onChangePassword={async (payload) => {
+              await dashboardApi.changePassword(payload);
+            }}
+            onConfirmEmailChange={async (payload) => {
+              const nextSettings = await dashboardApi.confirmEmailChange(payload);
+              setAccountSettings(nextSettings);
+              await reloadDashboard();
+              return nextSettings;
+            }}
+            onConfirmPhoneChange={async (payload) => {
+              const nextSettings = await dashboardApi.confirmPhoneChange(payload);
+              setAccountSettings(nextSettings);
+              await reloadDashboard();
+              return nextSettings;
+            }}
             onPreferenceChange={handlePreferenceChange}
             onOpenNotifications={() => handleTabChange('notifications')}
+            onRefreshAccountSettings={loadAccountSettings}
+            onRequestEmailChange={(payload) => dashboardApi.requestEmailChange(payload)}
+            onRequestPhoneChange={(payload) => dashboardApi.requestPhoneChange(payload)}
+            onUpdateWhatsApp={async (payload) => {
+              const nextSettings = await dashboardApi.updateAccountContact(payload);
+              setAccountSettings(nextSettings);
+              await reloadDashboard();
+              return nextSettings;
+            }}
             onSignOut={signOut}
           />
         );

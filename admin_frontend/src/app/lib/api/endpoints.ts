@@ -108,6 +108,10 @@ export const API_ENDPOINTS = {
     pricingRules: () => joinApiPath('/v1/admin/settings/pricing-rules'),
     pricingRuleSlabs: () => joinApiPath('/v1/admin/settings/pricing-rules/slabs'),
     pricingRuleUrgencyRules: () => joinApiPath('/v1/admin/settings/pricing-rules/urgency'),
+    pricingRuleConsultationModes: () =>
+      joinApiPath('/v1/admin/settings/pricing-rules/consultation-modes'),
+    pricingRuleCountryPricing: () =>
+      joinApiPath('/v1/admin/settings/pricing-rules/country-pricing'),
     pricingRuleSlab: (slabId: string) => joinApiPath(`/v1/admin/settings/pricing-rules/slabs/${slabId}`),
     pricingRuleSlabArchive: (slabId: string) =>
       joinApiPath(`/v1/admin/settings/pricing-rules/slabs/${slabId}/archive`),
@@ -115,6 +119,16 @@ export const API_ENDPOINTS = {
       joinApiPath(`/v1/admin/settings/pricing-rules/urgency/${ruleId}`),
     pricingRuleUrgencyArchive: (ruleId: string) =>
       joinApiPath(`/v1/admin/settings/pricing-rules/urgency/${ruleId}/archive`),
+    pricingRuleConsultationMode: (modeCode: string) =>
+      joinApiPath(`/v1/admin/settings/pricing-rules/consultation-modes/${encodeURIComponent(modeCode)}`),
+    pricingRuleConsultationModeArchive: (modeCode: string) =>
+      joinApiPath(
+        `/v1/admin/settings/pricing-rules/consultation-modes/${encodeURIComponent(modeCode)}/archive`
+      ),
+    pricingRuleCountryPricingRule: (countryPricingId: string) =>
+      joinApiPath(`/v1/admin/settings/pricing-rules/country-pricing/${countryPricingId}`),
+    pricingRuleCountryPricingArchive: (countryPricingId: string) =>
+      joinApiPath(`/v1/admin/settings/pricing-rules/country-pricing/${countryPricingId}/archive`),
     settingsTemplates: () => joinApiPath('/v1/admin/settings/templates'),
     settingsTemplate: (templateId: string) => joinApiPath(`/v1/admin/settings/templates/${templateId}`),
     settingsTemplateArchive: (templateId: string) =>
@@ -134,6 +148,12 @@ export const API_ENDPOINTS = {
       joinApiPath(`/v1/admin/settings/notifications/reminder-offsets/${settingId}`),
     settingsReminderOffsetArchive: (settingId: string) =>
       joinApiPath(`/v1/admin/settings/notifications/reminder-offsets/${settingId}/archive`),
+    settingsTeam: () => joinApiPath('/v1/admin/settings/team'),
+    settingsTeamMembers: () => joinApiPath('/v1/admin/settings/team/members'),
+    settingsTeamMember: (memberId: string) =>
+      joinApiPath(`/v1/admin/settings/team/members/${memberId}`),
+    settingsTeamMemberArchive: (memberId: string) =>
+      joinApiPath(`/v1/admin/settings/team/members/${memberId}/archive`),
     settingsWorkspace: () => joinApiPath('/v1/admin/settings/workspace'),
     tasksWorkspace: () => joinApiPath('/v1/admin/tasks/workspace'),
     uploadDocument: () => joinApiPath('/v1/admin/documents/uploads'),

@@ -5,6 +5,7 @@ export interface RequestData {
   fullName: string;
   email: string;
   mobile: string;
+  whatsappNumber: string;
   whatsappSame: boolean;
   services: string[];
   legalDomain: string;

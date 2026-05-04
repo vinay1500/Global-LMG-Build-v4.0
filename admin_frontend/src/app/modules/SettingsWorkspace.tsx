@@ -1,24 +1,31 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Bell, FileStack, FileText, Layers, Loader2, Save, Shield, SlidersHorizontal } from 'lucide-react';
+import { Bell, FileStack, FileText, Layers, Loader2, Save, Shield, SlidersHorizontal, Users } from 'lucide-react';
 import { formatCurrency } from '../data/seedData';
 import type {
   CreateRbacRolePayload,
   CreateServiceCatalogPayload,
+  ConsultationModePayload,
+  CountryPricingPayload,
   DocumentTypePayload,
   NotificationDeliverySettingPayload,
   ReminderSettingPayload,
   PlatformSetting,
   PricingSlabPayload,
   SettingsWorkspaceResponse,
+  TeamMemberPayload,
+  TeamMemberType,
   TemplatePayload,
   TemplateType,
   UpdateDocumentTypePayload,
+  UpdateConsultationModePayload,
+  UpdateCountryPricingPayload,
   UpdateInvoiceSettingsPayload,
   UpdateReminderSettingPayload,
   UpdatePlatformSettingPayload,
   UpdateRbacRolePayload,
   UpdateRbacRolePermissionsPayload,
   UpdateServiceCatalogPayload,
+  UpdateTeamMemberPayload,
   UpdateTemplatePayload,
   UpdateUrgencyRulePayload,
   UrgencyRulePayload,
@@ -32,21 +39,28 @@ type SettingsTab =
   | 'pricing'
   | 'roles'
   | 'services'
+  | 'team'
   | 'templates';
 
 type SettingsWorkspaceProps = {
   onArchiveDocumentType?: (documentTypeId: string) => Promise<void>;
   onArchivePricingSlab?: (slabId: string) => Promise<void>;
+  onArchiveConsultationMode?: (modeCode: string) => Promise<void>;
+  onArchiveCountryPricing?: (countryPricingId: string) => Promise<void>;
   onArchiveReminderSetting?: (settingId: string) => Promise<void>;
   onArchiveService?: (serviceId: string) => Promise<void>;
   onArchiveTemplate?: (templateId: string) => Promise<void>;
+  onArchiveTeamMember?: (memberId: string) => Promise<void>;
   onArchiveUrgencyRule?: (ruleId: string) => Promise<void>;
   onCreateDocumentType?: (payload: DocumentTypePayload) => Promise<void>;
   onCreatePricingSlab?: (payload: PricingSlabPayload) => Promise<void>;
+  onCreateConsultationMode?: (payload: ConsultationModePayload) => Promise<void>;
+  onCreateCountryPricing?: (payload: CountryPricingPayload) => Promise<void>;
   onCreateRbacRole?: (payload: CreateRbacRolePayload) => Promise<void>;
   onCreateReminderSetting?: (payload: ReminderSettingPayload) => Promise<void>;
   onCreateService?: (payload: CreateServiceCatalogPayload) => Promise<void>;
   onCreateTemplate?: (payload: TemplatePayload) => Promise<void>;
+  onCreateTeamMember?: (payload: TeamMemberPayload) => Promise<void>;
   onCreateUrgencyRule?: (payload: UrgencyRulePayload) => Promise<void>;
   onSetDefaultTemplate?: (templateId: string) => Promise<void>;
   onArchiveRbacRole?: (roleId: string) => Promise<void>;
@@ -58,8 +72,11 @@ type SettingsWorkspaceProps = {
     payload: NotificationDeliverySettingPayload
   ) => Promise<void>;
   onUpdatePricingSlab?: (slabId: string, payload: Partial<PricingSlabPayload>) => Promise<void>;
+  onUpdateConsultationMode?: (modeCode: string, payload: UpdateConsultationModePayload) => Promise<void>;
+  onUpdateCountryPricing?: (countryPricingId: string, payload: UpdateCountryPricingPayload) => Promise<void>;
   onUpdateReminderSetting?: (settingId: string, payload: UpdateReminderSettingPayload) => Promise<void>;
   onUpdateService?: (serviceId: string, payload: UpdateServiceCatalogPayload) => Promise<void>;
+  onUpdateTeamMember?: (memberId: string, payload: UpdateTeamMemberPayload) => Promise<void>;
   onUpdateTemplate?: (templateId: string, payload: UpdateTemplatePayload) => Promise<void>;
   onUpdateUrgencyRule?: (ruleId: string, payload: UpdateUrgencyRulePayload) => Promise<void>;
   onUpdateInvoiceSettings?: (payload: UpdateInvoiceSettingsPayload) => Promise<void>;
@@ -74,6 +91,7 @@ type SettingsWorkspaceProps = {
 
 const ACTIVE_TAB_ORDER: Array<{ id: SettingsTab; label: string }> = [
   { id: 'general', label: 'General Platform' },
+  { id: 'team', label: 'Team & Counsel' },
   { id: 'services', label: 'Service Catalog' },
   { id: 'pricing', label: 'Pricing Rules' },
   { id: 'invoice', label: 'Invoice Settings' },
@@ -96,9 +114,11 @@ type GeneralPlatformForm = {
 };
 
 type ServiceFormState = {
+  baseFee: string;
   code: string;
   description: string;
   domainCode: string;
+  icon: string;
   isActive: boolean;
   name: string;
   sortOrder: string;
@@ -118,9 +138,29 @@ type UrgencyRuleFormState = {
   code: string;
   isActive: boolean;
   label: string;
+  responseWindowHours: string;
   sortOrder: string;
   surchargeType: 'flat' | 'percent';
   surchargeValue: string;
+};
+
+type ConsultationModeFormState = {
+  code: string;
+  description: string;
+  isActive: boolean;
+  label: string;
+  sortOrder: string;
+  surchargeValue: string;
+  transportDisclaimer: string;
+};
+
+type CountryPricingFormState = {
+  countryCode: string;
+  countryName: string;
+  currencyCode: string;
+  isActive: boolean;
+  isDefault: boolean;
+  multiplier: string;
 };
 
 type TemplateFormState = {
@@ -157,6 +197,18 @@ type RbacRoleFormState = {
   description: string;
   isActive: boolean;
   name: string;
+};
+
+type TeamMemberFormState = {
+  active: boolean;
+  city: string;
+  country: string;
+  email: string;
+  name: string;
+  phone: string;
+  specialization: string;
+  state: string;
+  type: TeamMemberType;
 };
 
 const GENERAL_PLATFORM_KEYS = {
@@ -249,11 +301,21 @@ const formatReminderOffset = (minutes: number) => {
   return `${minutes} minutes before`;
 };
 
+const TEAM_MEMBER_TYPE_OPTIONS: Array<{ label: string; value: TeamMemberType }> = [
+  { label: 'Internal coordination staff', value: 'internal_staff' },
+  { label: 'External counsel contact', value: 'external_counsel' },
+  { label: 'Field partner', value: 'field_partner' },
+];
+
+const formatTeamMemberType = (type: TeamMemberType) =>
+  TEAM_MEMBER_TYPE_OPTIONS.find((option) => option.value === type)?.label || type;
+
 export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   onArchiveDocumentType,
   onArchivePricingSlab,
   onArchiveReminderSetting,
   onArchiveService,
+  onArchiveTeamMember,
   onArchiveTemplate,
   onArchiveUrgencyRule,
   onCreateDocumentType,
@@ -261,6 +323,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   onCreateRbacRole,
   onCreateReminderSetting,
   onCreateService,
+  onCreateTeamMember,
   onCreateTemplate,
   onCreateUrgencyRule,
   onSetDefaultTemplate,
@@ -272,6 +335,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   onUpdatePricingSlab,
   onUpdateReminderSetting,
   onUpdateService,
+  onUpdateTeamMember,
   onUpdateTemplate,
   onUpdateUrgencyRule,
   onUpdateInvoiceSettings,
@@ -290,6 +354,21 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   const [generalSaveError, setGeneralSaveError] = useState('');
   const [generalSaveMessage, setGeneralSaveMessage] = useState('');
   const [isSavingGeneralSettings, setIsSavingGeneralSettings] = useState(false);
+  const [editingTeamMemberId, setEditingTeamMemberId] = useState<string | null>(null);
+  const [teamMemberForm, setTeamMemberForm] = useState<TeamMemberFormState>({
+    active: true,
+    city: '',
+    country: 'IN',
+    email: '',
+    name: '',
+    phone: '',
+    specialization: '',
+    state: '',
+    type: 'external_counsel',
+  });
+  const [teamRegistryMessage, setTeamRegistryMessage] = useState('');
+  const [teamRegistryError, setTeamRegistryError] = useState('');
+  const [isSavingTeamMember, setIsSavingTeamMember] = useState(false);
   const [invoiceForm, setInvoiceForm] = useState({
     billingDisplayName: invoiceSettings.billingDisplayName,
     businessLegalName: invoiceSettings.businessLegalName,
@@ -312,9 +391,11 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   const firstDomainCode = workspace.serviceDomains.find((domain) => domain.isActive)?.code || workspace.serviceDomains[0]?.code || '';
   const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
   const [serviceForm, setServiceForm] = useState<ServiceFormState>({
+    baseFee: '1000',
     code: '',
     description: '',
     domainCode: firstDomainCode,
+    icon: 'Briefcase',
     isActive: true,
     name: '',
     sortOrder: '0',
@@ -337,9 +418,29 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     code: '',
     isActive: true,
     label: '',
+    responseWindowHours: '',
     sortOrder: '0',
     surchargeType: 'flat',
     surchargeValue: '0',
+  });
+  const [editingConsultationModeCode, setEditingConsultationModeCode] = useState<string | null>(null);
+  const [consultationModeForm, setConsultationModeForm] = useState<ConsultationModeFormState>({
+    code: '',
+    description: '',
+    isActive: true,
+    label: '',
+    sortOrder: '0',
+    surchargeValue: '0',
+    transportDisclaimer: '',
+  });
+  const [editingCountryPricingId, setEditingCountryPricingId] = useState<string | null>(null);
+  const [countryPricingForm, setCountryPricingForm] = useState<CountryPricingFormState>({
+    countryCode: '',
+    countryName: '',
+    currencyCode: 'INR',
+    isActive: true,
+    isDefault: false,
+    multiplier: '1',
   });
   const [pricingMessage, setPricingMessage] = useState('');
   const [pricingError, setPricingError] = useState('');
@@ -562,12 +663,133 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     }
   };
 
+  const resetTeamMemberForm = () => {
+    setEditingTeamMemberId(null);
+    setTeamMemberForm({
+      active: true,
+      city: '',
+      country: 'IN',
+      email: '',
+      name: '',
+      phone: '',
+      specialization: '',
+      state: '',
+      type: 'external_counsel',
+    });
+  };
+
+  const submitTeamMember = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!onCreateTeamMember || !onUpdateTeamMember || !workspace.teamRegistry.canManage) {
+      setTeamRegistryError('Team and counsel registry editing is not available for this admin session.');
+      return;
+    }
+
+    if (!teamMemberForm.name.trim()) {
+      setTeamRegistryError('Name is required.');
+      return;
+    }
+
+    if (
+      teamMemberForm.email.trim() &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(teamMemberForm.email.trim())
+    ) {
+      setTeamRegistryError('Email format is invalid.');
+      return;
+    }
+
+    setTeamRegistryError('');
+    setTeamRegistryMessage('');
+    setIsSavingTeamMember(true);
+
+    try {
+      const payload: TeamMemberPayload = {
+        active: teamMemberForm.active,
+        city: teamMemberForm.city.trim() || null,
+        country: teamMemberForm.country.trim() || 'IN',
+        email: teamMemberForm.email.trim() || null,
+        name: teamMemberForm.name.trim(),
+        phone: teamMemberForm.phone.trim() || null,
+        specialization: teamMemberForm.specialization.trim() || null,
+        state: teamMemberForm.state.trim() || null,
+        type: teamMemberForm.type,
+      };
+
+      if (editingTeamMemberId) {
+        const updatePayload: UpdateTeamMemberPayload = {
+          active: payload.active,
+          city: payload.city,
+          country: payload.country,
+          email: payload.email,
+          name: payload.name,
+          phone: payload.phone,
+          specialization: payload.specialization,
+          state: payload.state,
+        };
+        await onUpdateTeamMember(editingTeamMemberId, updatePayload);
+        setTeamRegistryMessage('Registry entry updated.');
+      } else {
+        await onCreateTeamMember(payload);
+        setTeamRegistryMessage('Registry entry created.');
+      }
+
+      resetTeamMemberForm();
+    } catch (error) {
+      setTeamRegistryError(error instanceof Error ? error.message : 'Unable to save registry entry.');
+    } finally {
+      setIsSavingTeamMember(false);
+    }
+  };
+
+  const startEditTeamMember = (member: SettingsWorkspaceResponse['teamRegistry']['members'][number]) => {
+    setEditingTeamMemberId(member.id);
+    setTeamRegistryError('');
+    setTeamRegistryMessage('');
+    setTeamMemberForm({
+      active: member.active,
+      city: member.city,
+      country: member.country || 'IN',
+      email: member.email,
+      name: member.name,
+      phone: member.phone,
+      specialization: member.specialization,
+      state: member.state,
+      type: member.type,
+    });
+  };
+
+  const archiveTeamMember = async (memberId: string) => {
+    if (!onArchiveTeamMember || !workspace.teamRegistry.canManage) {
+      setTeamRegistryError('Team and counsel registry archive is not available for this admin session.');
+      return;
+    }
+
+    setTeamRegistryError('');
+    setTeamRegistryMessage('');
+    setIsSavingTeamMember(true);
+
+    try {
+      await onArchiveTeamMember(memberId);
+      setTeamRegistryMessage('Registry entry archived for future assignments.');
+      if (editingTeamMemberId === memberId) {
+        resetTeamMemberForm();
+      }
+    } catch (error) {
+      setTeamRegistryError(error instanceof Error ? error.message : 'Unable to archive registry entry.');
+    } finally {
+      setIsSavingTeamMember(false);
+    }
+  };
+
   const resetServiceForm = () => {
     setEditingServiceId(null);
     setServiceForm({
+      baseFee: '1000',
       code: '',
       description: '',
       domainCode: firstDomainCode,
+      icon: 'Briefcase',
       isActive: true,
       name: '',
       sortOrder: '0',
@@ -583,12 +805,13 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     }
 
     const sortOrder = Number(serviceForm.sortOrder || 0);
+    const baseFee = Number(serviceForm.baseFee || 0);
     if (!serviceForm.name.trim() || !serviceForm.domainCode) {
       setServiceError('Service name and domain are required.');
       return;
     }
-    if (!Number.isInteger(sortOrder) || sortOrder < 0) {
-      setServiceError('Display order must be a non-negative whole number.');
+    if (!Number.isInteger(sortOrder) || sortOrder < 0 || Number.isNaN(baseFee) || baseFee < 0) {
+      setServiceError('Display order and base fee must be non-negative.');
       return;
     }
 
@@ -598,8 +821,10 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
 
     try {
       const payload = {
+        baseFee,
         description: serviceForm.description.trim() || null,
         domainCode: serviceForm.domainCode,
+        icon: serviceForm.icon.trim() || null,
         isActive: serviceForm.isActive,
         name: serviceForm.name.trim(),
         sortOrder,
@@ -629,9 +854,11 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     setServiceError('');
     setServiceMessage('');
     setServiceForm({
+      baseFee: String(service.baseFee || 0),
       code: service.code,
       description: service.description,
       domainCode: service.domainCode,
+      icon: service.icon || 'Briefcase',
       isActive: service.isActive,
       name: service.name,
       sortOrder: String(service.sortOrder),
@@ -680,6 +907,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       code: '',
       isActive: true,
       label: '',
+      responseWindowHours: '',
       sortOrder: '0',
       surchargeType: 'flat',
       surchargeValue: '0',
@@ -751,12 +979,21 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       code: urgencyForm.code.trim() || undefined,
       isActive: urgencyForm.isActive,
       label: urgencyForm.label.trim(),
+      responseWindowHours: urgencyForm.responseWindowHours
+        ? Number(urgencyForm.responseWindowHours)
+        : null,
       sortOrder: Number(urgencyForm.sortOrder || 0),
       surchargeType: urgencyForm.surchargeType,
       surchargeValue: Number(urgencyForm.surchargeValue),
     };
 
-    if (!payload.label || Number.isNaN(payload.surchargeValue) || payload.surchargeValue < 0) {
+    if (
+      !payload.label ||
+      Number.isNaN(payload.surchargeValue) ||
+      payload.surchargeValue < 0 ||
+      (payload.responseWindowHours !== null &&
+        (!Number.isInteger(payload.responseWindowHours) || payload.responseWindowHours <= 0))
+    ) {
       setPricingError('Urgency rule needs a label and non-negative surcharge.');
       return;
     }
@@ -819,6 +1056,156 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       }
     } catch (error) {
       setPricingError(error instanceof Error ? error.message : 'Unable to archive urgency rule.');
+    } finally {
+      setIsSavingPricing(false);
+    }
+  };
+
+  const resetConsultationModeForm = () => {
+    setEditingConsultationModeCode(null);
+    setConsultationModeForm({
+      code: '',
+      description: '',
+      isActive: true,
+      label: '',
+      sortOrder: '0',
+      surchargeValue: '0',
+      transportDisclaimer: '',
+    });
+  };
+
+  const submitConsultationMode = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!onCreateConsultationMode || !onUpdateConsultationMode) {
+      setPricingError('Consultation mode editing is not available for this admin session.');
+      return;
+    }
+
+    const payload: ConsultationModePayload = {
+      code: consultationModeForm.code.trim() || undefined,
+      description: consultationModeForm.description.trim() || null,
+      isActive: consultationModeForm.isActive,
+      label: consultationModeForm.label.trim(),
+      sortOrder: Number(consultationModeForm.sortOrder || 0),
+      surchargeValue: Number(consultationModeForm.surchargeValue || 0),
+      transportDisclaimer: consultationModeForm.transportDisclaimer.trim() || null,
+    };
+
+    if (!payload.label || Number.isNaN(payload.surchargeValue) || payload.surchargeValue! < 0) {
+      setPricingError('Consultation mode needs a label and non-negative fee.');
+      return;
+    }
+
+    setPricingError('');
+    setPricingMessage('');
+    setIsSavingPricing(true);
+    try {
+      if (editingConsultationModeCode) {
+        const { code: _code, ...updatePayload } = payload;
+        await onUpdateConsultationMode(editingConsultationModeCode, updatePayload);
+        setPricingMessage('Consultation mode updated.');
+      } else {
+        await onCreateConsultationMode(payload);
+        setPricingMessage('Consultation mode created.');
+      }
+      resetConsultationModeForm();
+    } catch (error) {
+      setPricingError(error instanceof Error ? error.message : 'Unable to save consultation mode.');
+    } finally {
+      setIsSavingPricing(false);
+    }
+  };
+
+  const archiveConsultationMode = async (modeCode: string) => {
+    if (!onArchiveConsultationMode) {
+      setPricingError('Consultation mode archive is not available for this admin session.');
+      return;
+    }
+    setPricingError('');
+    setPricingMessage('');
+    setIsSavingPricing(true);
+    try {
+      await onArchiveConsultationMode(modeCode);
+      setPricingMessage('Consultation mode archived for future quotes.');
+      if (editingConsultationModeCode === modeCode) {
+        resetConsultationModeForm();
+      }
+    } catch (error) {
+      setPricingError(error instanceof Error ? error.message : 'Unable to archive consultation mode.');
+    } finally {
+      setIsSavingPricing(false);
+    }
+  };
+
+  const resetCountryPricingForm = () => {
+    setEditingCountryPricingId(null);
+    setCountryPricingForm({
+      countryCode: '',
+      countryName: '',
+      currencyCode: 'INR',
+      isActive: true,
+      isDefault: false,
+      multiplier: '1',
+    });
+  };
+
+  const submitCountryPricing = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!onCreateCountryPricing || !onUpdateCountryPricing) {
+      setPricingError('Country pricing editing is not available for this admin session.');
+      return;
+    }
+
+    const payload: CountryPricingPayload = {
+      countryCode: countryPricingForm.countryCode.trim() || undefined,
+      countryName: countryPricingForm.countryName.trim(),
+      currencyCode: countryPricingForm.currencyCode.trim().toUpperCase(),
+      isActive: countryPricingForm.isActive,
+      isDefault: countryPricingForm.isDefault,
+      multiplier: Number(countryPricingForm.multiplier || 0),
+    };
+
+    if (!payload.countryName || !/^[A-Z]{3}$/.test(payload.currencyCode) || Number.isNaN(payload.multiplier) || payload.multiplier < 0) {
+      setPricingError('Country pricing needs country name, ISO currency, and non-negative multiplier.');
+      return;
+    }
+
+    setPricingError('');
+    setPricingMessage('');
+    setIsSavingPricing(true);
+    try {
+      if (editingCountryPricingId) {
+        const { countryCode: _countryCode, ...updatePayload } = payload;
+        await onUpdateCountryPricing(editingCountryPricingId, updatePayload);
+        setPricingMessage('Country pricing updated.');
+      } else {
+        await onCreateCountryPricing(payload);
+        setPricingMessage('Country pricing created.');
+      }
+      resetCountryPricingForm();
+    } catch (error) {
+      setPricingError(error instanceof Error ? error.message : 'Unable to save country pricing.');
+    } finally {
+      setIsSavingPricing(false);
+    }
+  };
+
+  const archiveCountryPricing = async (countryPricingId: string) => {
+    if (!onArchiveCountryPricing) {
+      setPricingError('Country pricing archive is not available for this admin session.');
+      return;
+    }
+    setPricingError('');
+    setPricingMessage('');
+    setIsSavingPricing(true);
+    try {
+      await onArchiveCountryPricing(countryPricingId);
+      setPricingMessage('Country pricing archived for future quotes.');
+      if (editingCountryPricingId === countryPricingId) {
+        resetCountryPricingForm();
+      }
+    } catch (error) {
+      setPricingError(error instanceof Error ? error.message : 'Unable to archive country pricing.');
     } finally {
       setIsSavingPricing(false);
     }
@@ -1568,6 +1955,192 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
             </div>
           ) : null}
 
+          {activeTab === 'team' ? (
+            <div className="space-y-6">
+              <SectionHeader
+                description="Manage internal coordination contacts, external counsel contacts, and field partners used in matter assignments."
+                icon={Users}
+                title="Team & Counsel Registry"
+              />
+              <form className="rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-5" onSubmit={submitTeamMember}>
+                <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <h3 className="text-sm font-medium text-[#2C2B29]">
+                      {editingTeamMemberId ? 'Edit Registry Entry' : 'Create Registry Entry'}
+                    </h3>
+                    <p className="mt-1 text-xs text-[#8C8981]">
+                      These contacts are used for coordination/reference assignments. Archived entries stay on historical matters but are hidden from new dropdowns.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {editingTeamMemberId ? (
+                      <button
+                        className="rounded-lg border border-[#E6E4DD] bg-white px-4 py-2 text-sm text-[#5A7C96] transition hover:bg-[#F4F1EA]"
+                        onClick={resetTeamMemberForm}
+                        type="button"
+                      >
+                        New Entry
+                      </button>
+                    ) : null}
+                    <button
+                      className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#2C2B29] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#4A4946] disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={!workspace.teamRegistry.canManage || isSavingTeamMember}
+                      type="submit"
+                    >
+                      {isSavingTeamMember ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      {editingTeamMemberId ? 'Save Entry' : 'Create Entry'}
+                    </button>
+                  </div>
+                </div>
+
+                {!workspace.teamRegistry.canManage ? (
+                  <ReadOnlyNotice text="You can view this registry, but your current role cannot manage team or counsel entries." />
+                ) : null}
+
+                <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  <SettingsSelect
+                    disabled={Boolean(editingTeamMemberId)}
+                    label="Entry Type"
+                    onChange={(value) =>
+                      setTeamMemberForm((current) => ({
+                        ...current,
+                        type: value as TeamMemberType,
+                      }))
+                    }
+                    options={TEAM_MEMBER_TYPE_OPTIONS}
+                    value={teamMemberForm.type}
+                  />
+                  <SettingsInput
+                    label="Name"
+                    onChange={(value) => setTeamMemberForm((current) => ({ ...current, name: value }))}
+                    value={teamMemberForm.name}
+                  />
+                  <SettingsInput
+                    label="Email"
+                    onChange={(value) => setTeamMemberForm((current) => ({ ...current, email: value }))}
+                    placeholder="Optional"
+                    value={teamMemberForm.email}
+                  />
+                  <SettingsInput
+                    label="Phone"
+                    onChange={(value) => setTeamMemberForm((current) => ({ ...current, phone: value }))}
+                    placeholder="Optional"
+                    value={teamMemberForm.phone}
+                  />
+                  <SettingsInput
+                    label="Specialization / Role"
+                    onChange={(value) =>
+                      setTeamMemberForm((current) => ({ ...current, specialization: value }))
+                    }
+                    placeholder="Coordination, property, family, field partner..."
+                    value={teamMemberForm.specialization}
+                  />
+                  <SettingsInput
+                    label="City"
+                    onChange={(value) => setTeamMemberForm((current) => ({ ...current, city: value }))}
+                    placeholder="Optional"
+                    value={teamMemberForm.city}
+                  />
+                  <SettingsInput
+                    label="State"
+                    onChange={(value) => setTeamMemberForm((current) => ({ ...current, state: value }))}
+                    placeholder="Optional"
+                    value={teamMemberForm.state}
+                  />
+                  <SettingsInput
+                    label="Country Code"
+                    onChange={(value) => setTeamMemberForm((current) => ({ ...current, country: value }))}
+                    value={teamMemberForm.country}
+                  />
+                  <label className="flex items-center gap-3 rounded-lg border border-[#E6E4DD] bg-white px-3 py-2">
+                    <input
+                      checked={teamMemberForm.active}
+                      className="h-4 w-4 accent-[#C19A5B]"
+                      onChange={(event) =>
+                        setTeamMemberForm((current) => ({ ...current, active: event.target.checked }))
+                      }
+                      type="checkbox"
+                    />
+                    <span className="text-sm text-[#2C2B29]">Active for new assignments</span>
+                  </label>
+                </div>
+
+                {teamRegistryError ? (
+                  <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {teamRegistryError}
+                  </div>
+                ) : null}
+                {teamRegistryMessage ? (
+                  <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                    {teamRegistryMessage}
+                  </div>
+                ) : null}
+              </form>
+
+              <div className="space-y-3">
+                {workspace.teamRegistry.members.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-[#E6E4DD] bg-[#FCFBF8] p-6 text-sm text-[#8C8981]">
+                    No team or counsel registry entries have been configured yet.
+                  </div>
+                ) : (
+                  workspace.teamRegistry.members.map((member) => (
+                    <div
+                      className="flex flex-col gap-4 rounded-xl border border-[#E6E4DD] bg-white p-4 md:flex-row md:items-center md:justify-between"
+                      key={member.id}
+                    >
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-medium text-[#2C2B29]">{member.name}</p>
+                          <span className="rounded-full bg-[#F4F1EA] px-2 py-0.5 text-[11px] font-medium text-[#5A7C96]">
+                            {formatTeamMemberType(member.type)}
+                          </span>
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                              member.active
+                                ? 'bg-emerald-50 text-emerald-700'
+                                : 'bg-gray-100 text-gray-500'
+                            }`}
+                          >
+                            {member.active ? 'Active' : 'Inactive'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-[#8C8981]">
+                          {[member.specialization, member.city, member.state, member.country]
+                            .filter(Boolean)
+                            .join(' · ') || 'No specialization/location configured'}
+                        </p>
+                        <p className="text-xs text-[#8C8981]">
+                          {[member.email || 'No email', member.phone || 'No phone'].join(' · ')}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-lg border border-[#E6E4DD] bg-[#FCFBF8] px-3 py-1 text-xs text-[#5A7C96]">
+                          {member.assignmentCount} active assignment{member.assignmentCount === 1 ? '' : 's'}
+                        </span>
+                        <button
+                          className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-xs font-medium text-[#5A7C96] transition hover:bg-[#F4F1EA]"
+                          disabled={!workspace.teamRegistry.canManage}
+                          onClick={() => startEditTeamMember(member)}
+                          type="button"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={!workspace.teamRegistry.canManage || !member.active || isSavingTeamMember}
+                          onClick={() => void archiveTeamMember(member.id)}
+                          type="button"
+                        >
+                          Archive
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          ) : null}
+
           {activeTab === 'services' ? (
             <div className="space-y-6">
               <SectionHeader
@@ -1617,6 +2190,26 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                     onChange={(value) => setServiceForm((current) => ({ ...current, code: value }))}
                     placeholder="Auto from name"
                     value={serviceForm.code}
+                  />
+                  <SettingsInput
+                    label="Base Fee"
+                    onChange={(value) => setServiceForm((current) => ({ ...current, baseFee: value }))}
+                    type="number"
+                    value={serviceForm.baseFee}
+                  />
+                  <SettingsSelect
+                    label="Icon"
+                    onChange={(value) => setServiceForm((current) => ({ ...current, icon: value }))}
+                    options={[
+                      { label: 'People', value: 'Users' },
+                      { label: 'Checklist', value: 'FileCheck' },
+                      { label: 'Document', value: 'FileText' },
+                      { label: 'Target', value: 'Target' },
+                      { label: 'Monitor', value: 'Monitor' },
+                      { label: 'Briefcase', value: 'Briefcase' },
+                      { label: 'Eye', value: 'Eye' },
+                    ]}
+                    value={serviceForm.icon}
                   />
                   <SettingsSelect
                     label="Domain"
@@ -1676,6 +2269,9 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                           <div>
                             <p className="text-sm font-medium text-[#2C2B29]">{service.name}</p>
                             <p className="text-xs text-[#8C8981] mt-1">{service.description || 'No description set.'}</p>
+                            <p className="mt-2 text-xs font-medium text-[#5A7C96]">
+                              Base fee: {formatCurrency(service.baseFee)}
+                            </p>
                           </div>
                           <MetaPill label={service.isActive ? 'Active' : 'Inactive'} tone={service.isActive ? 'green' : 'neutral'} />
                         </div>
@@ -1915,6 +2511,13 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                         value={urgencyForm.surchargeValue}
                       />
                       <SettingsInput
+                        label="Response Window Hours"
+                        onChange={(value) => setUrgencyForm((current) => ({ ...current, responseWindowHours: value }))}
+                        placeholder="48 for standard"
+                        type="number"
+                        value={urgencyForm.responseWindowHours}
+                      />
+                      <SettingsInput
                         label="Display Order"
                         onChange={(value) => setUrgencyForm((current) => ({ ...current, sortOrder: value }))}
                         type="number"
@@ -1954,6 +2557,10 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                         <div className="grid grid-cols-2 gap-3 mt-4">
                           <InfoBlock label="Surcharge Type" value={rule.surchargeType} />
                           <InfoBlock label="Surcharge Value" value={String(rule.surchargeValue)} />
+                          <InfoBlock
+                            label="Response Hours"
+                            value={rule.responseWindowHours === null ? '—' : `${rule.responseWindowHours}h`}
+                          />
                         </div>
                         <div className="mt-4 flex flex-wrap gap-2">
                           <button
@@ -1964,6 +2571,8 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                                 code: rule.code,
                                 isActive: rule.isActive,
                                 label: rule.label,
+                                responseWindowHours:
+                                  rule.responseWindowHours === null ? '' : String(rule.responseWindowHours),
                                 sortOrder: String(rule.sortOrder),
                                 surchargeType: rule.surchargeType === 'percent' ? 'percent' : 'flat',
                                 surchargeValue: String(rule.surchargeValue),
@@ -1977,6 +2586,268 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                             className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#8C8981] transition hover:bg-[#F4F1EA] disabled:cursor-not-allowed disabled:opacity-50"
                             disabled={!rule.isActive || isSavingPricing}
                             onClick={() => void archiveUrgency(rule.id)}
+                            type="button"
+                          >
+                            Archive
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                <div>
+                  <h3 className="text-sm font-medium text-[#2C2B29] mb-3">Consultation Modes</h3>
+                  <form className="mb-4 rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4" onSubmit={submitConsultationMode}>
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-[#2C2B29]">
+                          {editingConsultationModeCode ? 'Edit Consultation Mode' : 'Create Consultation Mode'}
+                        </p>
+                        <p className="mt-1 text-xs text-[#8C8981]">
+                          In-person modes automatically hide urgency options under 24 hours in the client request flow.
+                        </p>
+                      </div>
+                      {editingConsultationModeCode ? (
+                        <button
+                          className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#5A7C96]"
+                          onClick={resetConsultationModeForm}
+                          type="button"
+                        >
+                          New
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <SettingsInput
+                        label="Label"
+                        onChange={(value) => setConsultationModeForm((current) => ({ ...current, label: value }))}
+                        value={consultationModeForm.label}
+                      />
+                      <SettingsInput
+                        label="Code"
+                        disabled={Boolean(editingConsultationModeCode)}
+                        onChange={(value) => setConsultationModeForm((current) => ({ ...current, code: value }))}
+                        placeholder="Auto from label"
+                        value={consultationModeForm.code}
+                      />
+                      <SettingsInput
+                        label="Fee"
+                        onChange={(value) => setConsultationModeForm((current) => ({ ...current, surchargeValue: value }))}
+                        type="number"
+                        value={consultationModeForm.surchargeValue}
+                      />
+                      <SettingsInput
+                        label="Display Order"
+                        onChange={(value) => setConsultationModeForm((current) => ({ ...current, sortOrder: value }))}
+                        type="number"
+                        value={consultationModeForm.sortOrder}
+                      />
+                      <SettingsTextArea
+                        label="Description"
+                        onChange={(value) => setConsultationModeForm((current) => ({ ...current, description: value }))}
+                        value={consultationModeForm.description}
+                      />
+                      <SettingsTextArea
+                        label="Transport Disclaimer"
+                        onChange={(value) =>
+                          setConsultationModeForm((current) => ({ ...current, transportDisclaimer: value }))
+                        }
+                        value={consultationModeForm.transportDisclaimer}
+                      />
+                      <label className="flex items-center gap-3 rounded-lg border border-[#E6E4DD] bg-white px-3 py-2">
+                        <input
+                          checked={consultationModeForm.isActive}
+                          className="h-4 w-4 accent-[#C19A5B]"
+                          onChange={(event) =>
+                            setConsultationModeForm((current) => ({ ...current, isActive: event.target.checked }))
+                          }
+                          type="checkbox"
+                        />
+                        <span className="text-sm text-[#2C2B29]">Active</span>
+                      </label>
+                    </div>
+                    <button
+                      className="mt-4 inline-flex items-center justify-center gap-2 rounded-lg bg-[#2C2B29] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#4A4946] disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={!onCreateConsultationMode || !onUpdateConsultationMode || isSavingPricing}
+                      type="submit"
+                    >
+                      {isSavingPricing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      {editingConsultationModeCode ? 'Save Mode' : 'Create Mode'}
+                    </button>
+                  </form>
+                  <div className="space-y-3">
+                    {workspace.pricingRules.consultationModes.map((mode) => (
+                      <div className="rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4" key={mode.code}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium text-[#2C2B29]">{mode.label}</p>
+                            <p className="mt-1 text-xs uppercase tracking-[0.18em] text-[#8C8981]">{mode.code}</p>
+                            {mode.transportDisclaimer ? (
+                              <p className="mt-2 text-xs text-amber-700">{mode.transportDisclaimer}</p>
+                            ) : null}
+                          </div>
+                          <MetaPill label={mode.isActive ? 'Active' : 'Inactive'} tone={mode.isActive ? 'green' : 'neutral'} />
+                        </div>
+                        <div className="mt-4 grid grid-cols-2 gap-3">
+                          <InfoBlock label="Fee" value={formatCurrency(mode.surchargeValue)} />
+                          <InfoBlock label="Order" value={String(mode.sortOrder)} />
+                        </div>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <button
+                            className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#5A7C96] transition hover:bg-[#F4F1EA]"
+                            onClick={() => {
+                              setEditingConsultationModeCode(mode.code);
+                              setConsultationModeForm({
+                                code: mode.code,
+                                description: mode.description,
+                                isActive: mode.isActive,
+                                label: mode.label,
+                                sortOrder: String(mode.sortOrder),
+                                surchargeValue: String(mode.surchargeValue),
+                                transportDisclaimer: mode.transportDisclaimer,
+                              });
+                            }}
+                            type="button"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#8C8981] transition hover:bg-[#F4F1EA] disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={!mode.isActive || isSavingPricing}
+                            onClick={() => void archiveConsultationMode(mode.code)}
+                            type="button"
+                          >
+                            Archive
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-medium text-[#2C2B29] mb-3">Country Pricing</h3>
+                  <form className="mb-4 rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4" onSubmit={submitCountryPricing}>
+                    <div className="mb-4 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-[#2C2B29]">
+                          {editingCountryPricingId ? 'Edit Country Pricing' : 'Create Country Pricing'}
+                        </p>
+                        <p className="mt-1 text-xs text-[#8C8981]">
+                          Multiplier converts base service/mode/urgency pricing into the selected currency for new requests.
+                        </p>
+                      </div>
+                      {editingCountryPricingId ? (
+                        <button
+                          className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#5A7C96]"
+                          onClick={resetCountryPricingForm}
+                          type="button"
+                        >
+                          New
+                        </button>
+                      ) : null}
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      <SettingsInput
+                        label="Country Name"
+                        onChange={(value) => setCountryPricingForm((current) => ({ ...current, countryName: value }))}
+                        value={countryPricingForm.countryName}
+                      />
+                      <SettingsInput
+                        label="Country Code"
+                        disabled={Boolean(editingCountryPricingId)}
+                        onChange={(value) => setCountryPricingForm((current) => ({ ...current, countryCode: value }))}
+                        placeholder="IN, US, AU, DEFAULT"
+                        value={countryPricingForm.countryCode}
+                      />
+                      <SettingsInput
+                        label="Currency"
+                        onChange={(value) =>
+                          setCountryPricingForm((current) => ({ ...current, currencyCode: value.toUpperCase() }))
+                        }
+                        value={countryPricingForm.currencyCode}
+                      />
+                      <SettingsInput
+                        label="Multiplier"
+                        onChange={(value) => setCountryPricingForm((current) => ({ ...current, multiplier: value }))}
+                        type="number"
+                        value={countryPricingForm.multiplier}
+                      />
+                      <label className="flex items-center gap-3 rounded-lg border border-[#E6E4DD] bg-white px-3 py-2">
+                        <input
+                          checked={countryPricingForm.isDefault}
+                          className="h-4 w-4 accent-[#C19A5B]"
+                          onChange={(event) =>
+                            setCountryPricingForm((current) => ({ ...current, isDefault: event.target.checked }))
+                          }
+                          type="checkbox"
+                        />
+                        <span className="text-sm text-[#2C2B29]">Default fallback</span>
+                      </label>
+                      <label className="flex items-center gap-3 rounded-lg border border-[#E6E4DD] bg-white px-3 py-2">
+                        <input
+                          checked={countryPricingForm.isActive}
+                          className="h-4 w-4 accent-[#C19A5B]"
+                          onChange={(event) =>
+                            setCountryPricingForm((current) => ({ ...current, isActive: event.target.checked }))
+                          }
+                          type="checkbox"
+                        />
+                        <span className="text-sm text-[#2C2B29]">Active</span>
+                      </label>
+                    </div>
+                    <button
+                      className="mt-4 inline-flex items-center justify-center gap-2 rounded-lg bg-[#2C2B29] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#4A4946] disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={!onCreateCountryPricing || !onUpdateCountryPricing || isSavingPricing}
+                      type="submit"
+                    >
+                      {isSavingPricing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                      {editingCountryPricingId ? 'Save Country' : 'Create Country'}
+                    </button>
+                  </form>
+                  <div className="space-y-3">
+                    {workspace.pricingRules.countryPricing.map((rule) => (
+                      <div className="rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4" key={rule.id}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium text-[#2C2B29]">{rule.countryName}</p>
+                            <p className="mt-1 text-xs uppercase tracking-[0.18em] text-[#8C8981]">
+                              {rule.countryCode} · {rule.currencyCode}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {rule.isDefault ? <MetaPill label="Default" tone="blue" /> : null}
+                            <MetaPill label={rule.isActive ? 'Active' : 'Inactive'} tone={rule.isActive ? 'green' : 'neutral'} />
+                          </div>
+                        </div>
+                        <div className="mt-4 grid grid-cols-2 gap-3">
+                          <InfoBlock label="Multiplier" value={String(rule.multiplier)} />
+                          <InfoBlock label="Currency" value={rule.currencyCode} />
+                        </div>
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <button
+                            className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#5A7C96] transition hover:bg-[#F4F1EA]"
+                            onClick={() => {
+                              setEditingCountryPricingId(rule.id);
+                              setCountryPricingForm({
+                                countryCode: rule.countryCode,
+                                countryName: rule.countryName,
+                                currencyCode: rule.currencyCode,
+                                isActive: rule.isActive,
+                                isDefault: rule.isDefault,
+                                multiplier: String(rule.multiplier),
+                              });
+                            }}
+                            type="button"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#8C8981] transition hover:bg-[#F4F1EA] disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={!rule.isActive || rule.isDefault || isSavingPricing}
+                            onClick={() => void archiveCountryPricing(rule.id)}
                             type="button"
                           >
                             Archive
@@ -3167,11 +4038,13 @@ const SettingsInput = ({
 );
 
 const SettingsSelect = ({
+  disabled = false,
   label,
   onChange,
   options,
   value,
 }: {
+  disabled?: boolean;
   label: string;
   onChange: (value: string) => void;
   options: Array<{ label: string; value: string }>;
@@ -3180,7 +4053,8 @@ const SettingsSelect = ({
   <label className="space-y-1.5">
     <span className="text-[11px] font-bold uppercase tracking-[0.22em] text-[#A8A69F]">{label}</span>
     <select
-      className="w-full rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
+      className="w-full rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B] disabled:cursor-not-allowed disabled:bg-[#F4F1EA] disabled:text-[#8C8981]"
+      disabled={disabled}
       onChange={(event) => onChange(event.target.value)}
       value={value}
     >

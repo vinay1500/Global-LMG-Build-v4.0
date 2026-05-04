@@ -31,6 +31,8 @@ import type {
   ReportsWorkspaceResponse,
   CreateClientPayload,
   CreateClientResponse,
+  ConsultationModePayload,
+  CountryPricingPayload,
   CreateMatterPayload,
   CreateMatterResponse,
   CreateRbacRolePayload,
@@ -43,6 +45,8 @@ import type {
   ServiceCatalogResponse,
   SettingsWorkspaceResponse,
   SettingsPricingSlab,
+  SettingsConsultationMode,
+  SettingsCountryPricing,
   SettingsService,
   SettingsUrgencyRule,
   TasksWorkspaceResponse,
@@ -51,6 +55,8 @@ import type {
   UpdateRbacRolePayload,
   UpdateRbacRolePermissionsPayload,
   UpdateDocumentTypePayload,
+  UpdateConsultationModePayload,
+  UpdateCountryPricingPayload,
   UpdateInvoiceSettingsPayload,
   InvoiceSettings,
   PlatformSetting,
@@ -58,6 +64,10 @@ import type {
   UpdatePlatformSettingPayload,
   UpdateReminderSettingPayload,
   UpdateServiceCatalogPayload,
+  TeamMemberPayload,
+  TeamRegistryMember,
+  TeamRegistryResponse,
+  UpdateTeamMemberPayload,
   UpdateTemplatePayload,
   UpdateUrgencyRulePayload,
   UrgencyRulePayload,
@@ -197,6 +207,7 @@ export const adminApi = {
       internalUserId?: string;
       isPrimary?: boolean;
       notes?: string;
+      visibleToClient?: boolean;
     }
   ) =>
     apiRequest<{ status: 'created' }>(API_ENDPOINTS.admin.createMatterAssignment(matterId), {
@@ -329,6 +340,24 @@ export const adminApi = {
     apiRequest<SettingsWorkspaceResponse>(API_ENDPOINTS.admin.settingsWorkspace()),
   getNotificationSettings: () =>
     apiRequest<NotificationSettingsResponse>(API_ENDPOINTS.admin.settingsNotifications()),
+  getSettingsTeam: () =>
+    apiRequest<TeamRegistryResponse>(API_ENDPOINTS.admin.settingsTeam()),
+  createTeamMember: (payload: TeamMemberPayload) =>
+    apiRequest<TeamRegistryMember>(API_ENDPOINTS.admin.settingsTeamMembers(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  updateTeamMember: (memberId: string, payload: UpdateTeamMemberPayload) =>
+    apiRequest<TeamRegistryMember>(API_ENDPOINTS.admin.settingsTeamMember(memberId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+    }),
+  archiveTeamMember: (memberId: string) =>
+    apiRequest<{ id: string; status: 'archived' }>(API_ENDPOINTS.admin.settingsTeamMemberArchive(memberId), {
+      method: 'POST',
+    }),
   updateNotificationTypeSetting: (typeCode: string, payload: NotificationDeliverySettingPayload) =>
     apiRequest<NotificationDeliverySetting>(API_ENDPOINTS.admin.settingsNotificationType(typeCode), {
       body: JSON.stringify(payload),
@@ -443,6 +472,42 @@ export const adminApi = {
     apiRequest<SettingsUrgencyRule>(API_ENDPOINTS.admin.pricingRuleUrgencyArchive(ruleId), {
       method: 'POST',
     }),
+  createConsultationMode: (payload: ConsultationModePayload) =>
+    apiRequest<SettingsConsultationMode>(API_ENDPOINTS.admin.pricingRuleConsultationModes(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  updateConsultationMode: (modeCode: string, payload: UpdateConsultationModePayload) =>
+    apiRequest<SettingsConsultationMode>(API_ENDPOINTS.admin.pricingRuleConsultationMode(modeCode), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+    }),
+  archiveConsultationMode: (modeCode: string) =>
+    apiRequest<SettingsConsultationMode>(API_ENDPOINTS.admin.pricingRuleConsultationModeArchive(modeCode), {
+      method: 'POST',
+    }),
+  createCountryPricing: (payload: CountryPricingPayload) =>
+    apiRequest<SettingsCountryPricing>(API_ENDPOINTS.admin.pricingRuleCountryPricing(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  updateCountryPricing: (countryPricingId: string, payload: UpdateCountryPricingPayload) =>
+    apiRequest<SettingsCountryPricing>(
+      API_ENDPOINTS.admin.pricingRuleCountryPricingRule(countryPricingId),
+      {
+        body: JSON.stringify(payload),
+        headers: { 'content-type': 'application/json' },
+        method: 'PATCH',
+      }
+    ),
+  archiveCountryPricing: (countryPricingId: string) =>
+    apiRequest<{ id: string; status: 'archived' }>(
+      API_ENDPOINTS.admin.pricingRuleCountryPricingArchive(countryPricingId),
+      { method: 'POST' }
+    ),
   updateInvoiceSettings: (payload: UpdateInvoiceSettingsPayload) =>
     apiRequest<InvoiceSettings>(API_ENDPOINTS.admin.invoiceSettings(), {
       body: JSON.stringify(payload),

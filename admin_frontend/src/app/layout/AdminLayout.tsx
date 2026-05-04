@@ -47,7 +47,7 @@ export const AdminLayout = () => {
   };
 
   return (
-    <div className="min-h-screen bg-[#FCFBF8] text-[#2C2B29] font-sans selection:bg-[#2C2B29] selection:text-[#FCFBF8]">
+    <div className="min-h-screen overflow-x-hidden bg-[#FCFBF8] text-[#2C2B29] font-sans selection:bg-[#2C2B29] selection:text-[#FCFBF8]">
       <AdminTopbar
         currentUser={currentUser}
         onOpenSearch={() => setSearchOpen(true)}
@@ -56,7 +56,7 @@ export const AdminLayout = () => {
         sidebarOpen={sidebarOpen}
       />
 
-      <div className="flex min-h-[calc(100vh-64px)]">
+      <div className="flex min-h-[calc(100vh-64px)] min-w-0">
         <AnimatePresence>
           {sidebarOpen ? (
             <motion.div
@@ -77,14 +77,14 @@ export const AdminLayout = () => {
           <AdminSidebar onNavigate={() => setSidebarOpen(false)} onSignOut={handleSignOut} />
         </div>
 
-        <main className="flex-1 min-w-0 flex flex-col">
+        <main className="flex-1 min-w-0 flex flex-col overflow-x-hidden">
           <AdminBreadcrumbs
             onToggleContextPanel={() => setRightPanelOpen((previous) => !previous)}
             rightPanelOpen={rightPanelOpen}
           />
 
-          <div className="flex flex-1 min-h-0 overflow-hidden relative">
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 w-full max-w-[1400px] mx-auto">
+          <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden relative">
+            <div className="admin-content flex-1 min-w-0 overflow-x-hidden overflow-y-auto p-4 sm:p-6 lg:p-8 w-full max-w-[1400px] mx-auto">
               <Outlet />
             </div>
 

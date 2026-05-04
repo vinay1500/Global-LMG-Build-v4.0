@@ -3,6 +3,8 @@ import type {
   DashboardMessageSubmissionPayload,
   DashboardPackageSelectionResponse,
   DashboardSnapshotResponse,
+  AccountChangeRequestResponse,
+  ClientAccountSettingsResponse,
   InvoiceDetailResponse,
   NotificationPreferencesResponse,
   PortalNotificationResponse,
@@ -50,6 +52,24 @@ export const dashboardApi = {
     apiRequest<InvoiceDetailResponse>(API_ENDPOINTS.me.invoiceDetail(invoiceId)),
   getNotificationPreferences: () =>
     apiRequest<NotificationPreferencesResponse>(API_ENDPOINTS.me.preferences()),
+  getAccountSettings: () =>
+    apiRequest<ClientAccountSettingsResponse>(API_ENDPOINTS.me.accountSettings()),
+  updateAccountContact: (payload: { whatsappNumber: string; whatsappSameAsMobile: boolean }) =>
+    apiRequest<ClientAccountSettingsResponse>(API_ENDPOINTS.me.accountContact(), {
+      body: JSON.stringify(payload),
+      headers: { 'Content-Type': 'application/json' },
+      method: 'PATCH',
+    }),
+  changePassword: (payload: { currentPassword: string; newPassword: string }) =>
+    postJson<{ status: 'updated' }>(API_ENDPOINTS.me.accountPassword(), payload),
+  requestEmailChange: (payload: { email: string }) =>
+    postJson<AccountChangeRequestResponse>(API_ENDPOINTS.me.accountEmailChangeRequest(), payload),
+  confirmEmailChange: (payload: { code: string; email: string }) =>
+    postJson<ClientAccountSettingsResponse>(API_ENDPOINTS.me.accountEmailChangeConfirm(), payload),
+  requestPhoneChange: (payload: { phone: string }) =>
+    postJson<AccountChangeRequestResponse>(API_ENDPOINTS.me.accountPhoneChangeRequest(), payload),
+  confirmPhoneChange: (payload: { code: string; phone: string }) =>
+    postJson<ClientAccountSettingsResponse>(API_ENDPOINTS.me.accountPhoneChangeConfirm(), payload),
   updateNotificationPreferences: (payload: UpdateNotificationPreferencesPayload) =>
     putJson<NotificationPreferencesResponse>(API_ENDPOINTS.me.preferences(), payload),
   getNotifications: () =>

@@ -31,9 +31,11 @@ const EMPTY_CLIENT: PlatformUser = {
 const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferencesResponse = {
   caseActivityAlerts: true,
   emailUpdates: true,
+  inAppAlerts: true,
   invoiceReminders: true,
   productAnnouncements: false,
   smsAlerts: true,
+  whatsappAlerts: false,
 };
 
 const createEmptyDashboardState = (currentClient: PlatformUser): DashboardState => ({

@@ -92,6 +92,7 @@ export interface DashboardRequestSubmissionPayload {
   fullName: string;
   legalDomain: string;
   mobile: string;
+  whatsappNumber?: string;
   pastLegalAction: boolean;
   preferredDate: string;
   preferredTime: string;
@@ -171,12 +172,41 @@ export interface DashboardPackageSelectionResponse {
 export interface NotificationPreferencesResponse {
   caseActivityAlerts: boolean;
   emailUpdates: boolean;
+  inAppAlerts: boolean;
   invoiceReminders: boolean;
   productAnnouncements: boolean;
   smsAlerts: boolean;
+  whatsappAlerts: boolean;
 }
 
 export type UpdateNotificationPreferencesPayload = NotificationPreferencesResponse;
+
+export interface ClientAccountSettingsResponse {
+  account: {
+    email: string;
+    emailVerified: boolean;
+    mobileNumber: string;
+    name: string;
+    phone: string;
+    phoneVerified: boolean;
+    whatsappNumber: string;
+    whatsappSameAsMobile: boolean;
+  };
+  providerMode: {
+    email: 'disabled' | 'preview' | 'resend';
+    inApp: 'local';
+    sms: 'disabled' | 'preview' | 'twilio-verify';
+    whatsapp: 'informational';
+  };
+}
+
+export interface AccountChangeRequestResponse {
+  deliveryHint?: string;
+  email?: string;
+  phone?: string;
+  providerMode: string;
+  status: 'verification_required';
+}
 
 export interface PortalNotificationResponse {
   actionLabel: string;

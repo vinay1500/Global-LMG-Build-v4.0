@@ -43,6 +43,11 @@ export const dashboardService = {
     return repository.getSnapshot(currentClient);
   },
 
+  async getRequestPricingConfig(currentClient: PlatformUser) {
+    const repository = await getRepository();
+    return repository.getRequestPricingConfig(currentClient);
+  },
+
   async submitRequest(currentClient: PlatformUser, request: DashboardRequestInput) {
     const repository = await getRepository();
     return repository.submitRequest(currentClient, request);

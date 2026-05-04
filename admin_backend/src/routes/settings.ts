@@ -3,14 +3,20 @@ import { z } from 'zod';
 import { asyncHandler } from '../lib/httpErrors.js';
 import { getWorkspace } from '../modules/settings/service.js';
 import {
+  archiveConsultationMode,
+  archiveCountryPricing,
   archivePricingSlab,
   archiveService,
   archiveUrgencyRule,
+  createConsultationMode,
+  createCountryPricing,
   createPricingSlab,
   createService,
   createUrgencyRule,
   getPricingRules,
   getServiceCatalog,
+  updateConsultationMode,
+  updateCountryPricing,
   updatePricingSlab,
   updateService,
   updateUrgencyRule,
@@ -24,6 +30,12 @@ import {
   updateReminderSetting,
 } from '../modules/settings/notificationSettings.js';
 import { getPlatformSettings, updatePlatformSetting } from '../modules/settings/platformSettings.js';
+import {
+  archiveTeamMember,
+  createTeamMember,
+  getTeamRegistry,
+  updateTeamMember,
+} from '../modules/settings/teamRegistry.js';
 import {
   archiveRole,
   assignUserRole,
@@ -71,9 +83,11 @@ const platformSettingSchema = z.object({
 });
 
 const serviceCreateSchema = z.object({
+  baseFee: z.number().min(0).optional(),
   code: z.string().trim().max(64).optional(),
   description: z.string().trim().max(2000).nullable().optional(),
   domainCode: z.string().trim().min(1).max(64),
+  icon: z.string().trim().max(64).nullable().optional(),
   isActive: z.boolean().optional(),
   name: z.string().trim().min(2).max(180),
   sortOrder: z.number().int().min(0).max(100000).optional(),
@@ -97,12 +111,36 @@ const urgencyRuleCreateSchema = z.object({
   code: z.string().trim().max(32).optional(),
   isActive: z.boolean().optional(),
   label: z.string().trim().min(1).max(120),
+  responseWindowHours: z.number().int().positive().nullable().optional(),
   sortOrder: z.number().int().min(0).max(100000).optional(),
   surchargeType: z.enum(['flat', 'percent']),
   surchargeValue: z.number().min(0),
 });
 
 const urgencyRuleUpdateSchema = urgencyRuleCreateSchema.omit({ code: true }).partial();
+
+const consultationModeCreateSchema = z.object({
+  code: z.string().trim().max(32).optional(),
+  description: z.string().trim().max(255).nullable().optional(),
+  isActive: z.boolean().optional(),
+  label: z.string().trim().min(1).max(100),
+  sortOrder: z.number().int().min(0).max(100000).optional(),
+  surchargeValue: z.number().min(0).optional(),
+  transportDisclaimer: z.string().trim().max(500).nullable().optional(),
+});
+
+const consultationModeUpdateSchema = consultationModeCreateSchema.omit({ code: true }).partial();
+
+const countryPricingCreateSchema = z.object({
+  countryCode: z.string().trim().max(8).optional(),
+  countryName: z.string().trim().min(1).max(120),
+  currencyCode: z.string().trim().min(3).max(3),
+  isActive: z.boolean().optional(),
+  isDefault: z.boolean().optional(),
+  multiplier: z.number().min(0),
+});
+
+const countryPricingUpdateSchema = countryPricingCreateSchema.omit({ countryCode: true }).partial();
 
 const templateCreateSchema = z.object({
   body: z.string().trim().min(1).max(10000),
@@ -129,6 +167,20 @@ const documentTypeCreateSchema = z.object({
 });
 
 const documentTypeUpdateSchema = documentTypeCreateSchema.partial().omit({ code: true });
+
+const teamMemberCreateSchema = z.object({
+  active: z.boolean().optional(),
+  city: z.string().trim().max(100).nullable().optional(),
+  country: z.string().trim().max(16).nullable().optional(),
+  email: z.string().trim().max(255).nullable().optional(),
+  name: z.string().trim().min(2).max(160),
+  phone: z.string().trim().max(40).nullable().optional(),
+  specialization: z.string().trim().max(255).nullable().optional(),
+  state: z.string().trim().max(100).nullable().optional(),
+  type: z.enum(['internal_staff', 'external_counsel', 'field_partner']),
+});
+
+const teamMemberUpdateSchema = teamMemberCreateSchema.partial().omit({ type: true });
 
 const notificationDeliveryUpdateSchema = z.object({
   emailEnabled: z.boolean().optional(),
@@ -266,6 +318,40 @@ settingsRouter.patch(
 );
 
 settingsRouter.get(
+  '/settings/team',
+  asyncHandler(async (request, response) => {
+    const actor = await requireReadPermission(request, 'counsel_partner.view');
+    response.json(await getTeamRegistry(actor));
+  })
+);
+
+settingsRouter.post(
+  '/settings/team/members',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'counsel_partner.manage');
+    response.status(201).json(await createTeamMember(actor, teamMemberCreateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.patch(
+  '/settings/team/members/:memberId',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'counsel_partner.manage');
+    const memberId = z.string().trim().min(1).max(64).parse(request.params.memberId);
+    response.json(await updateTeamMember(actor, memberId, teamMemberUpdateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.post(
+  '/settings/team/members/:memberId/archive',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'counsel_partner.manage');
+    const memberId = z.string().trim().min(1).max(64).parse(request.params.memberId);
+    response.json(await archiveTeamMember(actor, memberId));
+  })
+);
+
+settingsRouter.get(
   '/settings/service-catalog',
   asyncHandler(async (request, response) => {
     requirePermission(await requireReadActor(request), 'dashboard.view');
@@ -356,6 +442,66 @@ settingsRouter.post(
     const actor = await requireMutationPermission(request, 'settings.manage');
     const ruleId = z.string().parse(request.params.ruleId);
     response.json(await archiveUrgencyRule(actor, ruleId));
+  })
+);
+
+settingsRouter.post(
+  '/settings/pricing-rules/consultation-modes',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    response.status(201).json(
+      await createConsultationMode(actor, consultationModeCreateSchema.parse(request.body))
+    );
+  })
+);
+
+settingsRouter.patch(
+  '/settings/pricing-rules/consultation-modes/:modeCode',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const modeCode = z.string().trim().min(1).max(32).parse(request.params.modeCode);
+    response.json(
+      await updateConsultationMode(actor, modeCode, consultationModeUpdateSchema.parse(request.body))
+    );
+  })
+);
+
+settingsRouter.post(
+  '/settings/pricing-rules/consultation-modes/:modeCode/archive',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const modeCode = z.string().trim().min(1).max(32).parse(request.params.modeCode);
+    response.json(await archiveConsultationMode(actor, modeCode));
+  })
+);
+
+settingsRouter.post(
+  '/settings/pricing-rules/country-pricing',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    response.status(201).json(
+      await createCountryPricing(actor, countryPricingCreateSchema.parse(request.body))
+    );
+  })
+);
+
+settingsRouter.patch(
+  '/settings/pricing-rules/country-pricing/:countryPricingId',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const countryPricingId = z.string().parse(request.params.countryPricingId);
+    response.json(
+      await updateCountryPricing(actor, countryPricingId, countryPricingUpdateSchema.parse(request.body))
+    );
+  })
+);
+
+settingsRouter.post(
+  '/settings/pricing-rules/country-pricing/:countryPricingId/archive',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const countryPricingId = z.string().parse(request.params.countryPricingId);
+    response.json(await archiveCountryPricing(actor, countryPricingId));
   })
 );
 

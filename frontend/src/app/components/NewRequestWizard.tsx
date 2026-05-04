@@ -59,6 +59,7 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
     fullName: userName,
     email: userEmail,
     mobile: userMobile,
+    whatsappNumber: userMobile,
     whatsappSame: true,
     services: [],
     legalDomain: '',
@@ -248,7 +249,13 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
                         <input
                           type="tel"
                           value={formData.mobile}
-                          onChange={(e) => setFormData({ ...formData, mobile: e.target.value })}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              mobile: e.target.value,
+                              whatsappNumber: formData.whatsappSame ? e.target.value : formData.whatsappNumber,
+                            })
+                          }
                           className="w-full text-lg font-semibold bg-transparent border-none outline-none"
                           placeholder="+Country code XXXXXXXX"
                         />
@@ -258,11 +265,31 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
                         <input
                           type="checkbox"
                           checked={formData.whatsappSame}
-                          onChange={(e) => setFormData({ ...formData, whatsappSame: e.target.checked })}
+                          onChange={(e) =>
+                            setFormData({
+                              ...formData,
+                              whatsappNumber: e.target.checked ? formData.mobile : formData.whatsappNumber,
+                              whatsappSame: e.target.checked,
+                            })
+                          }
                           className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
                         />
                         <span className="text-sm font-medium">WhatsApp number is same as mobile</span>
                       </label>
+                      {!formData.whatsappSame && (
+                        <div>
+                          <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">
+                            WhatsApp Number
+                          </label>
+                          <input
+                            type="tel"
+                            value={formData.whatsappNumber}
+                            onChange={(e) => setFormData({ ...formData, whatsappNumber: e.target.value })}
+                            className="w-full text-lg font-semibold bg-transparent border-none outline-none"
+                            placeholder="+Country code XXXXXXXX"
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -602,6 +629,7 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
                 disabled={
                   isSubmitting ||
                   (currentStep === 1 && (!formData.fullName || !formData.email || !formData.mobile)) ||
+                  (currentStep === 1 && !formData.whatsappSame && !formData.whatsappNumber) ||
                   (currentStep === 2 && formData.services.length === 0) ||
                   (currentStep === 3 && !formData.legalDomain) ||
                   (currentStep === 4 && !formData.caseDetails) ||

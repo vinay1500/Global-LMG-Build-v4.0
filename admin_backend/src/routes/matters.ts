@@ -43,6 +43,7 @@ const assignmentSchema = z.object({
   internalUserId: z.string().trim().min(2).max(64).optional(),
   isPrimary: z.boolean().optional(),
   notes: z.string().trim().max(2000).optional(),
+  visibleToClient: z.boolean().optional(),
 });
 
 const updateMatterDetailsSchema = z.object({

@@ -34,6 +34,13 @@ export const API_ENDPOINTS = {
       joinApiPath(`/v1/dashboard/matters/${matterId}/package-selection`),
   },
   me: {
+    accountContact: () => joinApiPath('/v1/me/account/contact'),
+    accountEmailChangeConfirm: () => joinApiPath('/v1/me/account/email-change/confirm'),
+    accountEmailChangeRequest: () => joinApiPath('/v1/me/account/email-change/request'),
+    accountPassword: () => joinApiPath('/v1/me/account/password'),
+    accountPhoneChangeConfirm: () => joinApiPath('/v1/me/account/phone-change/confirm'),
+    accountPhoneChangeRequest: () => joinApiPath('/v1/me/account/phone-change/request'),
+    accountSettings: () => joinApiPath('/v1/me/account-settings'),
     preferences: () => joinApiPath('/v1/me/preferences'),
     documentDownload: (documentId: string) =>
       joinApiPath(`/v1/me/documents/${documentId}/download`),
