@@ -6,6 +6,9 @@ import { badRequest, notFound } from '../../lib/httpErrors.js';
 import { executeStatement, queryRows, withTransaction, type QueryExecutor } from '../../lib/mysql.js';
 import { toUiDateTime } from '../../lib/viewModels.js';
 import type { AdminActor } from '../auth/service.js';
+import { sendEmail } from '../providers/email.js';
+import { sendSms } from '../providers/sms.js';
+import type { ProviderDeliveryResult } from '../providers/types.js';
 import { createAuditEvent } from '../writeSupport.js';
 
 type ReminderStatus = 'cancelled' | 'failed' | 'pending' | 'processing' | 'sent';
@@ -26,6 +29,7 @@ type ReminderProcessingRow = RowDataPacket & {
   maxAttempts: number;
   recipientEmail: string | null;
   recipientName: string | null;
+  recipientPhone: string | null;
   recipientUserId: number;
   retryCount: number;
   scheduledAt: string;
@@ -79,13 +83,41 @@ const formatDateTimeForCopy = (value: string) => value.slice(0, 16).replace(' ',
 const renderTemplate = (value: string, context: Record<string, string>) =>
   value.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, variable: string) => context[variable] || '');
 
-const deliveryLabelFor = (channelCode: string) => {
-  if (channelCode === 'email' && env.EMAIL_PROVIDER_MODE !== 'disabled') {
-    return 'Email delivery is not implemented in this phase; an in-app/local reminder was created instead.';
+const deliveryLabelFor = (channelCode: string, result?: ProviderDeliveryResult) => {
+  if (channelCode === 'email') {
+    if (result?.status === 'sent') {
+      return 'Email reminder sent via Resend.';
+    }
+
+    if (result?.status === 'preview') {
+      return 'Email provider preview mode; no external email was sent.';
+    }
+
+    if (result?.status === 'failed') {
+      return 'Email delivery failed; retry is available from the reminder queue.';
+    }
+
+    return env.EMAIL_PROVIDER_MODE === 'disabled'
+      ? 'Email provider disabled; in-app/local reminder only.'
+      : 'Email reminder delivery pending provider processing.';
   }
 
-  if (channelCode === 'sms' && env.SMS_PROVIDER_MODE !== 'disabled') {
-    return 'SMS delivery is not implemented in this phase; an in-app/local reminder was created instead.';
+  if (channelCode === 'sms') {
+    if (result?.status === 'sent') {
+      return 'SMS reminder sent via Twilio.';
+    }
+
+    if (result?.status === 'preview') {
+      return 'SMS provider preview mode; no external SMS was sent.';
+    }
+
+    if (result?.status === 'failed') {
+      return 'SMS delivery failed; retry is available from the reminder queue.';
+    }
+
+    return env.SMS_PROVIDER_MODE === 'disabled'
+      ? 'SMS provider disabled; in-app/local reminder only.'
+      : 'SMS reminder delivery pending provider processing.';
   }
 
   return 'In-app/local reminder created.';
@@ -94,7 +126,7 @@ const deliveryLabelFor = (channelCode: string) => {
 const buildNotificationPayload = (row: ReminderProcessingRow) => ({
   bodyText: `${row.eventTitle} is scheduled for ${formatDateTimeForCopy(
     row.scheduledStartAt
-  )}. ${deliveryLabelFor(row.channelCode)}`,
+  )}.`,
   title: `Reminder: ${row.eventTitle}`,
 });
 
@@ -147,7 +179,8 @@ const selectReminderForProcessing = async (
        evt.client_visible_flag AS visibleToClient,
        client.display_name AS clientName,
        recipient.display_name AS recipientName,
-       recipient.email AS recipientEmail
+       recipient.email AS recipientEmail,
+       recipient.phone AS recipientPhone
      FROM event_reminders er
      INNER JOIN events evt ON evt.id = er.event_id
      INNER JOIN users recipient ON recipient.id = er.recipient_user_id
@@ -198,7 +231,7 @@ const insertNotificationIfNeeded = async (
 ) => {
   const deliverySetting = await getReminderDeliverySetting(executor);
   if (!deliverySetting.isActive || !deliverySetting.inAppEnabled) {
-    return { created: false, notificationId: 0, suppressed: true };
+    return { created: false, notificationId: 0, payload: buildNotificationPayload(row), suppressed: true };
   }
 
   const defaultPayload = buildNotificationPayload(row);
@@ -230,7 +263,7 @@ const insertNotificationIfNeeded = async (
   );
 
   if (existing[0]) {
-    return { created: false, notificationId: Number(existing[0].id), suppressed: false };
+    return { created: false, notificationId: Number(existing[0].id), payload, suppressed: false };
   }
 
   const result = await executeStatement(
@@ -256,7 +289,45 @@ const insertNotificationIfNeeded = async (
     executor
   );
 
-  return { created: true, notificationId: result.insertId, suppressed: false };
+  return { created: true, notificationId: result.insertId, payload, suppressed: false };
+};
+
+const dispatchReminderChannel = async (row: ReminderProcessingRow, payload: { bodyText: string; title: string }) => {
+  if (row.channelCode === 'email') {
+    if (!row.recipientEmail) {
+      return {
+        errorMessage: 'Reminder recipient has no email address.',
+        providerCode: 'local',
+        status: 'failed',
+      } satisfies ProviderDeliveryResult;
+    }
+
+    return sendEmail({
+      subject: payload.title,
+      text: payload.bodyText,
+      to: row.recipientEmail,
+    });
+  }
+
+  if (row.channelCode === 'sms') {
+    if (!row.recipientPhone) {
+      return {
+        errorMessage: 'Reminder recipient has no phone number.',
+        providerCode: 'local',
+        status: 'failed',
+      } satisfies ProviderDeliveryResult;
+    }
+
+    return sendSms({
+      body: truncate(`${payload.title}\n${payload.bodyText}`, 1200),
+      to: row.recipientPhone,
+    });
+  }
+
+  return {
+    providerCode: 'local',
+    status: 'sent',
+  } satisfies ProviderDeliveryResult;
 };
 
 const completeLockedReminder = async (
@@ -303,6 +374,49 @@ const completeLockedReminder = async (
     }
 
     const notificationResult = await insertNotificationIfNeeded(row, connection);
+    const providerResult = await dispatchReminderChannel(row, notificationResult.payload);
+
+    if (providerResult.status === 'failed') {
+      const message = providerResult.errorMessage || 'Reminder provider delivery failed.';
+      await executeStatement(
+        `UPDATE event_reminders
+         SET delivery_status_code = 'failed',
+             failure_reason = ?,
+             next_attempt_at = CASE
+               WHEN retry_count < max_attempts THEN DATE_ADD(UTC_TIMESTAMP(6), INTERVAL ${RETRY_DELAY_MINUTES} MINUTE)
+               ELSE NULL
+             END,
+             locked_at = NULL,
+             locked_by = NULL,
+             processed_at = UTC_TIMESTAMP(6)
+         WHERE id = ?`,
+        [message, row.id],
+        connection
+      );
+
+      await auditReminder(
+        {
+          actionCode: 'reminder.failed',
+          actionLabel: 'Reminder delivery failed',
+          actor,
+          changes: [
+            { fieldName: 'delivery_status_code', oldValue: 'processing', newValue: 'failed' },
+            { fieldName: 'delivery_mode', newValue: deliveryLabelFor(row.channelCode, providerResult) },
+            { fieldName: 'provider_code', newValue: providerResult.providerCode },
+            { fieldName: 'last_error', newValue: message },
+          ],
+          eventId: row.eventId,
+          summaryNewValue: message,
+        },
+        connection
+      );
+
+      return {
+        createdNotification: notificationResult.created,
+        reminderId: String(row.id),
+        status: 'failed' as const,
+      };
+    }
 
     await executeStatement(
       `UPDATE event_reminders
@@ -325,14 +439,19 @@ const completeLockedReminder = async (
         actor,
         changes: [
           { fieldName: 'delivery_status_code', oldValue: 'processing', newValue: 'sent' },
-          { fieldName: 'delivery_mode', newValue: deliveryLabelFor(row.channelCode) },
+          { fieldName: 'delivery_mode', newValue: deliveryLabelFor(row.channelCode, providerResult) },
+          { fieldName: 'provider_code', newValue: providerResult.providerCode },
+          { fieldName: 'provider_reference', newValue: providerResult.providerReference || null },
         ],
         eventId: row.eventId,
         summaryNewValue: notificationResult.created
-          ? 'In-app/local reminder notification created.'
+          ? deliveryLabelFor(row.channelCode, providerResult)
           : notificationResult.suppressed
             ? 'Reminder notification suppressed by notification settings.'
-          : 'Existing in-app/local reminder notification reused.',
+          : `Existing in-app/local reminder notification reused. ${deliveryLabelFor(
+              row.channelCode,
+              providerResult
+            )}`,
       },
       connection
     );
@@ -372,7 +491,8 @@ const markReminderFailed = async (
          er.failure_reason AS failureReason,
          client.display_name AS clientName,
          recipient.display_name AS recipientName,
-         recipient.email AS recipientEmail
+         recipient.email AS recipientEmail,
+         recipient.phone AS recipientPhone
        FROM event_reminders er
        INNER JOIN events evt ON evt.id = er.event_id
        INNER JOIN users recipient ON recipient.id = er.recipient_user_id
@@ -522,7 +642,8 @@ export const listReminderWorkspace = async (options: { limit?: number } = {}) =>
          evt.client_visible_flag AS visibleToClient,
          client.display_name AS clientName,
          recipient.display_name AS recipientName,
-         recipient.email AS recipientEmail
+         recipient.email AS recipientEmail,
+         recipient.phone AS recipientPhone
        FROM event_reminders er
        INNER JOIN events evt ON evt.id = er.event_id
        INNER JOIN users recipient ON recipient.id = er.recipient_user_id
@@ -594,6 +715,8 @@ export const processDueReminders = async (options: { limit?: number } = {}) => {
 
       if (result.status === 'skipped') {
         results.skipped += 1;
+      } else if (result.status === 'failed') {
+        results.failed += 1;
       } else if (result.status === 'already_notified') {
         results.alreadyNotified += 1;
         results.processed += 1;
@@ -701,7 +824,12 @@ export const retryReminder = async (actor: AdminActor, reminderId: number) => {
     return {
       providerMode: providerMode(),
       reminderId: String(reminderId),
-      status: result.status === 'skipped' ? ('skipped' as const) : ('retried' as const),
+      status:
+        result.status === 'skipped'
+          ? ('skipped' as const)
+          : result.status === 'failed'
+            ? ('failed' as const)
+            : ('retried' as const),
     };
   } catch (error) {
     await markReminderFailed(reminderId, lockId, error, actor);

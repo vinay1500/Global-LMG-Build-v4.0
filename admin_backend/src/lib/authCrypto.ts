@@ -20,6 +20,11 @@ const fromBase64Url = (value: string) => {
 
 export const createRandomToken = (size = 32) => toBase64Url(randomBytes(size));
 
+export const createNumericCode = (length = 6) => {
+  const digits = Array.from(randomBytes(length), (value) => String(value % 10)).join('');
+  return digits.slice(0, length);
+};
+
 export const hashOpaqueValue = (value: string, secret: string) =>
   createHmac('sha256', secret).update(value).digest('hex');
 

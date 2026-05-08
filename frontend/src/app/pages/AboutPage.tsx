@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { Globe, Shield, Users, Award } from 'lucide-react';
 import { ImageWithFallback } from '../components/shared/ImageWithFallback';
 import { Seo } from '../components/seo/Seo';
-import { ABOUT_FEATURES, ABOUT_METRICS, ABOUT_PAGE_CONTENT } from '../data/aboutContent';
+import { ABOUT_FEATURES, ABOUT_METRICS, ABOUT_PAGE_CONTENT } from '../content/site/about';
 import { buildWebPageJsonLd } from '../seo/jsonLd';
 
 const ABOUT_FEATURE_ICON_MAP = {

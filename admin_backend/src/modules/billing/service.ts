@@ -1,8 +1,16 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { badRequest, notFound } from '../../lib/httpErrors.js';
+import { formatCurrencyAmount } from '../../lib/currencyFormat.js';
 import { executeStatement, queryRows, withTransaction, type QueryExecutor } from '../../lib/mysql.js';
 import type { AdminActor } from '../auth/service.js';
-import { fetchInvoices, fetchMatters, fetchPayments } from '../shared.js';
+import {
+  buildPaginationMeta,
+  countInvoices,
+  fetchInvoices,
+  fetchMatters,
+  fetchPayments,
+  normalizePagination,
+} from '../shared.js';
 import {
   createAuditEvent,
   createClientNotifications,
@@ -11,8 +19,16 @@ import {
   touchMatterActivity,
 } from '../writeSupport.js';
 import { createPublicId } from '../../lib/authCrypto.js';
+import { applyInvoicePdfTemplateSnapshot } from '../settings/invoicePdfTemplates.js';
 import { getInvoiceSettings } from '../settings/invoiceSettings.js';
 import { calculateInvoiceTax, insertInvoiceLineTaxes } from './tax.js';
+import { env } from '../../config/env.js';
+import { sendEmail } from '../providers/email.js';
+import { convertBaseAmount, normalizeCurrencyCode, summarizeFxSnapshots } from '../pricing/fx.js';
+import {
+  ensureInvoiceTemplateSnapshot,
+  renderAndStoreInvoiceTemplateSnapshot,
+} from './invoiceTemplateRendering.js';
 
 type RefundRow = RowDataPacket & {
   amount: number;
@@ -31,6 +47,7 @@ type RefundRow = RowDataPacket & {
 
 type PaymentSummaryRow = RowDataPacket & {
   clientAccountId: number;
+  currencyCode: string;
   grossAmount: number;
   invoiceId: number | null;
   matterId: number | null;
@@ -57,8 +74,10 @@ type MatterBillingMetaRow = RowDataPacket & {
 };
 
 type InvoiceDispatchRow = RowDataPacket & {
+  billingEmail: string | null;
   clientAccountId: number;
   clientName: string;
+  currencyCode: string;
   invoiceDbId: number;
   invoiceId: string;
   invoiceNumber: string;
@@ -74,6 +93,7 @@ type InvoicePaymentRow = RowDataPacket & {
   amountPaid: number;
   amountRefunded: number;
   clientAccountId: number;
+  currencyCode: string;
   invoiceDbId: number;
   invoiceId: string;
   invoiceNumber: string;
@@ -93,7 +113,12 @@ type DuplicatePaymentReferenceRow = RowDataPacket & {
   paymentId: string;
 };
 
+type InvoiceEmailRecipientRow = RowDataPacket & {
+  email: string | null;
+};
+
 const MONEY_PATTERN = /^\d+(?:\.\d{1,2})?$/;
+const ACTIVE_BILLING_CURRENCY_CODE = 'USD';
 
 const firstRow = <TRow>(rows: TRow[]) => rows[0] || null;
 
@@ -114,6 +139,18 @@ const toMinorUnits = (value: number | string) => {
 };
 
 const minorToDecimal = (minorUnits: number) => (minorUnits / 100).toFixed(2);
+
+const maskEmail = (value: string) => {
+  const [localPart, domainPart] = value.split('@');
+  if (!localPart || !domainPart) {
+    return 'configured-recipient';
+  }
+
+  return `${localPart.slice(0, 2)}***@${domainPart}`;
+};
+
+const formatInvoiceMoney = (amount: number, currencyCode: string) =>
+  formatCurrencyAmount(amount, normalizeCurrencyCode(currencyCode) || 'USD');
 
 const normalizeMoney = (value: number | string) => {
   const minorUnits = toMinorUnits(value);
@@ -227,13 +264,16 @@ const getInvoiceDispatchMeta = async (
          inv.invoice_number AS invoiceNumber,
          inv.client_account_id AS clientAccountId,
          ca.display_name AS clientName,
+         snapshot.billing_email AS billingEmail,
          inv.matter_id AS matterDbId,
          matter.public_id AS matterId,
          matter.title AS matterTitle,
          inv.status_code AS statusCode,
+         inv.currency_code AS currencyCode,
          inv.total_amount AS totalAmount
        FROM invoices inv
        INNER JOIN client_accounts ca ON ca.id = inv.client_account_id
+       LEFT JOIN invoice_billing_snapshots snapshot ON snapshot.invoice_id = inv.id
        LEFT JOIN matters matter ON matter.id = inv.matter_id
        WHERE inv.public_id = ?
          AND inv.archived_at IS NULL
@@ -265,6 +305,7 @@ const getInvoicePaymentMeta = async (
          matter.public_id AS matterId,
          matter.title AS matterTitle,
          inv.status_code AS statusCode,
+         inv.currency_code AS currencyCode,
          inv.total_amount AS totalAmount,
          inv.amount_paid AS amountPaid,
          inv.amount_refunded AS amountRefunded,
@@ -285,6 +326,124 @@ const getInvoicePaymentMeta = async (
   }
 
   return row;
+};
+
+const getInvoiceEmailRecipient = async (invoiceDbId: number, executor: QueryExecutor) =>
+  firstRow(
+    await queryRows<InvoiceEmailRecipientRow>(
+      `SELECT COALESCE(snapshot.billing_email, ca.primary_email) AS email
+       FROM invoices inv
+       INNER JOIN client_accounts ca ON ca.id = inv.client_account_id
+       LEFT JOIN invoice_billing_snapshots snapshot ON snapshot.invoice_id = inv.id
+       WHERE inv.id = ?
+       LIMIT 1`,
+      [invoiceDbId],
+      executor
+    )
+  );
+
+const resolveBillingCurrency = async (_countryCode: string | null | undefined, _executor: QueryExecutor) =>
+  ACTIVE_BILLING_CURRENCY_CODE;
+
+const auditInvoiceEmailDelivery = async (
+  input: {
+    actor: AdminActor;
+    errorMessage?: string | null;
+    invoiceDbId: number;
+    providerCode: string;
+    providerReference?: string | null;
+    recipient: string;
+    status: 'failed' | 'sent' | 'skipped_manual_mode';
+  },
+  executor: QueryExecutor
+) => {
+  await createAuditEvent(
+    {
+      actionCode: `invoice.email_${input.status}`,
+      actionLabel:
+        input.status === 'sent'
+          ? 'Invoice email sent'
+          : input.status === 'failed'
+            ? 'Invoice email failed'
+            : 'Invoice email skipped in manual/local mode',
+      actorRoleCode: input.actor.roleCodes[0] || 'billing_admin',
+      actorUserId: input.actor.userId,
+      changes: [
+        { fieldName: 'provider_code', newValue: input.providerCode },
+        { fieldName: 'delivery_status', newValue: input.status },
+        { fieldName: 'provider_reference', newValue: input.providerReference || null },
+        { fieldName: 'failure_reason', newValue: input.errorMessage || null },
+        { fieldName: 'recipient', newValue: input.recipient },
+      ],
+      entityPk: input.invoiceDbId,
+      entityTableName: 'invoices',
+      sourceModule: 'billing_workspace',
+      summaryNewValue: {
+        providerCode: input.providerCode,
+        status: input.status,
+      },
+    },
+    executor
+  );
+};
+
+const sendInvoiceEmailIfConfigured = async (
+  actor: AdminActor,
+  invoiceDbId: number,
+  executor: QueryExecutor
+) => {
+  const snapshot = await ensureInvoiceTemplateSnapshot(invoiceDbId, executor);
+  const recipient = await getInvoiceEmailRecipient(invoiceDbId, executor);
+
+  if (env.EMAIL_PROVIDER_MODE !== 'resend') {
+    await auditInvoiceEmailDelivery(
+      {
+        actor,
+        invoiceDbId,
+        providerCode: env.EMAIL_PROVIDER_MODE,
+        recipient: recipient?.email ? maskEmail(recipient.email) : 'missing-email',
+        status: 'skipped_manual_mode',
+      },
+      executor
+    );
+    return { status: 'manual' as const };
+  }
+
+  if (!recipient?.email) {
+    await auditInvoiceEmailDelivery(
+      {
+        actor,
+        errorMessage: 'Invoice billing email is missing.',
+        invoiceDbId,
+        providerCode: 'resend',
+        recipient: 'missing-email',
+        status: 'failed',
+      },
+      executor
+    );
+    return { status: 'failed' as const };
+  }
+
+  const result = await sendEmail({
+    subject: snapshot.subject,
+    text: `${snapshot.body}\n\n${snapshot.terms}\n\n${snapshot.footer}`,
+    to: recipient.email,
+  });
+
+  await auditInvoiceEmailDelivery(
+    {
+      actor,
+      errorMessage: result.errorMessage || null,
+      invoiceDbId,
+      providerCode: result.providerCode,
+      providerReference: result.providerReference || null,
+      recipient: maskEmail(recipient.email),
+      status: result.status === 'sent' ? 'sent' : 'failed',
+    },
+    executor
+  );
+
+  return { status: result.status === 'sent' ? ('sent' as const) : ('failed' as const) };
 };
 
 const listRefunds = async () => {
@@ -327,11 +486,18 @@ const listRefunds = async () => {
   }));
 };
 
-export const getWorkspace = async () => {
+export const getWorkspace = async (options: { limit?: number; offset?: number } = {}) => {
+  const pagination = normalizePagination(options);
+  const [invoices, total] = await Promise.all([
+    fetchInvoices({ limit: pagination.limit, offset: pagination.offset }),
+    countInvoices({}),
+  ]);
+
   return {
-    invoices: await fetchInvoices({}),
+    invoices,
     invoiceSettings: await getInvoiceSettings(),
     matters: await fetchMatters({ limit: 100 }),
+    pagination: buildPaginationMeta(pagination, total),
     payments: await fetchPayments(),
     refunds: await listRefunds(),
   };
@@ -354,10 +520,13 @@ export const createInvoice = async (
     const issueDate = toDateOnly(new Date());
     const invoiceSettings = await getInvoiceSettings(connection);
     const dueDate = payload.dueDate || addDaysDateOnly(invoiceSettings.paymentTermsDays);
+    const billingCurrency = await resolveBillingCurrency(matter.countryCode, connection);
+    const lineFx = await convertBaseAmount(connection, payload.amount, billingCurrency);
+    const invoiceFxSummary = summarizeFxSnapshots([lineFx]);
     const tax = await calculateInvoiceTax(
       {
         clientState: matter.state,
-        lineAmount: payload.amount,
+        lineAmount: lineFx.amount,
       },
       connection
     );
@@ -379,6 +548,14 @@ export const createInvoice = async (
          discount_amount,
          tax_amount,
          total_amount,
+         original_currency_code,
+         original_subtotal_amount,
+         original_tax_amount,
+         original_total_amount,
+         exchange_rate,
+         exchange_rate_date,
+         exchange_rate_provider,
+         fx_snapshot_json,
          amount_paid,
          amount_refunded,
          amount_due,
@@ -386,17 +563,26 @@ export const createInvoice = async (
          created_at,
          updated_at,
          archived_at
-       ) VALUES (?, ?, ?, ?, NULL, NULL, 'manual-admin', 'draft', 'INR', ?, ?, ?, 0, ?, ?, 0, 0, ?, ?, ?, ?, NULL)`,
+       ) VALUES (?, ?, ?, ?, NULL, NULL, 'manual-admin', 'draft', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, NULL)`,
       [
         invoicePublicId,
         invoiceNumber,
         matter.clientAccountId,
         matter.matterDbId,
+        lineFx.currencyCode,
         issueDate,
         dueDate,
         tax.subtotalDecimal,
         tax.taxDecimal,
         tax.totalDecimal,
+        lineFx.originalCurrencyCode,
+        lineFx.originalAmount,
+        null,
+        lineFx.originalAmount,
+        invoiceFxSummary.exchangeRate,
+        invoiceFxSummary.exchangeRateDate,
+        invoiceFxSummary.exchangeRateProvider,
+        invoiceFxSummary.snapshotJson,
         tax.totalDecimal,
         actor.userId,
         createdAt,
@@ -450,9 +636,17 @@ export const createInvoice = async (
          discount_amount,
          taxable_amount,
          line_total,
+         original_currency_code,
+         original_unit_price,
+         original_line_subtotal,
+         original_taxable_amount,
+         original_line_total,
+         exchange_rate,
+         exchange_rate_date,
+         exchange_rate_provider,
          sort_order,
          created_at
-       ) VALUES (?, 'manual-admin', NULL, NULL, ?, 1, ?, ?, 0, ?, ?, 1, ?)`,
+       ) VALUES (?, 'manual-admin', NULL, NULL, ?, 1, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
       [
         invoiceResult.insertId,
         payload.description,
@@ -460,12 +654,23 @@ export const createInvoice = async (
         tax.lineSubtotalDecimal,
         tax.taxableDecimal,
         tax.lineTotalDecimal,
+        lineFx.originalCurrencyCode,
+        lineFx.originalAmount,
+        lineFx.originalAmount,
+        lineFx.originalAmount,
+        lineFx.originalAmount,
+        lineFx.exchangeRate,
+        lineFx.exchangeRateDate,
+        lineFx.exchangeRateProvider,
         createdAt,
       ],
       connection
     );
 
     await insertInvoiceLineTaxes(lineResult.insertId, tax, createdAt, connection);
+
+    const templateSnapshot = await renderAndStoreInvoiceTemplateSnapshot(invoiceResult.insertId, connection);
+    const pdfTemplateSnapshot = await applyInvoicePdfTemplateSnapshot(invoiceResult.insertId, connection);
 
     await executeStatement(
       `INSERT INTO invoice_installments (
@@ -531,6 +736,44 @@ export const createInvoice = async (
       connection
     );
 
+    await createAuditEvent(
+      {
+        actionCode: 'invoice.template_applied',
+        actionLabel: 'Invoice template snapshot applied',
+        actorRoleCode: actor.roleCodes[0] || 'billing_admin',
+        actorUserId: actor.userId,
+        changes: [
+          { fieldName: 'template_public_id_snapshot', newValue: templateSnapshot.templateId },
+          { fieldName: 'template_version_snapshot', newValue: templateSnapshot.templateVersion },
+        ],
+        entityPk: invoiceResult.insertId,
+        entityTableName: 'invoices',
+        sourceModule: 'billing_workspace',
+        summaryNewValue: `Applied invoice template to ${invoiceNumber}`,
+      },
+      connection
+    );
+
+    if (pdfTemplateSnapshot.templateId) {
+      await createAuditEvent(
+        {
+          actionCode: 'invoice.pdf_template_applied',
+          actionLabel: 'Invoice PDF letterhead snapshot applied',
+          actorRoleCode: actor.roleCodes[0] || 'billing_admin',
+          actorUserId: actor.userId,
+          changes: [
+            { fieldName: 'pdf_template_public_id_snapshot', newValue: pdfTemplateSnapshot.templateId },
+            { fieldName: 'pdf_template_name_snapshot', newValue: pdfTemplateSnapshot.templateName },
+          ],
+          entityPk: invoiceResult.insertId,
+          entityTableName: 'invoices',
+          sourceModule: 'billing_workspace',
+          summaryNewValue: `Applied invoice PDF letterhead to ${invoiceNumber}`,
+        },
+        connection
+      );
+    }
+
     return {
       invoiceId: invoicePublicId,
       status: 'created' as const,
@@ -579,16 +822,20 @@ export const sendInvoice = async (actor: AdminActor, invoiceId: string) =>
       );
     }
 
+    await ensureInvoiceTemplateSnapshot(invoice.invoiceDbId, connection);
+    const emailDelivery = await sendInvoiceEmailIfConfigured(actor, invoice.invoiceDbId, connection);
+
     await createClientNotifications(
       {
         bodyText: isInitialSend
-          ? `Invoice ${invoice.invoiceNumber} has been issued for INR ${invoice.totalAmount.toFixed(2)}.`
-          : `Reminder: invoice ${invoice.invoiceNumber} for INR ${invoice.totalAmount.toFixed(2)} is still outstanding.`,
+          ? `Invoice ${invoice.invoiceNumber} has been issued for ${formatInvoiceMoney(invoice.totalAmount, invoice.currencyCode)}.`
+          : `Reminder: invoice ${invoice.invoiceNumber} for ${formatInvoiceMoney(invoice.totalAmount, invoice.currencyCode)} is still outstanding.`,
         clientAccountId: invoice.clientAccountId,
         invoiceId: invoice.invoiceDbId,
         matterId: invoice.matterDbId,
         notificationTypeCode: isInitialSend ? 'invoice_generated' : 'payment_reminder',
         priorityCode: 'normal',
+        suppressExternalDelivery: true,
         title: isInitialSend ? 'Invoice ready for payment' : 'Payment reminder',
       },
       connection
@@ -614,6 +861,7 @@ export const sendInvoice = async (actor: AdminActor, invoiceId: string) =>
     );
 
     return {
+      emailDeliveryStatus: emailDelivery.status,
       invoiceId: invoice.invoiceId,
       status: isInitialSend ? ('sent' as const) : ('reminder_sent' as const),
     };
@@ -708,7 +956,7 @@ export const recordManualPayment = async (
          created_at,
          updated_at
        ) VALUES (
-         ?, ?, NULL, ?, NULL, ?, 'captured', 'INR', ?, 0, ?, NULL,
+         ?, ?, NULL, ?, NULL, ?, 'captured', ?, ?, 0, ?, NULL,
          ?, ?, ?, NULL, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)
        )`,
       [
@@ -716,6 +964,7 @@ export const recordManualPayment = async (
         invoice.clientAccountId,
         payload.paymentMethod,
         referenceNumber,
+        invoice.currencyCode || 'USD',
         paymentAmount.decimal,
         paymentAmount.decimal,
         capturedAt,
@@ -896,7 +1145,7 @@ export const recordManualPayment = async (
 
     await createClientNotifications(
       {
-        bodyText: `Payment of INR ${paymentAmount.decimal} has been recorded against invoice ${invoice.invoiceNumber}.`,
+        bodyText: `Payment of ${formatInvoiceMoney(Number(paymentAmount.decimal), invoice.currencyCode || 'USD')} has been recorded against invoice ${invoice.invoiceNumber}.`,
         clientAccountId: invoice.clientAccountId,
         invoiceId: invoice.invoiceDbId,
         matterId: invoice.matterDbId,
@@ -952,6 +1201,7 @@ export const createRefund = async (
     const paymentSummaryRows = await queryRows<PaymentSummaryRow>(
       `SELECT
          pt.client_account_id AS clientAccountId,
+         pt.currency_code AS currencyCode,
          pt.gross_amount AS grossAmount,
          pt.status_code AS statusCode,
          MAX(pa.invoice_id) AS invoiceId,
@@ -962,7 +1212,7 @@ export const createRefund = async (
        LEFT JOIN invoices inv ON inv.id = pa.invoice_id
        LEFT JOIN refunds rf ON rf.payment_transaction_id = pt.id
        WHERE pt.id = ?
-       GROUP BY pt.client_account_id, pt.gross_amount, pt.status_code`,
+       GROUP BY pt.client_account_id, pt.currency_code, pt.gross_amount, pt.status_code`,
       [payment.id],
       connection
     );
@@ -1065,7 +1315,7 @@ export const createRefund = async (
 
     await createClientNotifications(
       {
-        bodyText: `A refund of INR ${payload.amount.toFixed(2)} has been initiated against your payment.`,
+        bodyText: `A refund of ${formatInvoiceMoney(payload.amount, paymentSummary.currencyCode || 'USD')} has been initiated against your payment.`,
         clientAccountId: paymentSummary.clientAccountId,
         invoiceId: invoice?.id || null,
         matterId: paymentSummary.matterId || null,

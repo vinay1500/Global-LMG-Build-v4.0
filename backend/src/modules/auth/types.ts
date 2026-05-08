@@ -23,6 +23,18 @@ export interface LegalAcceptanceRecord {
   userAgent?: string | null;
 }
 
+export interface ClientPrimaryAddressRecord {
+  city: string;
+  country: string;
+  line1: string;
+  line2?: string | null;
+  postalCode: string;
+  sourceCode?: 'google' | 'ip_prefill' | 'manual';
+  state: string;
+  googlePlaceId?: string | null;
+  validationStatusCode?: 'manual' | 'unverified' | 'verified';
+}
+
 export interface AuthSessionRecord {
   accountId: string;
   createdAt: string;
@@ -34,7 +46,7 @@ export interface AuthSessionRecord {
 
 export type AuthFlowPurpose = 'sign-in' | 'sign-up' | 'google' | 'password-reset';
 export type ChallengeType = 'email' | 'phone' | 'password-reset';
-export type PhoneChallengeProvider = 'preview' | 'twilio-verify';
+export type PhoneChallengeProvider = 'preview' | 'twilio' | 'twilio-verify';
 
 export interface PendingChallenge {
   type: ChallengeType;
@@ -99,7 +111,7 @@ export interface AuthStore {
   listAccounts: () => Promise<AuthAccountRecord[]>;
   saveAccount: (
     account: AuthAccountRecord,
-    options?: { legalAcceptance?: LegalAcceptanceRecord }
+    options?: { legalAcceptance?: LegalAcceptanceRecord; primaryAddress?: ClientPrimaryAddressRecord }
   ) => Promise<void>;
   saveFlow: (flow: AuthFlowRecord) => Promise<void>;
   saveSession: (session: AuthSessionRecord) => Promise<void>;

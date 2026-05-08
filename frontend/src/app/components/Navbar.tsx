@@ -12,13 +12,14 @@ import {
 } from 'lucide-react';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { SearchAutocomplete } from './SearchAutocomplete';
-import { SERVICE_CATALOG, buildServicePath } from '../data/services';
+import { NAVIGATION_COPY } from '../content/site/common';
+import { SERVICE_CATALOG, buildServicePath } from '../content/site/services';
 import { Link, useNavigate } from 'react-router';
 import { motion, AnimatePresence } from 'motion/react';
 import { CLIENT_INTAKE_HREF } from '../config/launchLinks';
 import { BRAND_WORDMARK } from '../config/brand';
 import { useAuth } from '../contexts/useAuth';
-import { CAREER_CATEGORIES } from '../data/careers';
+import { CAREER_CATEGORIES } from '../content/site/careers';
 import { EXPERTISE_CATALOG } from '../data/expertiseCatalog';
 
 export const Navbar = () => {
@@ -102,7 +103,7 @@ export const Navbar = () => {
   const servicesDropdown = (
     <div className="w-[600px] p-6 flex flex-col gap-1">
       <h5 className="text-[10px] font-bold uppercase tracking-[0.2em] text-gray-400 mb-4 px-4">
-        Our Services
+        {NAVIGATION_COPY.dropdowns.services.heading}
       </h5>
       {SERVICE_CATALOG.map((service) => {
         return (
@@ -130,14 +131,14 @@ export const Navbar = () => {
   const careersDropdown = (
     <div className="w-[320px] p-4 flex flex-col gap-1">
       <h5 className="text-[10px] font-bold uppercase tracking-[0.2em] text-gray-400 mb-4 px-4">
-        Join our team
+        {NAVIGATION_COPY.dropdowns.careers.heading}
       </h5>
       <DropdownMenu.Item
         onSelect={() => handleNavigation('/careers', () => setCareersOpen(false))}
         className="group flex items-center justify-between px-4 py-4 rounded-xl hover:bg-blue-50 outline-none cursor-pointer transition-all border border-blue-100 bg-blue-50/30 mb-2"
       >
         <span className="text-sm font-bold text-blue-600 group-hover:text-blue-700 transition-colors">
-          View All Careers
+          {NAVIGATION_COPY.dropdowns.careers.viewAll}
         </span>
         <ChevronRight
           size={14}
@@ -167,7 +168,7 @@ export const Navbar = () => {
       {/* Sidebar Categories */}
       <div className="w-1/3 bg-gray-50/50 border-r border-gray-100 p-6 flex flex-col gap-2">
         <h5 className="text-[10px] font-bold uppercase tracking-[0.2em] text-gray-400 mb-4 px-4">
-          Practice Areas
+          {NAVIGATION_COPY.dropdowns.expertise.heading}
         </h5>
         {EXPERTISE_CATALOG.map((cat, i) => (
           <button
@@ -230,7 +231,7 @@ export const Navbar = () => {
               }
               className="text-xs font-bold uppercase tracking-widest text-blue-600 hover:underline"
             >
-              View Full Practice Overview →
+              {NAVIGATION_COPY.dropdowns.expertise.viewFull} →
             </button>
           </div>
         </div>
@@ -245,7 +246,7 @@ export const Navbar = () => {
         <div className="bg-black text-white text-[10px] uppercase tracking-[0.2em] py-2 px-6 hidden md:block">
           <div className="max-w-7xl mx-auto flex justify-between items-center font-bold">
             <div className="flex gap-4 items-center">
-              <span className="text-gray-300">Global Office Network</span>
+              <span className="text-gray-300">{NAVIGATION_COPY.utility.network}</span>
               <span className="opacity-40">|</span>
               <a
                 href={CLIENT_INTAKE_HREF}
@@ -254,12 +255,12 @@ export const Navbar = () => {
                 referrerPolicy="no-referrer"
                 className="hover:text-gray-300 transition-colors"
               >
-                Contact Us
+                {NAVIGATION_COPY.links.contact}
               </a>
             </div>
             <div className="flex gap-4">
               <Globe size={12} className="inline mr-1" />
-              <span className="text-gray-300">EN</span>
+              <span className="text-gray-300">{NAVIGATION_COPY.utility.language}</span>
             </div>
           </div>
         </div>
@@ -280,7 +281,7 @@ export const Navbar = () => {
                 className="text-sm font-medium hover:text-gray-600 transition-colors flex items-center gap-1 whitespace-nowrap py-4"
                 style={{ fontFamily: "'Inter', sans-serif" }}
               >
-                About Us
+                {NAVIGATION_COPY.links.about}
               </Link>
 
               <DropdownMenu.Root open={servicesOpen} onOpenChange={setServicesOpen}>
@@ -288,7 +289,7 @@ export const Navbar = () => {
                   className="text-sm font-medium hover:text-gray-600 transition-colors flex items-center gap-1 whitespace-nowrap outline-none py-4 cursor-pointer bg-transparent border-0"
                   style={{ fontFamily: "'Inter', sans-serif" }}
                 >
-                  Services
+                  {NAVIGATION_COPY.links.services}
                   <ChevronDown size={14} className="opacity-50" />
                 </DropdownMenu.Trigger>
                 <DropdownMenu.Portal>
@@ -336,7 +337,7 @@ export const Navbar = () => {
                   className="text-sm font-medium hover:text-gray-600 transition-colors flex items-center gap-1 whitespace-nowrap outline-none py-4 cursor-pointer bg-transparent border-0"
                   style={{ fontFamily: "'Inter', sans-serif" }}
                 >
-                  Careers
+                  {NAVIGATION_COPY.links.careers}
                   <ChevronDown size={14} className="opacity-50" />
                 </DropdownMenu.Trigger>
                 <DropdownMenu.Portal>
@@ -376,7 +377,7 @@ export const Navbar = () => {
                       onClick={() => handleDashboardPanelNavigation('dashboard')}
                       className="px-4 md:px-5 py-2 text-xs font-semibold md:text-sm"
                     >
-                      Dashboard
+                      {NAVIGATION_COPY.account.dashboard}
                     </button>
                     <div className="h-6 w-px bg-white/15" />
                     <DropdownMenu.Root open={userMenuOpen} onOpenChange={setUserMenuOpen}>
@@ -413,7 +414,7 @@ export const Navbar = () => {
                             }
                             className="flex items-center gap-2 px-3 py-2 text-sm outline-none cursor-pointer hover:bg-gray-50 rounded-xl transition-colors"
                           >
-                            <User size={16} /> Dashboard
+                            <User size={16} /> {NAVIGATION_COPY.account.dashboard}
                           </DropdownMenu.Item>
                           <DropdownMenu.Item
                             onSelect={() =>
@@ -421,7 +422,7 @@ export const Navbar = () => {
                             }
                             className="flex items-center gap-2 px-3 py-2 text-sm outline-none cursor-pointer hover:bg-gray-50 rounded-xl transition-colors"
                           >
-                            <Settings size={16} /> Settings
+                            <Settings size={16} /> {NAVIGATION_COPY.account.settings}
                           </DropdownMenu.Item>
                           <DropdownMenu.Item
                             onSelect={() =>
@@ -429,7 +430,7 @@ export const Navbar = () => {
                             }
                             className="flex items-center gap-2 px-3 py-2 text-sm outline-none cursor-pointer hover:bg-gray-50 rounded-xl transition-colors"
                           >
-                            <Bell size={16} /> Notifications
+                            <Bell size={16} /> {NAVIGATION_COPY.account.notifications}
                           </DropdownMenu.Item>
                           <DropdownMenu.Separator className="my-1 h-px bg-gray-100" />
                           <DropdownMenu.Item
@@ -438,7 +439,7 @@ export const Navbar = () => {
                             }}
                             className="flex items-center gap-2 px-3 py-2 text-sm text-red-600 outline-none cursor-pointer hover:bg-red-50 rounded-xl transition-colors"
                           >
-                            <LogOut size={16} /> Sign out
+                            <LogOut size={16} /> {NAVIGATION_COPY.account.signOut}
                           </DropdownMenu.Item>
                         </DropdownMenu.Content>
                       </DropdownMenu.Portal>
@@ -452,7 +453,7 @@ export const Navbar = () => {
                     onClick={handleAuthNavigation}
                     className="flex items-center gap-2 px-4 md:px-5 py-2.5 bg-gray-900 text-white rounded-full hover:bg-black transition-all"
                   >
-                    <span className="text-xs md:text-sm font-semibold">Sign In</span>
+                    <span className="text-xs md:text-sm font-semibold">{NAVIGATION_COPY.account.signIn}</span>
                   </button>
                 </>
               )}
@@ -535,7 +536,7 @@ export const Navbar = () => {
                       </div>
                     </div>
                     <p className="text-sm text-gray-600 mb-4">
-                      Open the dashboard or jump directly into account settings and notifications.
+                        Open the dashboard or jump directly into account settings and notifications.
                     </p>
                     <div className="grid gap-2 sm:grid-cols-2">
                       <button
@@ -543,7 +544,7 @@ export const Navbar = () => {
                         onClick={() => handleMobileNavigation('/dashboard')}
                         className="w-full inline-flex items-center justify-center px-4 py-3 bg-gray-900 text-white rounded-lg text-sm font-semibold hover:bg-black transition-colors"
                       >
-                        Dashboard
+                        {NAVIGATION_COPY.account.dashboard}
                       </button>
                       <button
                         type="button"
@@ -551,7 +552,7 @@ export const Navbar = () => {
                         className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-gray-200 bg-white text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
                       >
                         <Settings size={16} />
-                        Settings
+                        {NAVIGATION_COPY.account.settings}
                       </button>
                       <button
                         type="button"
@@ -559,7 +560,7 @@ export const Navbar = () => {
                         className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-gray-200 bg-white text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 sm:col-span-2"
                       >
                         <Bell size={16} />
-                        Notifications
+                        {NAVIGATION_COPY.account.notifications}
                       </button>
                     </div>
                   </>
@@ -577,7 +578,7 @@ export const Navbar = () => {
                       onClick={handleAuthNavigation}
                       className="w-full inline-flex items-center justify-center px-4 py-3 rounded-lg bg-gray-900 text-sm font-semibold text-white hover:bg-black transition-colors"
                     >
-                      Sign In
+                      {NAVIGATION_COPY.account.signIn}
                     </button>
                   </>
                 )}
@@ -591,7 +592,7 @@ export const Navbar = () => {
                   className="flex items-center justify-between p-4 rounded-xl hover:bg-gray-50 transition-colors group"
                 >
                   <span className="font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">
-                    About Us
+                    {NAVIGATION_COPY.links.about}
                   </span>
                   <ChevronRight
                     size={18}
@@ -606,7 +607,7 @@ export const Navbar = () => {
                     onClick={() => setMobileServicesOpen(!mobileServicesOpen)}
                     className="w-full flex items-center justify-between p-4 bg-white hover:bg-gray-50 transition-colors"
                   >
-                    <span className="font-semibold text-gray-900">Services</span>
+                    <span className="font-semibold text-gray-900">{NAVIGATION_COPY.links.services}</span>
                     <ChevronDown
                       size={18}
                       className={`text-gray-400 transition-transform ${mobileServicesOpen ? 'rotate-180' : ''}`}
@@ -700,7 +701,7 @@ export const Navbar = () => {
                     onClick={() => setMobileCareersOpen(!mobileCareersOpen)}
                     className="w-full flex items-center justify-between p-4 bg-white hover:bg-gray-50 transition-colors"
                   >
-                    <span className="font-semibold text-gray-900">Careers</span>
+                    <span className="font-semibold text-gray-900">{NAVIGATION_COPY.links.careers}</span>
                     <ChevronDown
                       size={18}
                       className={`text-gray-400 transition-transform ${mobileCareersOpen ? 'rotate-180' : ''}`}
@@ -721,7 +722,7 @@ export const Navbar = () => {
                             onClick={() => handleMobileNavigation('/careers')}
                             className="w-full text-left p-3 rounded-lg bg-blue-50 hover:bg-blue-100 transition-colors text-sm font-bold text-blue-600"
                           >
-                            View All Careers
+                            {NAVIGATION_COPY.dropdowns.careers.viewAll}
                           </button>
                           {CAREER_CATEGORIES.map((career, i) => (
                             <button
@@ -774,7 +775,7 @@ export const Navbar = () => {
                       className="w-full inline-flex items-center justify-center gap-3 p-4 rounded-lg border border-gray-200 text-gray-700 transition-colors hover:bg-gray-50"
                     >
                       <Settings size={18} />
-                      <span className="text-sm font-medium">Settings</span>
+                      <span className="text-sm font-medium">{NAVIGATION_COPY.account.settings}</span>
                     </button>
                     <button
                       type="button"
@@ -782,7 +783,7 @@ export const Navbar = () => {
                       className="w-full inline-flex items-center justify-center gap-3 p-4 rounded-lg border border-gray-200 text-gray-700 transition-colors hover:bg-gray-50"
                     >
                       <Bell size={18} />
-                      <span className="text-sm font-medium">Notifications</span>
+                      <span className="text-sm font-medium">{NAVIGATION_COPY.account.notifications}</span>
                     </button>
                     <button
                       type="button"
@@ -792,7 +793,7 @@ export const Navbar = () => {
                       className="w-full inline-flex items-center justify-center gap-3 p-4 rounded-lg border border-red-100 text-red-600 transition-colors hover:bg-red-50"
                     >
                       <LogOut size={18} />
-                      <span className="text-sm font-medium">Sign out</span>
+                      <span className="text-sm font-medium">{NAVIGATION_COPY.account.signOut}</span>
                     </button>
                   </div>
                 ) : (
@@ -801,7 +802,7 @@ export const Navbar = () => {
                     onClick={handleAuthNavigation}
                     className="w-full inline-flex items-center justify-center gap-3 p-4 rounded-lg bg-gray-900 text-white transition-colors"
                   >
-                    <span className="text-sm font-medium">Sign In</span>
+                    <span className="text-sm font-medium">{NAVIGATION_COPY.account.signIn}</span>
                   </button>
                 )}
               </div>

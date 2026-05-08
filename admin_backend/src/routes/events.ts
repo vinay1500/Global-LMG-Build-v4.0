@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler, badRequest } from '../lib/httpErrors.js';
-import { cancelEvent, createEvent, getWorkspace, updateEvent } from '../modules/events/service.js';
+import { cancelEvent, createEvent, getWorkspace, retryEventCalendarSync, updateEvent } from '../modules/events/service.js';
 import { requireMutationPermission, requireReadPermission } from './shared.js';
 
 export const eventsRouter = Router();
@@ -53,7 +53,12 @@ eventsRouter.get(
   '/events',
   asyncHandler(async (request, response) => {
     await requireReadPermission(request, 'event.view');
-    response.json(await getWorkspace());
+    response.json(
+      await getWorkspace({
+        limit: Number(request.query.limit || 50),
+        offset: Number(request.query.offset || 0),
+      })
+    );
   })
 );
 
@@ -91,5 +96,13 @@ eventsRouter.post(
     response.json(
       await cancelEvent(actor, String(request.params.eventId || ''), cancelEventSchema.parse(request.body))
     );
+  })
+);
+
+eventsRouter.post(
+  '/events/:eventId/calendar-sync/retry',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'event.manage');
+    response.json(await retryEventCalendarSync(actor, String(request.params.eventId || '')));
   })
 );

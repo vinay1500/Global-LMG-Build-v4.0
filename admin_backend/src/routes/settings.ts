@@ -5,11 +5,13 @@ import { getWorkspace } from '../modules/settings/service.js';
 import {
   archiveConsultationMode,
   archiveCountryPricing,
+  archivePriceOverride,
   archivePricingSlab,
   archiveService,
   archiveUrgencyRule,
   createConsultationMode,
   createCountryPricing,
+  createPriceOverride,
   createPricingSlab,
   createService,
   createUrgencyRule,
@@ -17,10 +19,17 @@ import {
   getServiceCatalog,
   updateConsultationMode,
   updateCountryPricing,
+  updatePriceOverride,
   updatePricingSlab,
   updateService,
   updateUrgencyRule,
 } from '../modules/settings/catalogPricing.js';
+import {
+  archiveInvoicePdfTemplate,
+  getInvoicePdfTemplates,
+  updateInvoicePdfTemplate,
+  uploadInvoicePdfTemplate,
+} from '../modules/settings/invoicePdfTemplates.js';
 import { getInvoiceSettings, updateInvoiceSettings } from '../modules/settings/invoiceSettings.js';
 import {
   archiveReminderSetting,
@@ -64,6 +73,7 @@ const invoiceSettingsSchema = z.object({
   billingDisplayName: z.string().trim().min(2).max(200).optional(),
   businessLegalName: z.string().trim().min(2).max(200).optional(),
   businessState: z.string().trim().min(2).max(100).optional(),
+  defaultInvoiceTemplateId: z.string().trim().max(64).nullable().optional(),
   defaultGstRatePercent: z.number().min(0).max(100).optional(),
   defaultSacCode: z.string().trim().max(32).nullable().optional(),
   fallbackTaxType: z.enum(['igst', 'cgst_sgst', 'none']).optional(),
@@ -77,6 +87,26 @@ const invoiceSettingsSchema = z.object({
   taxMode: z.enum(['forward_charge', 'reverse_charge', 'exempt']).optional(),
 });
 
+const invoicePdfTemplateUploadSchema = z.object({
+  contentBase64: z.string().trim().min(20),
+  contentBottomMargin: z.number().min(0).max(360).optional(),
+  contentLeftMargin: z.number().min(0).max(360).optional(),
+  contentRightMargin: z.number().min(0).max(360).optional(),
+  contentTopMargin: z.number().min(0).max(360).optional(),
+  name: z.string().trim().min(2).max(180),
+  originalFileName: z.string().trim().min(5).max(255),
+  setActive: z.boolean().optional(),
+});
+
+const invoicePdfTemplateUpdateSchema = z.object({
+  contentBottomMargin: z.number().min(0).max(360).optional(),
+  contentLeftMargin: z.number().min(0).max(360).optional(),
+  contentRightMargin: z.number().min(0).max(360).optional(),
+  contentTopMargin: z.number().min(0).max(360).optional(),
+  isActive: z.boolean().optional(),
+  name: z.string().trim().min(2).max(180).optional(),
+});
+
 const platformSettingSchema = z.object({
   value: z.union([z.string(), z.number(), z.boolean(), z.null()]),
   version: z.number().int().positive().optional(),
@@ -86,7 +116,7 @@ const serviceCreateSchema = z.object({
   baseFee: z.number().min(0).optional(),
   code: z.string().trim().max(64).optional(),
   description: z.string().trim().max(2000).nullable().optional(),
-  domainCode: z.string().trim().min(1).max(64),
+  domainCode: z.string().trim().max(64).nullable().optional(),
   icon: z.string().trim().max(64).nullable().optional(),
   isActive: z.boolean().optional(),
   name: z.string().trim().min(2).max(180),
@@ -108,13 +138,19 @@ const pricingSlabCreateSchema = z.object({
 const pricingSlabUpdateSchema = pricingSlabCreateSchema.partial();
 
 const urgencyRuleCreateSchema = z.object({
+  allowInPerson: z.boolean().optional(),
+  allowPhone: z.boolean().optional(),
+  allowVideo: z.boolean().optional(),
   code: z.string().trim().max(32).optional(),
   isActive: z.boolean().optional(),
   label: z.string().trim().min(1).max(120),
+  maxResponseHours: z.number().int().nonnegative().nullable().optional(),
+  minResponseHours: z.number().int().nonnegative().nullable().optional(),
   responseWindowHours: z.number().int().positive().nullable().optional(),
   sortOrder: z.number().int().min(0).max(100000).optional(),
   surchargeType: z.enum(['flat', 'percent']),
   surchargeValue: z.number().min(0),
+  timingLabel: z.string().trim().max(120).nullable().optional(),
 });
 
 const urgencyRuleUpdateSchema = urgencyRuleCreateSchema.omit({ code: true }).partial();
@@ -134,13 +170,27 @@ const consultationModeUpdateSchema = consultationModeCreateSchema.omit({ code: t
 const countryPricingCreateSchema = z.object({
   countryCode: z.string().trim().max(8).optional(),
   countryName: z.string().trim().min(1).max(120),
-  currencyCode: z.string().trim().min(3).max(3),
+  currencyCode: z.literal('USD').default('USD'),
   isActive: z.boolean().optional(),
   isDefault: z.boolean().optional(),
   multiplier: z.number().min(0),
 });
 
 const countryPricingUpdateSchema = countryPricingCreateSchema.omit({ countryCode: true }).partial();
+
+const priceOverrideCreateSchema = z.object({
+  countryCode: z.string().trim().min(1).max(8),
+  countryName: z.string().trim().max(120).optional(),
+  currencyCode: z.literal('USD').default('USD'),
+  isActive: z.boolean().optional(),
+  priceAmount: z.number().min(0),
+  subjectCode: z.string().trim().min(1).max(64),
+  subjectType: z.enum(['consultation_mode', 'service', 'urgency']),
+});
+
+const priceOverrideUpdateSchema = priceOverrideCreateSchema
+  .omit({ subjectCode: true, subjectType: true })
+  .partial();
 
 const templateCreateSchema = z.object({
   body: z.string().trim().min(1).max(10000),
@@ -233,6 +283,44 @@ settingsRouter.get(
   asyncHandler(async (request, response) => {
     requirePermission(await requireReadActor(request), 'invoice.view');
     response.json(await getInvoiceSettings());
+  })
+);
+
+settingsRouter.get(
+  '/settings/invoice/pdf-templates',
+  asyncHandler(async (request, response) => {
+    requirePermission(await requireReadActor(request), 'invoice.view');
+    response.json(await getInvoicePdfTemplates());
+  })
+);
+
+settingsRouter.post(
+  '/settings/invoice/pdf-templates',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    response.status(201).json(
+      await uploadInvoicePdfTemplate(actor, invoicePdfTemplateUploadSchema.parse(request.body))
+    );
+  })
+);
+
+settingsRouter.patch(
+  '/settings/invoice/pdf-templates/:templateId',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const templateId = z.string().trim().min(1).max(64).parse(request.params.templateId);
+    response.json(
+      await updateInvoicePdfTemplate(actor, templateId, invoicePdfTemplateUpdateSchema.parse(request.body))
+    );
+  })
+);
+
+settingsRouter.post(
+  '/settings/invoice/pdf-templates/:templateId/archive',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const templateId = z.string().trim().min(1).max(64).parse(request.params.templateId);
+    response.json(await archiveInvoicePdfTemplate(actor, templateId));
   })
 );
 
@@ -502,6 +590,32 @@ settingsRouter.post(
     const actor = await requireMutationPermission(request, 'settings.manage');
     const countryPricingId = z.string().parse(request.params.countryPricingId);
     response.json(await archiveCountryPricing(actor, countryPricingId));
+  })
+);
+
+settingsRouter.post(
+  '/settings/pricing-rules/price-overrides',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    response.status(201).json(await createPriceOverride(actor, priceOverrideCreateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.patch(
+  '/settings/pricing-rules/price-overrides/:overrideId',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const overrideId = z.string().parse(request.params.overrideId);
+    response.json(await updatePriceOverride(actor, overrideId, priceOverrideUpdateSchema.parse(request.body)));
+  })
+);
+
+settingsRouter.post(
+  '/settings/pricing-rules/price-overrides/:overrideId/archive',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'settings.manage');
+    const overrideId = z.string().parse(request.params.overrideId);
+    response.json(await archivePriceOverride(actor, overrideId));
   })
 );
 

@@ -6,6 +6,7 @@ import { ensurePlatformReady } from '../platform/bootstrap.js';
 import { allocateBusinessNumber } from '../platform/sequences.js';
 import type {
   AuthAccountRecord,
+  ClientPrimaryAddressRecord,
   AuthFlowRecord,
   AuthSessionRecord,
   AuthStore,
@@ -101,6 +102,21 @@ const toCountryValue = (value: string) => {
   return 'ZZ';
 };
 
+const toPrimaryAddressValues = (
+  address?: ClientPrimaryAddressRecord | null,
+  fallbackCountry = 'IN'
+) => ({
+  city: address?.city.trim() || '',
+  country: toCountryValue(address?.country || fallbackCountry),
+  googlePlaceId: address?.googlePlaceId?.trim() || null,
+  line1: address?.line1.trim() || '',
+  line2: address?.line2?.trim() || null,
+  postalCode: address?.postalCode.trim() || '',
+  sourceCode: address?.sourceCode || 'manual',
+  state: address?.state.trim() || '',
+  validationStatusCode: address?.validationStatusCode || 'manual',
+});
+
 const toPendingChallenge = (
   type: PendingChallenge['type'],
   row: {
@@ -157,9 +173,11 @@ export class MysqlAuthStore implements AuthStore {
   private async upsertPrimaryClientAddress(
     connection: PoolConnection,
     clientAccountId: number,
-    country: string
+    country: string,
+    address?: ClientPrimaryAddressRecord | null
   ) {
     const timestamp = toMysqlDateTime(nowUtc());
+    const addressValues = toPrimaryAddressValues(address, country);
     const existingPrimary = await selectOne<IdRow>(
       connection,
       `SELECT id
@@ -173,19 +191,27 @@ export class MysqlAuthStore implements AuthStore {
     );
 
     if (existingPrimary?.id) {
+      if (!address) {
+        return;
+      }
+
       await connection.execute(
         `UPDATE client_addresses
          SET address_type_code = ?, line1 = ?, line2 = ?, city = ?, state = ?, postal_code = ?,
-             country_code = ?, is_primary = ?, updated_at = ?, archived_at = NULL
+             country_code = ?, source_code = ?, google_place_id = ?, validation_status_code = ?,
+             is_primary = ?, updated_at = ?, archived_at = NULL
          WHERE id = ?`,
         [
           'primary',
-          'Not provided',
-          null,
-          'Not provided',
-          'Not provided',
-          '000000',
-          toCountryValue(country),
+          addressValues.line1,
+          addressValues.line2,
+          addressValues.city,
+          addressValues.state,
+          addressValues.postalCode,
+          addressValues.country,
+          addressValues.sourceCode,
+          addressValues.googlePlaceId,
+          addressValues.validationStatusCode,
           1,
           timestamp,
           existingPrimary.id,
@@ -208,17 +234,20 @@ export class MysqlAuthStore implements AuthStore {
     await connection.execute(
       `INSERT INTO client_addresses (
         client_account_id, address_type_code, line1, line2, city, state, postal_code, country_code,
-        is_primary, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        source_code, google_place_id, validation_status_code, is_primary, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         clientAccountId,
         'primary',
-        'Not provided',
-        null,
-        'Not provided',
-        'Not provided',
-        '000000',
-        toCountryValue(country),
+        addressValues.line1,
+        addressValues.line2,
+        addressValues.city,
+        addressValues.state,
+        addressValues.postalCode,
+        addressValues.country,
+        addressValues.sourceCode,
+        addressValues.googlePlaceId,
+        addressValues.validationStatusCode,
         1,
         timestamp,
         timestamp,
@@ -232,7 +261,8 @@ export class MysqlAuthStore implements AuthStore {
     email: string,
     phone: string,
     fullName: string,
-    country: string
+    country: string,
+    primaryAddress?: ClientPrimaryAddressRecord | null
   ) {
     const existing = await selectOne<IdRow>(
       connection,
@@ -266,15 +296,14 @@ export class MysqlAuthStore implements AuthStore {
       await connection.execute(
         `UPDATE client_account_contacts
          SET mobile_number = COALESCE(mobile_number, ?),
-             whatsapp_number = CASE WHEN whatsapp_same_as_mobile = 1 THEN ? ELSE whatsapp_number END,
              updated_at = ?
          WHERE client_account_id = ?
            AND user_id = ?
            AND archived_at IS NULL`,
-        [normalizePhone(phone), normalizePhone(phone), timestamp, existing.id, userId]
+        [normalizePhone(phone), timestamp, existing.id, userId]
       );
 
-      await this.upsertPrimaryClientAddress(connection, existing.id, country);
+      await this.upsertPrimaryClientAddress(connection, existing.id, country, primaryAddress);
 
       return existing.id;
     }
@@ -311,18 +340,18 @@ export class MysqlAuthStore implements AuthStore {
     await connection.execute(
       `INSERT INTO client_account_contacts (
         client_account_id, user_id, contact_role_code, is_primary, is_billing,
-        mobile_number, whatsapp_number, whatsapp_same_as_mobile, portal_access_enabled, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [clientAccountId, userId, 'primary', 1, 1, normalizePhone(phone), normalizePhone(phone), 1, 1, timestamp, timestamp]
+        mobile_number, portal_access_enabled, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [clientAccountId, userId, 'primary', 1, 1, normalizePhone(phone), 1, timestamp, timestamp]
     );
 
-    await this.upsertPrimaryClientAddress(connection, clientAccountId, country);
+    await this.upsertPrimaryClientAddress(connection, clientAccountId, country, primaryAddress);
 
     await connection.execute(
       `INSERT INTO user_notification_preferences (
-        user_id, in_app_alerts, email_updates, sms_alerts, whatsapp_alerts, invoice_reminders, case_activity_alerts, product_announcements, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [userId, 1, 1, 1, 0, 1, 1, 0, timestamp]
+        user_id, in_app_alerts, email_updates, sms_alerts, invoice_reminders, case_activity_alerts, product_announcements, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [userId, 1, 1, 1, 1, 1, 0, timestamp]
     );
 
     await connection.execute(
@@ -748,7 +777,7 @@ export class MysqlAuthStore implements AuthStore {
 
   public async saveAccount(
     account: AuthAccountRecord,
-    options?: { legalAcceptance?: LegalAcceptanceRecord }
+    options?: { legalAcceptance?: LegalAcceptanceRecord; primaryAddress?: ClientPrimaryAddressRecord }
   ) {
     await this.initialize();
 
@@ -840,7 +869,8 @@ export class MysqlAuthStore implements AuthStore {
         normalizedEmail,
         normalizedPhone || '',
         account.fullName,
-        account.country
+        account.country,
+        options?.primaryAddress
       );
 
       if (options?.legalAcceptance) {

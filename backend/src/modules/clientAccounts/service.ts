@@ -38,12 +38,27 @@ export const clientAccountsService = {
     return repository.getAccountSettings(userPublicId);
   },
 
-  async updateContactSettings(
+  async updatePrimaryAddress(
     userPublicId: string,
-    payload: { whatsappNumber: string; whatsappSameAsMobile: boolean }
+    payload: {
+      city: string;
+      country: string;
+      line1: string;
+      line2?: string | null;
+      postalCode: string;
+      sourceCode?: 'google' | 'ip_prefill' | 'manual';
+      state: string;
+      googlePlaceId?: string | null;
+      validationStatusCode?: 'manual' | 'unverified' | 'verified';
+    }
   ) {
     const repository = await getRepository();
-    return repository.updateContactSettings(userPublicId, payload);
+    return repository.updatePrimaryAddress(userPublicId, payload);
+  },
+
+  async updateDisplayName(userPublicId: string, payload: { name: string }) {
+    const repository = await getRepository();
+    return repository.updateDisplayName(userPublicId, payload);
   },
 
   async changePassword(

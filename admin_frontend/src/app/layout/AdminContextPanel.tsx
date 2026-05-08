@@ -1,6 +1,6 @@
 import React from 'react';
 import { FileText, Link as LinkIcon, Mail, X } from 'lucide-react';
-import { formatDateTime } from '../data/seedData';
+import { formatDateTime } from '../data/formatters';
 import { useAsyncResource } from '../hooks/useAsyncResource';
 import { adminApi } from '../lib/api/admin';
 

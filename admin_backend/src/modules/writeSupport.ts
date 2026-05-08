@@ -2,6 +2,10 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { createPublicId } from '../lib/authCrypto.js';
 import { notFound } from '../lib/httpErrors.js';
 import { executeStatement, queryRows, type QueryExecutor } from '../lib/mysql.js';
+import { getRequestContext } from '../lib/observability.js';
+import { sendEmail } from './providers/email.js';
+import { sendSms } from './providers/sms.js';
+import type { DeliveryChannel, ProviderDeliveryResult } from './providers/types.js';
 
 type IdRow = RowDataPacket & { id: number };
 type MatterRow = IdRow & { clientAccountId: number };
@@ -9,10 +13,23 @@ type ThreadRow = IdRow & { clientAccountId: number; matterId: number | null };
 type PaymentRow = IdRow & { clientAccountId: number; invoiceId: number | null };
 type NotificationDeliveryRow = RowDataPacket & {
   bodyText: string | null;
+  emailEnabled: number;
   inAppEnabled: number;
   isActive: number;
+  smsEnabled: number;
   subject: string | null;
   templateId: string | null;
+};
+type NotificationRecipientRow = RowDataPacket & {
+  caseActivityAlerts: number | null;
+  email: string | null;
+  emailUpdates: number | null;
+  fullName: string | null;
+  id: number;
+  inAppAlerts: number | null;
+  invoiceReminders: number | null;
+  phone: string | null;
+  smsAlerts: number | null;
 };
 type NotificationTemplateContextRow = RowDataPacket & {
   clientName: string | null;
@@ -40,11 +57,53 @@ const stringifyChange = (value: unknown) => {
 const renderTemplate = (value: string, context: Record<string, string>) =>
   value.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, variable: string) => context[variable] || '');
 
+const truncate = (value: string, maxLength = 1200) =>
+  value.length > maxLength ? value.slice(0, maxLength - 1) : value;
+
+const maskEmail = (value: string) => {
+  const [localPart, domainPart] = value.split('@');
+  if (!domainPart) {
+    return 'masked-email';
+  }
+
+  return `${localPart.slice(0, 2)}***@${domainPart}`;
+};
+
+const maskPhone = (value: string) => {
+  const normalized = value.replace(/\s+/g, '');
+  return normalized.length <= 4 ? 'masked-phone' : `***${normalized.slice(-4)}`;
+};
+
+const notificationPreferenceAllows = (
+  recipient: NotificationRecipientRow,
+  notificationTypeCode: string,
+  channel: 'email' | 'in_app' | 'sms'
+) => {
+  const channelAllowed =
+    channel === 'email'
+      ? recipient.emailUpdates !== 0
+      : channel === 'sms'
+        ? recipient.smsAlerts !== 0
+        : recipient.inAppAlerts !== 0;
+
+  if (!channelAllowed) {
+    return false;
+  }
+
+  if (['invoice_generated', 'payment_reminder'].includes(notificationTypeCode)) {
+    return recipient.invoiceReminders !== 0;
+  }
+
+  return recipient.caseActivityAlerts !== 0;
+};
+
 const getNotificationDelivery = async (notificationTypeCode: string, executor?: QueryExecutor) => {
   const row = firstRow(
     await queryRows<NotificationDeliveryRow>(
       `SELECT
          COALESCE(nds.in_app_enabled, 1) AS inAppEnabled,
+         COALESCE(nds.email_enabled, 0) AS emailEnabled,
+         COALESCE(nds.sms_enabled, 0) AS smsEnabled,
          COALESCE(nds.is_active, nt.is_active) AS isActive,
          at.public_id AS templateId,
          at.subject,
@@ -62,7 +121,15 @@ const getNotificationDelivery = async (notificationTypeCode: string, executor?: 
     )
   );
 
-  return row || { bodyText: null, inAppEnabled: 1, isActive: 1, subject: null, templateId: null };
+  return row || {
+    bodyText: null,
+    emailEnabled: 0,
+    inAppEnabled: 1,
+    isActive: 1,
+    smsEnabled: 0,
+    subject: null,
+    templateId: null,
+  };
 };
 
 const getNotificationTemplateContext = async (
@@ -303,13 +370,16 @@ export const createAuditEvent = async (
     changes?: Array<{ fieldName: string; newValue?: unknown; oldValue?: unknown }>;
     entityPk?: number | null;
     entityTableName: string;
+    ipAddress?: string | null;
     requestCorrelationId?: string | null;
     sourceModule: string;
     summaryNewValue?: unknown;
     summaryOldValue?: unknown;
+    userAgent?: string | null;
   },
   executor?: QueryExecutor
 ) => {
+  const requestContext = getRequestContext();
   const result = await executeStatement<ResultSetHeader>(
     `INSERT INTO audit_events (
        public_id,
@@ -326,7 +396,7 @@ export const createAuditEvent = async (
        summary_old_value,
        summary_new_value,
        occurred_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, UTC_TIMESTAMP(6))`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6))`,
     [
       createPublicId(),
       input.actorUserId,
@@ -336,7 +406,9 @@ export const createAuditEvent = async (
       input.actionCode,
       input.actionLabel,
       input.sourceModule,
-      input.requestCorrelationId || null,
+      input.requestCorrelationId ?? requestContext?.requestId ?? null,
+      input.ipAddress ?? requestContext?.ipAddress ?? null,
+      input.userAgent ?? requestContext?.userAgent ?? null,
       stringifyChange(input.summaryOldValue),
       stringifyChange(input.summaryNewValue),
     ],
@@ -366,6 +438,151 @@ export const createAuditEvent = async (
   return result.insertId;
 };
 
+const auditNotificationDelivery = async (
+  input: {
+    channel: DeliveryChannel;
+    maskedRecipient: string;
+    notificationId: number | null;
+    notificationTypeCode: string;
+    relatedInvoiceId?: number | null;
+    result: ProviderDeliveryResult;
+  },
+  executor?: QueryExecutor
+) => {
+  const statusSuffix =
+    input.result.status === 'sent'
+      ? 'sent'
+      : input.result.status === 'preview'
+        ? 'previewed'
+        : input.result.status === 'disabled'
+          ? 'suppressed'
+          : 'failed';
+  const isInvoiceEmail =
+    input.channel === 'email' &&
+    input.relatedInvoiceId &&
+    input.notificationTypeCode === 'invoice_generated';
+
+  await createAuditEvent(
+    {
+      actionCode: isInvoiceEmail
+        ? `invoice.email_${statusSuffix}`
+        : `notification.${input.channel}_${statusSuffix}`,
+      actionLabel: isInvoiceEmail
+        ? `Invoice email ${statusSuffix}`
+        : `Notification ${input.channel} ${statusSuffix}`,
+      actorRoleCode: 'system',
+      actorUserId: null,
+      changes: [
+        { fieldName: 'channel', newValue: input.channel },
+        { fieldName: 'provider_code', newValue: input.result.providerCode },
+        { fieldName: 'delivery_status', newValue: input.result.status },
+        { fieldName: 'provider_reference', newValue: input.result.providerReference || null },
+        { fieldName: 'failure_reason', newValue: input.result.errorMessage || null },
+        { fieldName: 'recipient', newValue: input.maskedRecipient },
+      ],
+      entityPk: isInvoiceEmail ? input.relatedInvoiceId : input.notificationId,
+      entityTableName: isInvoiceEmail ? 'invoices' : 'notifications',
+      sourceModule: 'notification_delivery',
+      summaryNewValue: {
+        channel: input.channel,
+        notificationTypeCode: input.notificationTypeCode,
+        providerCode: input.result.providerCode,
+        status: input.result.status,
+      },
+    },
+    executor
+  );
+};
+
+const dispatchNotificationChannel = async (
+  input: {
+    bodyText: string;
+    channel: DeliveryChannel;
+    notificationId: number | null;
+    notificationTypeCode: string;
+    recipient: NotificationRecipientRow;
+    relatedInvoiceId?: number | null;
+    title: string;
+  },
+  executor?: QueryExecutor
+) => {
+  if (input.channel === 'email') {
+    if (!input.recipient.email) {
+      await auditNotificationDelivery(
+        {
+          channel: input.channel,
+          maskedRecipient: 'missing-email',
+          notificationId: input.notificationId,
+          notificationTypeCode: input.notificationTypeCode,
+          relatedInvoiceId: input.relatedInvoiceId,
+          result: {
+            errorMessage: 'Recipient has no email address.',
+            providerCode: 'local',
+            status: 'failed',
+          },
+        },
+        executor
+      );
+      return;
+    }
+
+    const result = await sendEmail({
+      subject: input.title,
+      text: input.bodyText,
+      to: input.recipient.email,
+    });
+
+    await auditNotificationDelivery(
+      {
+        channel: input.channel,
+        maskedRecipient: maskEmail(input.recipient.email),
+        notificationId: input.notificationId,
+        notificationTypeCode: input.notificationTypeCode,
+        relatedInvoiceId: input.relatedInvoiceId,
+        result,
+      },
+      executor
+    );
+    return;
+  }
+
+  if (!input.recipient.phone) {
+    await auditNotificationDelivery(
+      {
+        channel: input.channel,
+        maskedRecipient: 'missing-phone',
+        notificationId: input.notificationId,
+        notificationTypeCode: input.notificationTypeCode,
+        relatedInvoiceId: input.relatedInvoiceId,
+        result: {
+          errorMessage: 'Recipient has no phone number.',
+          providerCode: 'local',
+          status: 'failed',
+        },
+      },
+      executor
+    );
+    return;
+  }
+
+  const result = await sendSms({
+    body: truncate(`${input.title}\n${input.bodyText}`),
+    to: input.recipient.phone,
+  });
+
+  await auditNotificationDelivery(
+    {
+      channel: input.channel,
+      maskedRecipient: maskPhone(input.recipient.phone),
+      notificationId: input.notificationId,
+      notificationTypeCode: input.notificationTypeCode,
+      relatedInvoiceId: input.relatedInvoiceId,
+      result,
+    },
+    executor
+  );
+};
+
 export const createClientNotifications = async (
   input: {
     bodyText: string;
@@ -377,13 +594,14 @@ export const createClientNotifications = async (
     matterId?: number | null;
     notificationTypeCode: string;
     priorityCode?: string;
+    suppressExternalDelivery?: boolean;
     threadId?: number | null;
     title: string;
   },
   executor?: QueryExecutor
 ) => {
   const delivery = await getNotificationDelivery(input.notificationTypeCode, executor);
-  if (!delivery.isActive || !delivery.inAppEnabled) {
+  if (!delivery.isActive) {
     return;
   }
 
@@ -397,52 +615,108 @@ export const createClientNotifications = async (
     ? renderTemplate(delivery.bodyText, templateContext)
     : input.bodyText;
 
-  const recipients = await queryRows<IdRow>(
-    `SELECT DISTINCT user_id AS id
-     FROM client_account_contacts
-     WHERE client_account_id = ?
-       AND archived_at IS NULL
-       AND portal_access_enabled = 1`,
+  const recipients = await queryRows<NotificationRecipientRow>(
+    `SELECT DISTINCT
+       u.id,
+       u.email,
+       u.phone,
+       u.display_name AS fullName,
+       COALESCE(unp.in_app_alerts, 1) AS inAppAlerts,
+       COALESCE(unp.email_updates, 1) AS emailUpdates,
+       COALESCE(unp.sms_alerts, 1) AS smsAlerts,
+       COALESCE(unp.invoice_reminders, 1) AS invoiceReminders,
+       COALESCE(unp.case_activity_alerts, 1) AS caseActivityAlerts
+     FROM client_account_contacts cac
+     INNER JOIN users u ON u.id = cac.user_id
+     LEFT JOIN user_notification_preferences unp ON unp.user_id = u.id
+     WHERE cac.client_account_id = ?
+       AND cac.archived_at IS NULL
+       AND cac.portal_access_enabled = 1
+       AND u.archived_at IS NULL
+       AND u.login_enabled = 1`,
     [input.clientAccountId],
     executor
   );
 
   for (const recipient of recipients) {
-    await executeStatement(
-      `INSERT INTO notifications (
-         public_id,
-         recipient_user_id,
-         notification_type_code,
-         title,
-         body_text,
-         priority_code,
-         matter_id,
-         invoice_id,
-         thread_id,
-         event_id,
-         document_id,
-         is_read,
-         read_at,
-         dismissed_at,
-         created_at,
-         expires_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, UTC_TIMESTAMP(6), ?)`,
-      [
-        createPublicId(),
-        recipient.id,
-        input.notificationTypeCode,
-        title || input.title,
-        bodyText || input.bodyText,
-        input.priorityCode || 'normal',
-        input.matterId || null,
-        input.invoiceId || null,
-        input.threadId || null,
-        input.eventId || null,
-        input.documentId || null,
-        input.expiresAt || null,
-      ],
-      executor
-    );
+    let notificationId: number | null = null;
+
+    if (delivery.inAppEnabled && notificationPreferenceAllows(recipient, input.notificationTypeCode, 'in_app')) {
+      const notificationResult = await executeStatement(
+        `INSERT INTO notifications (
+           public_id,
+           recipient_user_id,
+           notification_type_code,
+           title,
+           body_text,
+           priority_code,
+           matter_id,
+           invoice_id,
+           thread_id,
+           event_id,
+           document_id,
+           is_read,
+           read_at,
+           dismissed_at,
+           created_at,
+           expires_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, NULL, UTC_TIMESTAMP(6), ?)`,
+        [
+          createPublicId(),
+          recipient.id,
+          input.notificationTypeCode,
+          title || input.title,
+          bodyText || input.bodyText,
+          input.priorityCode || 'normal',
+          input.matterId || null,
+          input.invoiceId || null,
+          input.threadId || null,
+          input.eventId || null,
+          input.documentId || null,
+          input.expiresAt || null,
+        ],
+        executor
+      );
+      notificationId = notificationResult.insertId;
+    }
+
+    if (
+      !input.suppressExternalDelivery &&
+      delivery.emailEnabled &&
+      notificationPreferenceAllows(recipient, input.notificationTypeCode, 'email')
+    ) {
+      await dispatchNotificationChannel(
+        {
+          bodyText: bodyText || input.bodyText,
+          channel: 'email',
+          notificationId,
+          notificationTypeCode: input.notificationTypeCode,
+          recipient,
+          relatedInvoiceId: input.invoiceId || null,
+          title: title || input.title,
+        },
+        executor
+      );
+    }
+
+    if (
+      !input.suppressExternalDelivery &&
+      delivery.smsEnabled &&
+      notificationPreferenceAllows(recipient, input.notificationTypeCode, 'sms')
+    ) {
+      await dispatchNotificationChannel(
+        {
+          bodyText: bodyText || input.bodyText,
+          channel: 'sms',
+          notificationId,
+          notificationTypeCode: input.notificationTypeCode,
+          recipient,
+          relatedInvoiceId: input.invoiceId || null,
+          title: title || input.title,
+        },
+        executor
+      );
+    }
   }
 };
 

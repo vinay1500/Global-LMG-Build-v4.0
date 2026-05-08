@@ -48,7 +48,7 @@ export const googleAuthProvider = {
     if (env.GOOGLE_AUTH_MODE === 'disabled') {
       throw forbidden(
         'google_sign_in_disabled',
-        'Google sign-in is not configured for this environment.'
+        'Google sign-in is not available right now.'
       );
     }
 

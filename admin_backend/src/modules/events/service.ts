@@ -1,5 +1,12 @@
 import type { AdminActor } from '../auth/service.js';
-import { fetchClientsForList, fetchEvents, fetchMatters } from '../shared.js';
+import {
+  buildPaginationMeta,
+  countEvents,
+  fetchClientsForList,
+  fetchEvents,
+  fetchMatters,
+  normalizePagination,
+} from '../shared.js';
 import {
   createAuditEvent,
   createClientNotifications,
@@ -13,25 +20,43 @@ import { executeStatement, queryRows, withTransaction, type QueryExecutor } from
 import { env } from '../../config/env.js';
 import type { RowDataPacket } from 'mysql2/promise';
 import { getActiveReminderSettings } from '../settings/notificationSettings.js';
+import { isGoogleCalendarConfigured, syncGoogleCalendarEvent } from './googleCalendarClient.js';
 
 type EventStateRow = RowDataPacket & {
   cancelledAt: string | null;
+  calendarOwnerEmail: string | null;
+  calendarOwnerUserId: number | null;
+  calendarSyncErrorText: string | null;
+  calendarSyncStatusCode: string;
+  clientEmail: string | null;
   clientAccountId: number;
+  clientInviteModeCode: string;
+  createdByUserId: number;
   durationMinutes: number;
   eventTypeCode: string;
   externalMeetingId: string | null;
+  googleAttendeeStatusCode: string;
   id: number;
   joinUrl: string | null;
   locationText: string | null;
   matterId: number | null;
+  meetConferenceId: string | null;
+  meetingProviderCode: string;
   modeCode: string;
   notes: string | null;
   publicId: string;
   scheduledEndAt: string;
   scheduledStartAt: string;
   statusCode: string;
+  timezoneName: string;
   title: string;
   visibleToClient: number;
+};
+
+type CalendarSyncEventRow = EventStateRow & {
+  clientName: string;
+  matterTitle: string | null;
+  organizerEmail: string | null;
 };
 
 type ClientRecipientRow = RowDataPacket & { id: number };
@@ -81,13 +106,22 @@ const resolveEventByPublicId = async (eventPublicId: string, executor: QueryExec
        scheduled_start_at AS scheduledStartAt,
        scheduled_end_at AS scheduledEndAt,
        TIMESTAMPDIFF(MINUTE, scheduled_start_at, scheduled_end_at) AS durationMinutes,
+       timezone_name AS timezoneName,
        mode_code AS modeCode,
        location_text AS locationText,
        meeting_provider_code AS meetingProviderCode,
        external_meeting_id AS externalMeetingId,
        join_url AS joinUrl,
+       COALESCE(calendar_sync_status_code, 'local') AS calendarSyncStatusCode,
+       calendar_sync_error_text AS calendarSyncErrorText,
+       meet_conference_id AS meetConferenceId,
+       calendar_owner_user_id AS calendarOwnerUserId,
+       calendar_owner_email AS calendarOwnerEmail,
+       client_invite_mode_code AS clientInviteModeCode,
+       google_attendee_status_code AS googleAttendeeStatusCode,
        client_visible_flag AS visibleToClient,
        notes,
+       created_by_user_id AS createdByUserId,
        cancelled_at AS cancelledAt
      FROM events
      WHERE public_id = ?
@@ -223,79 +257,284 @@ const scheduleEventReminders = async (
   }
 };
 
-const recordCalendarSyncState = async (
-  executor: QueryExecutor,
-  actor: AdminActor,
-  eventId: number,
-  lifecycleAction: 'create' | 'update' | 'cancel'
-) => {
-  if (env.CALENDAR_SYNC_MODE !== 'google') {
-    await executeStatement(
-      `UPDATE events
-       SET meeting_provider_code = CASE
-             WHEN meeting_provider_code IN ('google-calendar-failed', 'google-calendar') THEN 'manual'
-             ELSE meeting_provider_code
-           END
-       WHERE id = ?`,
-      [eventId],
-      executor
-    );
-    return 'local' as const;
+const resolveEventForCalendarSync = async (eventPublicId: string) => {
+  const rows = await queryRows<CalendarSyncEventRow>(
+    `SELECT
+       e.id,
+       e.public_id AS publicId,
+       e.client_account_id AS clientAccountId,
+       e.matter_id AS matterId,
+       e.title,
+       e.event_type_code AS eventTypeCode,
+       e.status_code AS statusCode,
+       e.scheduled_start_at AS scheduledStartAt,
+       e.scheduled_end_at AS scheduledEndAt,
+       TIMESTAMPDIFF(MINUTE, e.scheduled_start_at, e.scheduled_end_at) AS durationMinutes,
+       e.timezone_name AS timezoneName,
+       e.mode_code AS modeCode,
+       e.location_text AS locationText,
+       e.meeting_provider_code AS meetingProviderCode,
+       e.external_meeting_id AS externalMeetingId,
+       e.join_url AS joinUrl,
+       COALESCE(e.calendar_sync_status_code, 'local') AS calendarSyncStatusCode,
+       e.calendar_sync_error_text AS calendarSyncErrorText,
+       e.meet_conference_id AS meetConferenceId,
+       COALESCE(e.calendar_owner_user_id, e.created_by_user_id) AS calendarOwnerUserId,
+       COALESCE(e.calendar_owner_email, organizer.email) AS calendarOwnerEmail,
+       COALESCE(e.client_invite_mode_code, 'google_attendee') AS clientInviteModeCode,
+       COALESCE(e.google_attendee_status_code, 'not_applicable') AS googleAttendeeStatusCode,
+       e.client_visible_flag AS visibleToClient,
+       e.notes,
+       e.cancelled_at AS cancelledAt,
+       e.created_by_user_id AS createdByUserId,
+       ca.primary_email AS clientEmail,
+       ca.display_name AS clientName,
+       m.title AS matterTitle,
+       organizer.email AS organizerEmail
+     FROM events e
+     JOIN client_accounts ca ON ca.id = e.client_account_id
+     JOIN users organizer ON organizer.id = COALESCE(e.calendar_owner_user_id, e.created_by_user_id)
+     LEFT JOIN matters m ON m.id = e.matter_id
+     WHERE e.public_id = ?
+     LIMIT 1`,
+    [eventPublicId]
+  );
+
+  const event = rows[0];
+
+  if (!event) {
+    throw notFound('event_not_found', 'Event not found.');
   }
 
-  await createAuditEvent(
-    {
-      actionCode: 'event.calendar_sync_requested',
-      actionLabel: 'Calendar sync requested',
+  return event;
+};
+
+const getClientInviteMode = () =>
+  env.CALENDAR_CLIENT_INVITE_MODE === 'google_attendee' ? 'google_attendee' : 'none';
+
+const hasGoogleAttendee = (event: CalendarSyncEventRow) =>
+  getClientInviteMode() === 'google_attendee' && Boolean(event.clientEmail);
+
+const markCalendarLocal = async (event: CalendarSyncEventRow) => {
+  await executeStatement(
+    `UPDATE events
+     SET meeting_provider_code = CASE
+           WHEN meeting_provider_code IN ('google-calendar-failed', 'google-calendar') THEN 'manual'
+           ELSE meeting_provider_code
+         END,
+         calendar_sync_status_code = 'local',
+         calendar_sync_error_text = NULL,
+         calendar_synced_at = NULL,
+         calendar_owner_user_id = ?,
+         calendar_owner_email = ?,
+         client_invite_mode_code = ?,
+         google_attendee_status_code = 'not_applicable'
+     WHERE id = ?`,
+    [
+      event.calendarOwnerUserId || event.createdByUserId,
+      event.calendarOwnerEmail || event.organizerEmail,
+      getClientInviteMode(),
+      event.id,
+    ]
+  );
+};
+
+const auditCalendarSyncRequest = async (
+  actor: AdminActor,
+  eventId: number,
+  lifecycleAction: 'create' | 'update' | 'cancel' | 'retry'
+) => {
+  await createAuditEvent({
+    actionCode:
+      lifecycleAction === 'retry'
+        ? 'event.calendar_sync_retried'
+        : 'event.calendar_sync_requested',
+    actionLabel:
+      lifecycleAction === 'retry' ? 'Calendar sync retried' : 'Calendar sync requested',
+    actorRoleCode: actor.roleCodes[0] || 'ops_admin',
+    actorUserId: actor.userId,
+    changes: [{ fieldName: 'calendar_action', newValue: lifecycleAction }],
+    entityPk: eventId,
+    entityTableName: 'events',
+    sourceModule: 'meetings_workspace',
+    summaryNewValue: `Google Calendar sync ${lifecycleAction}.`,
+  });
+};
+
+const syncCalendarForEvent = async (
+  actor: AdminActor,
+  eventPublicId: string,
+  lifecycleAction: 'create' | 'update' | 'cancel' | 'retry'
+) => {
+  const event = await resolveEventForCalendarSync(eventPublicId);
+
+  if (env.CALENDAR_SYNC_MODE !== 'google' || !isGoogleCalendarConfigured()) {
+    if (lifecycleAction === 'retry') {
+      await auditCalendarSyncRequest(actor, event.id, lifecycleAction);
+    }
+    await markCalendarLocal(event);
+    return { eventId: event.publicId, status: 'local' as const };
+  }
+
+  await auditCalendarSyncRequest(actor, event.id, lifecycleAction);
+  await executeStatement(
+    `UPDATE events
+     SET meeting_provider_code = 'google-calendar',
+         calendar_sync_status_code = 'pending',
+         calendar_sync_error_text = NULL,
+         calendar_owner_user_id = ?,
+         calendar_owner_email = ?,
+         client_invite_mode_code = ?,
+         google_attendee_status_code = CASE WHEN ? THEN 'pending' ELSE 'not_applicable' END
+     WHERE id = ?`,
+    [
+      event.calendarOwnerUserId || event.createdByUserId,
+      event.calendarOwnerEmail || event.organizerEmail,
+      getClientInviteMode(),
+      hasGoogleAttendee(event) ? 1 : 0,
+      event.id,
+    ]
+  );
+
+  const syncResult = await syncGoogleCalendarEvent(event);
+
+  if (syncResult.status === 'synced') {
+    const nextSyncStatus = lifecycleAction === 'cancel' ? 'cancelled' : 'synced';
+    const nextAttendeeStatus = hasGoogleAttendee(event)
+      ? lifecycleAction === 'cancel'
+        ? 'cancelled'
+        : 'invited'
+      : 'not_applicable';
+
+    await executeStatement(
+      `UPDATE events
+       SET meeting_provider_code = ?,
+           external_meeting_id = ?,
+           join_url = ?,
+           calendar_sync_status_code = ?,
+           calendar_sync_error_text = NULL,
+           calendar_synced_at = UTC_TIMESTAMP(6),
+           meet_conference_id = ?,
+           calendar_owner_user_id = ?,
+           calendar_owner_email = ?,
+           client_invite_mode_code = ?,
+           google_attendee_status_code = ?
+       WHERE id = ?`,
+      [
+        syncResult.providerCode,
+        syncResult.externalEventId,
+        syncResult.joinUrl,
+        nextSyncStatus,
+        syncResult.conferenceId,
+        event.calendarOwnerUserId || event.createdByUserId,
+        event.calendarOwnerEmail || event.organizerEmail,
+        getClientInviteMode(),
+        nextAttendeeStatus,
+        event.id,
+      ]
+    );
+
+    await createAuditEvent({
+      actionCode: 'event.calendar_sync_succeeded',
+      actionLabel: 'Calendar sync succeeded',
       actorRoleCode: actor.roleCodes[0] || 'ops_admin',
       actorUserId: actor.userId,
-      changes: [{ fieldName: 'calendar_action', newValue: lifecycleAction }],
-      entityPk: eventId,
+      changes: [
+        { fieldName: 'calendar_sync_status', oldValue: event.calendarSyncStatusCode, newValue: nextSyncStatus },
+        { fieldName: 'external_meeting_id', oldValue: event.externalMeetingId, newValue: syncResult.externalEventId },
+        { fieldName: 'calendar_owner_email', oldValue: event.calendarOwnerEmail, newValue: event.calendarOwnerEmail || event.organizerEmail },
+      ],
+      entityPk: event.id,
       entityTableName: 'events',
       sourceModule: 'meetings_workspace',
-      summaryNewValue: `Google Calendar sync requested for event ${lifecycleAction}.`,
-    },
-    executor
-  );
+      summaryNewValue: syncResult.externalEventId,
+    });
+
+    if (hasGoogleAttendee(event)) {
+      await createAuditEvent({
+        actionCode: 'event.google_attendee_invited',
+        actionLabel: 'Google attendee invite requested',
+        actorRoleCode: actor.roleCodes[0] || 'ops_admin',
+        actorUserId: actor.userId,
+        changes: [{ fieldName: 'google_attendee_status_code', newValue: nextAttendeeStatus }],
+        entityPk: event.id,
+        entityTableName: 'events',
+        sourceModule: 'meetings_workspace',
+        summaryNewValue: event.clientEmail,
+      });
+    }
+
+    return { eventId: event.publicId, status: nextSyncStatus };
+  }
 
   await executeStatement(
     `UPDATE events
-     SET meeting_provider_code = 'google-calendar-failed'
+     SET meeting_provider_code = ?,
+         calendar_sync_status_code = 'failed',
+         calendar_sync_error_text = ?,
+         calendar_synced_at = NULL,
+         calendar_owner_user_id = ?,
+         calendar_owner_email = ?,
+         client_invite_mode_code = ?,
+         google_attendee_status_code = CASE WHEN ? THEN 'failed' ELSE 'not_applicable' END
      WHERE id = ?`,
-    [eventId],
-    executor
+    [
+      syncResult.providerCode,
+      syncResult.errorText,
+      event.calendarOwnerUserId || event.createdByUserId,
+      event.calendarOwnerEmail || event.organizerEmail,
+      getClientInviteMode(),
+      hasGoogleAttendee(event) ? 1 : 0,
+      event.id,
+    ]
   );
 
-  await createAuditEvent(
-    {
-      actionCode: 'event.calendar_sync_failed',
-      actionLabel: 'Calendar sync failed',
+  await createAuditEvent({
+    actionCode: 'event.calendar_sync_failed',
+    actionLabel: 'Calendar sync failed',
+    actorRoleCode: actor.roleCodes[0] || 'ops_admin',
+    actorUserId: actor.userId,
+    changes: [
+      { fieldName: 'calendar_sync_status', oldValue: event.calendarSyncStatusCode, newValue: 'failed' },
+      { fieldName: 'calendar_sync_error_text', newValue: syncResult.errorText },
+    ],
+    entityPk: event.id,
+    entityTableName: 'events',
+    sourceModule: 'meetings_workspace',
+    summaryNewValue: syncResult.errorText,
+  });
+
+  if (hasGoogleAttendee(event)) {
+    await createAuditEvent({
+      actionCode: 'event.google_attendee_invite_failed',
+      actionLabel: 'Google attendee invite failed',
       actorRoleCode: actor.roleCodes[0] || 'ops_admin',
       actorUserId: actor.userId,
-      changes: [{ fieldName: 'calendar_sync_status', newValue: 'failed' }],
-      entityPk: eventId,
+      changes: [{ fieldName: 'google_attendee_status_code', newValue: 'failed' }],
+      entityPk: event.id,
       entityTableName: 'events',
       sourceModule: 'meetings_workspace',
-      summaryNewValue:
-        'Google Calendar integration is configured but no calendar sync client is implemented in this build. Event remains local/manual.',
-    },
-    executor
-  );
+      summaryNewValue: event.clientEmail,
+    });
+  }
 
-  return 'failed' as const;
+  return { eventId: event.publicId, status: 'failed' as const };
 };
 
-export const getWorkspace = async () => {
-  const [clientsResponse, events, matters] = await Promise.all([
+export const getWorkspace = async (options: { limit?: number; offset?: number } = {}) => {
+  const pagination = normalizePagination(options);
+  const [clientsResponse, events, matters, total] = await Promise.all([
     fetchClientsForList({ limit: 100, offset: 0 }),
-    fetchEvents({ includeCancelled: true }),
+    fetchEvents({ includeCancelled: true, limit: pagination.limit, offset: pagination.offset }),
     fetchMatters({ limit: 100 }),
+    countEvents({ includeCancelled: true }),
   ]);
 
   return {
     clients: clientsResponse,
     events,
     matters,
+    pagination: buildPaginationMeta(pagination, total),
   };
 };
 
@@ -315,7 +554,7 @@ export const createEvent = async (
     visibleToClient?: boolean;
   }
 ) => {
-  return withTransaction(async (connection) => {
+  const result = await withTransaction(async (connection) => {
     const matter = payload.matterId
       ? await resolveMatterByPublicId(payload.matterId, connection)
       : null;
@@ -402,7 +641,6 @@ export const createEvent = async (
     );
     const eventId = Number(result.insertId);
 
-    await recordCalendarSyncState(connection, actor, eventId, 'create');
     await scheduleEventReminders(connection, actor, {
       clientAccountId: clientAccount.id,
       eventTypeCode: payload.type,
@@ -457,6 +695,12 @@ export const createEvent = async (
 
     return { eventId: eventPublicRow[0]?.publicId || '', status: 'created' as const };
   });
+
+  if (result.eventId) {
+    await syncCalendarForEvent(actor, result.eventId, 'create');
+  }
+
+  return result;
 };
 
 export const updateEvent = async (
@@ -476,7 +720,7 @@ export const updateEvent = async (
     visibleToClient?: boolean;
   }
 ) => {
-  return withTransaction(async (connection) => {
+  const result = await withTransaction(async (connection) => {
     const event = await resolveEventByPublicId(eventPublicId, connection);
 
     if (event.cancelledAt || event.statusCode === 'cancelled') {
@@ -525,10 +769,7 @@ export const updateEvent = async (
            scheduled_end_at = ?,
            mode_code = ?,
            location_text = ?,
-           meeting_provider_code = 'manual',
-           external_meeting_id = NULL,
            join_url = ?,
-           host_url = NULL,
            client_visible_flag = ?,
            notes = ?,
            status_code = CASE WHEN status_code = 'rescheduled' THEN 'rescheduled' ELSE status_code END,
@@ -552,7 +793,6 @@ export const updateEvent = async (
       connection
     );
 
-    await recordCalendarSyncState(connection, actor, event.id, 'update');
     await scheduleEventReminders(connection, actor, {
       clientAccountId: clientAccount.id,
       eventTypeCode: payload.type || event.eventTypeCode,
@@ -610,6 +850,10 @@ export const updateEvent = async (
 
     return { eventId: event.publicId, status: 'updated' as const };
   });
+
+  await syncCalendarForEvent(actor, result.eventId, 'update');
+
+  return result;
 };
 
 export const cancelEvent = async (
@@ -617,7 +861,7 @@ export const cancelEvent = async (
   eventPublicId: string,
   payload: { reason?: string }
 ) => {
-  return withTransaction(async (connection) => {
+  const result = await withTransaction(async (connection) => {
     const event = await resolveEventByPublicId(eventPublicId, connection);
 
     if (event.cancelledAt || event.statusCode === 'cancelled') {
@@ -637,7 +881,6 @@ export const cancelEvent = async (
     );
 
     await cancelPendingReminders(connection, actor, event.id, 'Event cancelled.');
-    await recordCalendarSyncState(connection, actor, event.id, 'cancel');
 
     if (event.matterId) {
       await touchMatterActivity(event.matterId, connection);
@@ -681,4 +924,11 @@ export const cancelEvent = async (
 
     return { eventId: event.publicId, status: 'cancelled' as const };
   });
+
+  await syncCalendarForEvent(actor, result.eventId, 'cancel');
+
+  return result;
 };
+
+export const retryEventCalendarSync = async (actor: AdminActor, eventPublicId: string) =>
+  syncCalendarForEvent(actor, eventPublicId, 'retry');

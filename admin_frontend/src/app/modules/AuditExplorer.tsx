@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { formatDateTime, formatDate, AUDIT_ENTRIES, type AuditEntry } from '../data/seedData';
+import { formatDate, formatDateTime } from '../data/formatters';
+import type { AuditEntry } from '../data/seedData';
 import { 
   Search, Filter, History, User, Calendar as CalendarIcon, FileText, 
   Briefcase, CreditCard, MessageSquare, Plus, Clock, Activity, ArrowRight,
@@ -29,7 +30,7 @@ const ENTITY_ICONS: Record<string, React.ElementType> = {
   message: MessageSquare,
 };
 
-export const AuditExplorer: React.FC<{ entries?: AuditEntry[] }> = ({ entries = AUDIT_ENTRIES }) => {
+export const AuditExplorer: React.FC<{ entries?: AuditEntry[] }> = ({ entries = [] }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedEntity, setSelectedEntity] = useState<string | 'all'>('all');
   const [selectedEntry, setSelectedEntry] = useState<AuditEntry | null>(null);
@@ -303,12 +304,12 @@ export const AuditExplorer: React.FC<{ entries?: AuditEntry[] }> = ({ entries = 
                   <Database className="w-4 h-4" /> All Entities
                 </div>
                 <span className={`text-[10px] px-2 py-0.5 rounded-full ${selectedEntity === 'all' ? 'bg-white/20' : 'bg-gray-100 text-gray-500'}`}>
-                  {AUDIT_ENTRIES.length}
+                  {entries.length}
                 </span>
               </button>
               
               {['matter', 'invoice', 'payment', 'document', 'event', 'user', 'lead', 'message'].map(type => {
-                const count = AUDIT_ENTRIES.filter(e => e.entityType === type).length;
+                const count = entries.filter(e => e.entityType === type).length;
                 if (count === 0) return null;
                 const Icon = ENTITY_ICONS[type];
                 

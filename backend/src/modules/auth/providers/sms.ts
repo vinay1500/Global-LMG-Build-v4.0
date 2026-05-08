@@ -17,8 +17,16 @@ const buildVerifyCheckEndpoint = () =>
     env.TWILIO_VERIFY_SERVICE_SID || ''
   )}/VerificationCheck`;
 
+const buildMessagesEndpoint = () =>
+  `https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(
+    env.TWILIO_ACCOUNT_SID || ''
+  )}/Messages.json`;
+
 const buildAuthHeader = () =>
   `Basic ${Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString('base64')}`;
+
+const buildOtpMessage = (code: string) =>
+  `Global LMG verification code: ${code}. This code expires shortly. If you did not request this, please ignore it.`;
 
 export const smsAuthProvider = {
   async sendCode(input: SendSmsCodeInput): Promise<DeliveryResult> {
@@ -31,18 +39,70 @@ export const smsAuthProvider = {
     if (env.SMS_PROVIDER_MODE === 'disabled') {
       throw serviceUnavailable(
         'sms_provider_disabled',
-        'SMS delivery is disabled in this environment.'
+        'SMS delivery is not available right now.'
       );
     }
 
-    if (
-      !env.TWILIO_ACCOUNT_SID ||
-      !env.TWILIO_AUTH_TOKEN ||
-      !env.TWILIO_VERIFY_SERVICE_SID
-    ) {
+    if (!env.TWILIO_ACCOUNT_SID || !env.TWILIO_AUTH_TOKEN) {
       throw serviceUnavailable(
         'sms_provider_misconfigured',
         'SMS provider is missing required configuration.'
+      );
+    }
+
+    if (env.SMS_PROVIDER_MODE === 'twilio') {
+      if (!input.code) {
+        throw serviceUnavailable(
+          'sms_provider_misconfigured',
+          'SMS provider requires a locally generated verification code.'
+        );
+      }
+
+      if (!env.TWILIO_FROM_NUMBER && !env.TWILIO_MESSAGING_SERVICE_SID) {
+        throw serviceUnavailable(
+          'sms_provider_misconfigured',
+          'SMS provider is missing an outbound sender.'
+        );
+      }
+
+      const body = new URLSearchParams({
+        Body: buildOtpMessage(input.code),
+        To: input.recipientPhone,
+      });
+
+      if (env.TWILIO_MESSAGING_SERVICE_SID) {
+        body.set('MessagingServiceSid', env.TWILIO_MESSAGING_SERVICE_SID);
+      } else {
+        body.set('From', env.TWILIO_FROM_NUMBER || '');
+      }
+
+      const response = await fetch(buildMessagesEndpoint(), {
+        method: 'POST',
+        headers: {
+          Authorization: buildAuthHeader(),
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body,
+      });
+
+      if (!response.ok) {
+        throw serviceUnavailable(
+          'sms_provider_failed',
+          `SMS provider rejected the request with status ${response.status}.`
+        );
+      }
+
+      const payload = (await response.json()) as { sid?: string };
+
+      return {
+        providerReference: payload.sid,
+      };
+    }
+
+    if (!env.TWILIO_VERIFY_SERVICE_SID) {
+      throw serviceUnavailable(
+        'sms_provider_misconfigured',
+        'SMS provider is missing required Verify Service configuration.'
       );
     }
 
@@ -86,7 +146,14 @@ export const smsAuthProvider = {
     if (env.SMS_PROVIDER_MODE === 'disabled') {
       throw serviceUnavailable(
         'sms_provider_disabled',
-        'SMS delivery is disabled in this environment.'
+        'SMS delivery is not available right now.'
+      );
+    }
+
+    if (env.SMS_PROVIDER_MODE !== 'twilio-verify') {
+      throw serviceUnavailable(
+        'sms_provider_misconfigured',
+        'SMS verification checks require TWILIO_VERIFY_SERVICE_SID.'
       );
     }
 

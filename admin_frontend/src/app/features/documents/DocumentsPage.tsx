@@ -1,19 +1,22 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { PaginationControls } from '../../components/shared/PaginationControls';
 import { WorkspaceState } from '../../components/shared/WorkspaceState';
 import { useAsyncResource } from '../../hooks/useAsyncResource';
 import { adminApi } from '../../lib/api/admin';
 import { DocumentsCenterAdmin } from '../../modules/DocumentsCenterAdmin';
 
 export const DocumentsPage = () => {
+  const [offset, setOffset] = useState(0);
+  const limit = 50;
   const { data, errorMessage, isLoading, refresh } = useAsyncResource(
-    () => adminApi.getDocuments(),
-    []
+    () => adminApi.getDocuments({ limit, offset }),
+    [limit, offset]
   );
 
   if (isLoading && !data) {
     return (
       <WorkspaceState
-        description="Fetching live matter and client documents from the new admin backend."
+        description="Loading matter and client documents."
         title="Loading Documents Center"
       />
     );
@@ -31,26 +34,38 @@ export const DocumentsPage = () => {
   }
 
   return (
-    <DocumentsCenterAdmin
-      documentTypes={data?.documentTypes || []}
-      documents={data?.documents || []}
-      matters={data?.matters || []}
-      buildDownloadUrl={adminApi.buildDocumentDownloadUrl}
-      buildPreviewUrl={adminApi.buildDocumentPreviewUrl}
-      onFetchDocumentDetail={adminApi.getDocumentDetail}
-      onUpdateDocument={async (documentId, payload) => {
-        await adminApi.updateDocumentControls(documentId, payload);
-        await refresh();
-      }}
-      onUploadDocument={async (payload) => {
-        await adminApi.uploadDocument(payload);
-        await refresh();
-      }}
-      onUploadVersion={async (documentId, payload) => {
-        await adminApi.uploadDocumentVersion(documentId, payload);
-        await refresh();
-      }}
-      searchQuery=""
-    />
+    <>
+      <DocumentsCenterAdmin
+        documentTypes={data?.documentTypes || []}
+        documents={data?.documents || []}
+        matters={data?.matters || []}
+        buildDownloadUrl={adminApi.buildDocumentDownloadUrl}
+        buildPreviewUrl={adminApi.buildDocumentPreviewUrl}
+        onFetchDocumentDetail={adminApi.getDocumentDetail}
+        onRescanDocument={async (documentId) => {
+          await adminApi.rescanDocument(documentId);
+          await refresh();
+        }}
+        onUpdateDocument={async (documentId, payload) => {
+          await adminApi.updateDocumentControls(documentId, payload);
+          await refresh();
+        }}
+        onUploadDocument={async (payload) => {
+          await adminApi.uploadDocument(payload);
+          setOffset(0);
+          await refresh();
+        }}
+        onUploadVersion={async (documentId, payload) => {
+          await adminApi.uploadDocumentVersion(documentId, payload);
+          await refresh();
+        }}
+        searchQuery=""
+      />
+      <PaginationControls
+        isLoading={isLoading}
+        onOffsetChange={setOffset}
+        pagination={data?.pagination}
+      />
+    </>
   );
 };

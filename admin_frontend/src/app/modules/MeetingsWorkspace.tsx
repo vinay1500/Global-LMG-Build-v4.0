@@ -39,6 +39,7 @@ interface MeetingsWorkspaceProps {
     visibleToClient?: boolean;
   }) => Promise<void>;
   onCancelEvent?: (eventId: string, reason?: string) => Promise<void>;
+  onRetryCalendarSync?: (eventId: string) => Promise<void>;
   onUpdateEvent?: (eventId: string, payload: EventMutationPayload) => Promise<void>;
 }
 
@@ -52,6 +53,7 @@ export const MeetingsWorkspace: React.FC<MeetingsWorkspaceProps> = ({
   matters = [],
   onCancelEvent,
   onCreateEvent,
+  onRetryCalendarSync,
   onUpdateEvent,
 }) => {
   const [viewMode, setViewMode] = useState<ViewMode>('agenda');
@@ -62,6 +64,7 @@ export const MeetingsWorkspace: React.FC<MeetingsWorkspaceProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isRetryingCalendarSync, setIsRetryingCalendarSync] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -190,8 +193,12 @@ export const MeetingsWorkspace: React.FC<MeetingsWorkspaceProps> = ({
     switch (event.calendarSyncStatus) {
       case 'synced':
         return 'Google Calendar synced';
+      case 'cancelled':
+        return 'Google Calendar event cancelled';
       case 'failed':
         return 'Google sync failed; event is stored locally';
+      case 'pending':
+        return 'Google Calendar sync pending';
       case 'local':
         return 'Local/manual calendar mode';
       default:
@@ -231,7 +238,7 @@ export const MeetingsWorkspace: React.FC<MeetingsWorkspaceProps> = ({
             <button 
               className="p-1.5 rounded-md flex items-center text-gray-300 cursor-not-allowed"
               disabled
-              title="Calendar grid is disabled until Google Calendar sync is implemented. Agenda is the live DB-backed view."
+              title="Calendar grid view is not implemented. Agenda is the live DB-backed view."
               type="button"
             >
               <LayoutGrid className="w-4 h-4" />
@@ -363,11 +370,11 @@ export const MeetingsWorkspace: React.FC<MeetingsWorkspaceProps> = ({
             </div>
             {draftEvent.mode === 'video' ? (
               <div className="md:col-span-2">
-                <label className="block text-xs text-gray-500 mb-1">Meeting Link</label>
+                <label className="block text-xs text-gray-500 mb-1">Manual Meeting Link</label>
                 <input
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
                   onChange={(event) => setDraftEvent((current) => ({ ...current, meetLink: event.target.value }))}
-                  placeholder="https://meet.google.com/..."
+                  placeholder="Optional; Google Meet is filled after sync when configured"
                   value={draftEvent.meetLink}
                 />
               </div>
@@ -576,7 +583,7 @@ export const MeetingsWorkspace: React.FC<MeetingsWorkspaceProps> = ({
                 <div>
                   <LayoutGrid className="w-12 h-12 text-gray-300 mx-auto mb-4" />
                   <h3 className="text-lg font-medium text-gray-900">Calendar Grid Disabled</h3>
-                  <p className="text-gray-500 mt-1 text-sm max-w-xs mx-auto">Agenda view is the live DB-backed schedule. Google Calendar grid sync is not enabled in this build.</p>
+                  <p className="text-gray-500 mt-1 text-sm max-w-xs mx-auto">Agenda view is the live DB-backed schedule. Calendar grid is a future view.</p>
                   <button onClick={() => setViewMode('agenda')} className="mt-4 text-blue-600 text-sm font-medium hover:underline">Switch to Agenda</button>
                 </div>
               </div>
@@ -713,6 +720,8 @@ export const MeetingsWorkspace: React.FC<MeetingsWorkspaceProps> = ({
                     <CheckCircle className={`w-4 h-4 ${
                       activeEvent.calendarSyncStatus === 'failed'
                         ? 'text-red-600'
+                        : activeEvent.calendarSyncStatus === 'pending'
+                          ? 'text-blue-600'
                         : activeEvent.calendarSyncStatus === 'synced'
                           ? 'text-emerald-600'
                           : 'text-gray-600'
@@ -720,8 +729,44 @@ export const MeetingsWorkspace: React.FC<MeetingsWorkspaceProps> = ({
                     <div>
                       <p className="text-sm font-medium text-gray-900">Calendar Sync</p>
                       <p className="text-xs text-gray-500">{getCalendarSyncLabel(activeEvent)}</p>
+                      <p className="mt-1 text-xs text-gray-500">
+                        Sync mode: {activeEvent.calendarOwnerEmail ? 'Workspace delegation' : 'Local/manual'}
+                      </p>
+                      {activeEvent.calendarOwnerEmail ? (
+                        <p className="mt-1 text-xs text-gray-500">Calendar owner: {activeEvent.calendarOwnerEmail}</p>
+                      ) : null}
+                      {activeEvent.googleAttendeeStatus ? (
+                        <p className="mt-1 text-xs text-gray-500">Client invite: {activeEvent.googleAttendeeStatus.replace(/_/g, ' ')}</p>
+                      ) : null}
+                      {activeEvent.calendarSyncError ? (
+                        <p className="mt-1 text-xs text-red-600">{activeEvent.calendarSyncError}</p>
+                      ) : activeEvent.calendarSyncedAt ? (
+                        <p className="mt-1 text-xs text-gray-400">Last synced {activeEvent.calendarSyncedAt}</p>
+                      ) : null}
                     </div>
                   </div>
+                  <button
+                    className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={!onRetryCalendarSync || isRetryingCalendarSync}
+                    onClick={() => {
+                      if (!onRetryCalendarSync) {
+                        return;
+                      }
+
+                      setActionError(null);
+                      setActionMessage(null);
+                      setIsRetryingCalendarSync(true);
+                      void onRetryCalendarSync(activeEvent.id)
+                        .then(() => setActionMessage('Calendar sync retried.'))
+                        .catch((error) =>
+                          setActionError(error instanceof Error ? error.message : 'Unable to retry calendar sync.')
+                        )
+                        .finally(() => setIsRetryingCalendarSync(false));
+                    }}
+                    type="button"
+                  >
+                    {isRetryingCalendarSync ? 'Retrying...' : 'Retry Sync'}
+                  </button>
                 </div>
               </div>
 

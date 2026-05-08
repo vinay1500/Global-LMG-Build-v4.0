@@ -8,7 +8,7 @@ import {
   getCareerCategoryById,
   getCareerOpeningById,
   getCareerOpeningsForCategory,
-} from '../data/careers';
+} from '../content/site/careers';
 import { buildWebPageJsonLd } from '../seo/jsonLd';
 import { NotFoundPage } from './NotFoundPage';
 

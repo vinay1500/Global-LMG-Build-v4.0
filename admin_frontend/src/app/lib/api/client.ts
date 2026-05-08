@@ -5,6 +5,7 @@ const DEFAULT_HEADERS = {
 };
 
 const CSRF_COOKIE_NAME = 'global_lmg_admin_csrf';
+const inFlightIdempotencyKeys = new Map<string, string>();
 
 export class ApiRequestError extends Error {
   public readonly code: string;
@@ -38,6 +39,47 @@ const readCookie = (name: string) => {
   return match ? decodeURIComponent(match.split('=').slice(1).join('=')) : undefined;
 };
 
+const createIdempotencyKey = () => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+};
+
+const getBodyFingerprint = (body: BodyInit | null | undefined) => {
+  if (typeof body === 'string') {
+    return body;
+  }
+
+  if (body instanceof URLSearchParams) {
+    return body.toString();
+  }
+
+  return '';
+};
+
+const attachInFlightIdempotencyKey = (
+  headers: Headers,
+  method: string,
+  url: string,
+  body: BodyInit | null | undefined
+) => {
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS' || headers.has('Idempotency-Key')) {
+    return null;
+  }
+
+  const fingerprint = `${method} ${url} ${getBodyFingerprint(body)}`;
+  const key = inFlightIdempotencyKeys.get(fingerprint) ?? createIdempotencyKey();
+  inFlightIdempotencyKeys.set(fingerprint, key);
+  headers.set('Idempotency-Key', key);
+
+  return {
+    fingerprint,
+    key,
+  };
+};
+
 export const apiRequest = async <TResponse>(
   url: string,
   init: RequestInit = {}
@@ -48,6 +90,7 @@ export const apiRequest = async <TResponse>(
   });
 
   const method = init.method?.toUpperCase() || 'GET';
+  const idempotency = attachInFlightIdempotencyKey(headers, method, url, init.body);
 
   if (method !== 'GET' && method !== 'HEAD' && !headers.has('x-csrf-token')) {
     const csrfToken = readCookie(CSRF_COOKIE_NAME);
@@ -60,6 +103,10 @@ export const apiRequest = async <TResponse>(
     credentials: 'include',
     ...init,
     headers,
+  }).finally(() => {
+    if (idempotency && inFlightIdempotencyKeys.get(idempotency.fingerprint) === idempotency.key) {
+      inFlightIdempotencyKeys.delete(idempotency.fingerprint);
+    }
   });
 
   if (!response.ok) {

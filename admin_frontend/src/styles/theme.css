@@ -206,3 +206,40 @@
     word-break: break-word;
   }
 }
+
+@media print {
+  @page {
+    margin: 18mm 14mm;
+    size: A4;
+  }
+
+  body {
+    background: #ffffff !important;
+    overflow: visible !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .admin-invoice-print-area,
+  .admin-invoice-print-area * {
+    visibility: visible !important;
+  }
+
+  .admin-invoice-print-area {
+    border: 0 !important;
+    box-shadow: none !important;
+    left: 0 !important;
+    margin: 0 auto !important;
+    max-width: 184mm !important;
+    overflow: visible !important;
+    position: absolute !important;
+    top: 0 !important;
+    width: 184mm !important;
+  }
+
+  .admin-invoice-print-area .admin-table-scroll {
+    overflow: visible !important;
+  }
+}

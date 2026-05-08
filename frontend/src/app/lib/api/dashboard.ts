@@ -6,9 +6,12 @@ import type {
   AccountChangeRequestResponse,
   ClientAccountSettingsResponse,
   InvoiceDetailResponse,
+  InvoicePaymentOrderResponse,
+  InvoicePaymentVerifyResponse,
   NotificationPreferencesResponse,
   PortalNotificationResponse,
   DashboardRequestSubmissionPayload,
+  RequestPricingConfigResponse,
   UpdateNotificationPreferencesPayload,
 } from './contracts';
 import { API_ENDPOINTS } from './endpoints';
@@ -35,27 +38,82 @@ const putJson = <TResponse>(url: string, payload: unknown) =>
 const toRequestSubmissionPayload = (
   request: RequestData,
   documentUploadIds: string[] = []
-): DashboardRequestSubmissionPayload => ({
-  ...request,
-  documentUploadIds,
-  documents: request.documents.map((file) => ({
-    name: file.name,
-    size: file.size,
-    type: file.type || 'application/octet-stream',
-  })),
-});
+): DashboardRequestSubmissionPayload => {
+  const {
+    caseDetails,
+    consultationMode,
+    documents,
+    legalDomain,
+    pastLegalAction,
+    preferredDate,
+    preferredEndAtUtc,
+    preferredStartAtUtc,
+    preferredTime,
+    preferredTimezone,
+    services,
+    urgency,
+  } = request;
+
+  return {
+    caseDetails,
+    consultationMode,
+    documentUploadIds,
+    documents: documents.map((file) => ({
+      name: file.name,
+      size: file.size,
+      type: file.type || 'application/octet-stream',
+    })),
+    legalDomain,
+    pastLegalAction,
+    preferredDate,
+    preferredEndAtUtc,
+    preferredStartAtUtc,
+    preferredTime,
+    preferredTimezone,
+    services,
+    urgency,
+  };
+};
 
 export const dashboardApi = {
   buildInvoiceDownloadUrl: (invoiceId: string) => API_ENDPOINTS.me.invoiceDownload(invoiceId),
   getSnapshot: () => apiRequest<DashboardSnapshotResponse>(API_ENDPOINTS.dashboard.snapshot()),
+  getRequestPricingConfig: () =>
+    apiRequest<RequestPricingConfigResponse>(API_ENDPOINTS.dashboard.requestConfig()),
   getInvoiceDetail: (invoiceId: string) =>
     apiRequest<InvoiceDetailResponse>(API_ENDPOINTS.me.invoiceDetail(invoiceId)),
+  createInvoicePaymentOrder: (invoiceId: string, payload: { amount?: number | null }) =>
+    postJson<InvoicePaymentOrderResponse>(API_ENDPOINTS.me.invoicePaymentOrder(invoiceId), payload),
+  verifyInvoicePayment: (
+    invoiceId: string,
+    payload: {
+      razorpay_order_id: string;
+      razorpay_payment_id: string;
+      razorpay_signature: string;
+    }
+  ) => postJson<InvoicePaymentVerifyResponse>(API_ENDPOINTS.me.invoicePaymentVerify(invoiceId), payload),
   getNotificationPreferences: () =>
     apiRequest<NotificationPreferencesResponse>(API_ENDPOINTS.me.preferences()),
   getAccountSettings: () =>
     apiRequest<ClientAccountSettingsResponse>(API_ENDPOINTS.me.accountSettings()),
-  updateAccountContact: (payload: { whatsappNumber: string; whatsappSameAsMobile: boolean }) =>
-    apiRequest<ClientAccountSettingsResponse>(API_ENDPOINTS.me.accountContact(), {
+  updateAccountAddress: (payload: {
+    city: string;
+    country: string;
+    line1: string;
+    line2?: string;
+    postalCode: string;
+    sourceCode?: 'google' | 'ip_prefill' | 'manual';
+    state: string;
+    googlePlaceId?: string | null;
+    validationStatusCode?: 'manual' | 'unverified' | 'verified';
+  }) =>
+    apiRequest<ClientAccountSettingsResponse>(API_ENDPOINTS.me.accountAddress(), {
+      body: JSON.stringify(payload),
+      headers: { 'Content-Type': 'application/json' },
+      method: 'PATCH',
+    }),
+  updateAccountName: (payload: { name: string }) =>
+    apiRequest<ClientAccountSettingsResponse>(API_ENDPOINTS.me.accountName(), {
       body: JSON.stringify(payload),
       headers: { 'Content-Type': 'application/json' },
       method: 'PATCH',

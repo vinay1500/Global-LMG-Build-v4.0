@@ -6,16 +6,14 @@ import {
   ChevronRight, MoreVertical, X, User, Briefcase, IndianRupee,
   Phone, Video, ShieldAlert, Archive
 } from 'lucide-react';
-import { 
-  formatCurrency,
-  formatDate,
-  formatDateTime,
-  type ChatMessage,
-  type Invoice,
-  type Matter,
-  type MessageThread,
-  type PlatformEvent,
-  type PlatformUser,
+import { formatCurrency, formatDate, formatDateTime } from '../data/formatters';
+import type {
+  ChatMessage,
+  Invoice,
+  Matter,
+  MessageThread,
+  PlatformEvent,
+  PlatformUser,
 } from '../data/seedData';
 import type { AdminTemplate } from '../lib/api/contracts';
 import { StatusBadge, UrgencyDot } from '../components/dashboard/StatusBadge';

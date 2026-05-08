@@ -84,6 +84,7 @@ export const MatterDetailSection = ({
     activeProposalPackages.length > 0 &&
     !activeProposalPackages.some((entry) => entry.id === selectedPackage?.id);
   const safePreviewTypes = new Set(['CSV', 'GIF', 'JPG', 'JPEG', 'PDF', 'PNG', 'TXT', 'WEBP']);
+  const matterCurrencyCode = selectedMatter.currencyCode || matterInvoices[0]?.currencyCode || 'USD';
 
   return (
     <div className="space-y-6">
@@ -224,7 +225,7 @@ export const MatterDetailSection = ({
                         </div>
 
                         <div className="mb-5 text-2xl font-semibold text-gray-900">
-                          {formatCurrency(pkg.price)}
+                          {formatCurrency(pkg.price, pkg.currencyCode || matterCurrencyCode)}
                         </div>
 
                         <div className="flex-1 space-y-2">
@@ -336,6 +337,9 @@ export const MatterDetailSection = ({
                         <ExternalLink className="h-3 w-3" /> Join Call
                       </a>
                     )}
+                    {event.googleAttendeeStatus === 'invited' && (
+                      <p className="text-xs text-gray-400">Google Calendar invite sent to your email.</p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -348,16 +352,16 @@ export const MatterDetailSection = ({
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-500">Total Fee</span>
-                  <span>{formatCurrency(selectedMatter.totalFee)}</span>
+                  <span>{formatCurrency(selectedMatter.totalFee, matterCurrencyCode)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Paid</span>
-                  <span className="text-emerald-600">{formatCurrency(selectedMatter.paidAmount)}</span>
+                  <span className="text-emerald-600">{formatCurrency(selectedMatter.paidAmount, matterCurrencyCode)}</span>
                 </div>
                 <div className="flex justify-between border-t border-gray-200 pt-2">
                   <span className="text-gray-500">Due</span>
                   <span className={selectedMatter.dueAmount > 0 ? 'text-amber-600' : 'text-emerald-600'}>
-                    {formatCurrency(selectedMatter.dueAmount)}
+                    {formatCurrency(selectedMatter.dueAmount, matterCurrencyCode)}
                   </span>
                 </div>
               </div>
@@ -377,7 +381,7 @@ export const MatterDetailSection = ({
                 <h3 className="text-xs uppercase tracking-wider text-gray-400">Selected Package</h3>
                 <p className="text-sm font-medium text-gray-900">{selectedPackage.name}</p>
                 <p className="text-xs text-gray-500">
-                  Proposal v{selectedPackage.proposalVersion} · {formatCurrency(selectedPackage.price)}
+                  Proposal v{selectedPackage.proposalVersion} · {formatCurrency(selectedPackage.price, selectedPackage.currencyCode || matterCurrencyCode)}
                 </p>
                 {selectedPackage.selectedAt && (
                   <p className="text-xs text-gray-500">
@@ -387,18 +391,52 @@ export const MatterDetailSection = ({
               </div>
             )}
 
-            {selectedMatter.assignedCounsel && (
+            {selectedMatter.assignments?.some((entry) => entry.type === 'external_counsel') ? (
+              <div className="space-y-2 rounded-xl bg-gray-50 p-4">
+                <h3 className="text-xs uppercase tracking-wider text-gray-400">External Counsel Contact</h3>
+                <div className="space-y-1 text-sm">
+                  {selectedMatter.assignments
+                    .filter((entry) => entry.type === 'external_counsel')
+                    .map((entry) => (
+                      <p key={entry.id}>{entry.name}</p>
+                    ))}
+                </div>
+              </div>
+            ) : selectedMatter.assignedCounsel ? (
               <div className="space-y-2 rounded-xl bg-gray-50 p-4">
                 <h3 className="text-xs uppercase tracking-wider text-gray-400">External Counsel Contact</h3>
                 <p className="text-sm">{selectedMatter.assignedCounsel}</p>
               </div>
-            )}
-            {selectedMatter.assignedStaff && (
+            ) : null}
+            {selectedMatter.assignments?.some((entry) => entry.type === 'internal_staff') ? (
+              <div className="space-y-2 rounded-xl bg-gray-50 p-4">
+                <h3 className="text-xs uppercase tracking-wider text-gray-400">Coordination Contact</h3>
+                <div className="space-y-1 text-sm">
+                  {selectedMatter.assignments
+                    .filter((entry) => entry.type === 'internal_staff')
+                    .map((entry) => (
+                      <p key={entry.id}>{entry.name}</p>
+                    ))}
+                </div>
+              </div>
+            ) : selectedMatter.assignedStaff ? (
               <div className="space-y-2 rounded-xl bg-gray-50 p-4">
                 <h3 className="text-xs uppercase tracking-wider text-gray-400">Coordination Contact</h3>
                 <p className="text-sm">{selectedMatter.assignedStaff}</p>
               </div>
-            )}
+            ) : null}
+            {selectedMatter.assignments?.some((entry) => entry.type === 'field_partner') ? (
+              <div className="space-y-2 rounded-xl bg-gray-50 p-4">
+                <h3 className="text-xs uppercase tracking-wider text-gray-400">Field Support Contact</h3>
+                <div className="space-y-1 text-sm">
+                  {selectedMatter.assignments
+                    .filter((entry) => entry.type === 'field_partner')
+                    .map((entry) => (
+                      <p key={entry.id}>{entry.name}</p>
+                    ))}
+                </div>
+              </div>
+            ) : null}
 
             <div className="space-y-2 rounded-xl bg-gray-50 p-4">
               <h3 className="text-xs uppercase tracking-wider text-gray-400">Details</h3>
@@ -422,7 +460,7 @@ export const MatterDetailSection = ({
                     >
                       {invoice.id}
                     </button>
-                    <span>{formatCurrency(invoice.totalAmount)}</span>
+                    <span>{formatCurrency(invoice.totalAmount, invoice.currencyCode)}</span>
                     <div className="flex items-center gap-2">
                       <StatusBadge status={invoice.status} />
                       <button

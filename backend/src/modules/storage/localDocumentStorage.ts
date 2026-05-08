@@ -12,6 +12,8 @@ const sanitizeFilename = (value: string) => {
 };
 
 export class LocalDocumentStorage {
+  public readonly driverCode = 'local' as const;
+
   public constructor(private readonly rootDirectory: string) {}
 
   private resolvePath(storageKey: string) {
@@ -50,5 +52,9 @@ export class LocalDocumentStorage {
     await fs.rename(tempPath, absolutePath);
 
     return absolutePath;
+  }
+
+  public async readBuffer(storageKey: string) {
+    return fs.readFile(this.resolvePath(storageKey));
   }
 }

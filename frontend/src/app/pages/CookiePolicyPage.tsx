@@ -1,7 +1,7 @@
 import React from 'react';
 import { LegalDocumentPage } from '../components/legal/LegalDocumentPage';
 import { Seo } from '../components/seo/Seo';
-import { COOKIE_POLICY_DOCUMENT } from '../data/legalContent';
+import { COOKIE_POLICY_DOCUMENT } from '../content/site/legal';
 import { buildWebPageJsonLd } from '../seo/jsonLd';
 
 export const CookiePolicyPage = () => {

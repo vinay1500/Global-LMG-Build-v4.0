@@ -2,6 +2,7 @@ import type { RowDataPacket } from 'mysql2/promise';
 import { notFound } from '../../lib/httpErrors.js';
 import { executeStatement, queryRows } from '../../lib/mysql.js';
 import { toUiDateTime } from '../../lib/viewModels.js';
+import { buildPaginationMeta, normalizePagination } from '../shared.js';
 
 type NotificationRow = RowDataPacket & {
   bodyText: string;
@@ -89,7 +90,12 @@ const getNotificationRecord = async (notificationId: string) => {
   return row;
 };
 
-export const listNotifications = async (options: { limit?: number } = {}) => {
+export const listNotifications = async (options: { limit?: number; offset?: number } = {}) => {
+  const pagination = normalizePagination(options);
+  const totalRows = await queryRows<RowDataPacket & { total: number }>(
+    `SELECT COUNT(*) AS total
+     FROM notifications`
+  );
   const rows = await queryRows<NotificationRow>(
     `SELECT
        n.public_id AS id,
@@ -134,8 +140,8 @@ export const listNotifications = async (options: { limit?: number } = {}) => {
      LEFT JOIN matters doc_matter ON doc_matter.id = md.matter_id
      LEFT JOIN client_accounts document_client ON document_client.id = doc.owner_client_account_id
      ORDER BY n.created_at DESC
-     LIMIT ?`,
-    [Math.max(1, Math.min(options.limit ?? 100, 250))]
+     LIMIT ? OFFSET ?`,
+    [pagination.limit, pagination.offset]
   );
 
   return {
@@ -159,6 +165,7 @@ export const listNotifications = async (options: { limit?: number } = {}) => {
         | 'proposal'
         | 'system',
     })),
+    pagination: buildPaginationMeta(pagination, Number(totalRows[0]?.total || 0)),
   };
 };
 

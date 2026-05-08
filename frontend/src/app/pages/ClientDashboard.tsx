@@ -38,6 +38,67 @@ import { dashboardApi } from '../lib/api/dashboard';
 import { uploadsApi } from '../lib/api/uploads';
 import { buildWebPageJsonLd } from '../seo/jsonLd';
 
+type RazorpayCheckoutResponse = {
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+};
+
+type RazorpayCheckoutOptions = {
+  amount: number;
+  currency: string;
+  description: string;
+  handler: (response: RazorpayCheckoutResponse) => void | Promise<void>;
+  key: string;
+  modal?: {
+    ondismiss?: () => void;
+  };
+  name: string;
+  order_id: string;
+  prefill?: {
+    contact?: string | null;
+    email?: string;
+    name?: string;
+  };
+  theme?: {
+    color?: string;
+  };
+};
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: RazorpayCheckoutOptions) => { open: () => void };
+  }
+}
+
+let razorpayCheckoutScript: Promise<void> | null = null;
+
+const loadRazorpayCheckout = () => {
+  if (typeof window === 'undefined') {
+    return Promise.reject(new Error('Online checkout is unavailable in this environment.'));
+  }
+
+  if (window.Razorpay) {
+    return Promise.resolve();
+  }
+
+  if (!razorpayCheckoutScript) {
+    razorpayCheckoutScript = new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script');
+      script.async = true;
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.onload = () => resolve();
+      script.onerror = () => {
+        razorpayCheckoutScript = null;
+        reject(new Error('Online checkout could not be loaded. Please try again.'));
+      };
+      document.body.appendChild(script);
+    });
+  }
+
+  return razorpayCheckoutScript;
+};
+
 const DASHBOARD_TAB_IDS = [
   'dashboard',
   'cases',
@@ -259,8 +320,7 @@ export const ClientDashboard = () => {
           'verification-scheduled',
           'new-lead',
         ].includes(matter.operationalStatus)) ||
-      (caseFilter === 'immediate' &&
-        (matter.urgency === 'within-6hrs' || matter.urgency === 'within-2hrs')) ||
+        (caseFilter === 'immediate' && matter.urgency !== 'standard') ||
       (caseFilter === 'awaiting' &&
         (matter.operationalStatus === 'awaiting-client' ||
           matter.operationalStatus === 'fee-pending')) ||
@@ -289,7 +349,7 @@ export const ClientDashboard = () => {
     setSelectedMatter(matter);
   };
 
-  // Messaging and request submission are the two mutating actions in the server-backed portal shell.
+  // Messaging and request submission are the two mutating actions in the portal shell.
   const handleOpenMessages = (threadId: string | null) => {
     handleTabChange('messages');
     setSelectedMatter(null);
@@ -361,6 +421,15 @@ export const ClientDashboard = () => {
     setCaseFilter('all');
   };
 
+  const handleOpenNewRequest = () => {
+    if (!accountSettings && !isLoadingAccountSettings) {
+      void loadAccountSettings().finally(() => setShowNewRequest(true));
+      return;
+    }
+
+    setShowNewRequest(true);
+  };
+
   const handleSendMessage = async () => {
     const activeThreadId = selectedThread || myThreads[0]?.id;
 
@@ -399,6 +468,51 @@ export const ClientDashboard = () => {
   const handleDownloadInvoice = (invoiceId: string) => {
     const downloadUrl = dashboardApi.buildInvoiceDownloadUrl(invoiceId);
     window.open(downloadUrl, '_blank', 'noopener');
+  };
+
+  const handlePayInvoiceOnline = async (invoiceId: string, amount?: number | null) => {
+    const order = await dashboardApi.createInvoicePaymentOrder(invoiceId, { amount });
+    await loadRazorpayCheckout();
+
+    const RazorpayCheckout = window.Razorpay;
+    if (!RazorpayCheckout) {
+      throw new Error('Online checkout is unavailable. Please try again.');
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const checkout = new RazorpayCheckout({
+        amount: order.amountMinor,
+        currency: order.currencyCode,
+        description: `Invoice ${order.invoiceNumber}`,
+        handler: async (checkoutResponse) => {
+          try {
+            await dashboardApi.verifyInvoicePayment(invoiceId, checkoutResponse);
+            const nextInvoice = await dashboardApi.getInvoiceDetail(invoiceId);
+            setInvoiceDetail(nextInvoice);
+            await reloadDashboard();
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        },
+        key: order.keyId,
+        modal: {
+          ondismiss: () => reject(new Error('Payment window closed before completion.')),
+        },
+        name: BRAND_NAME,
+        order_id: order.orderId,
+        prefill: {
+          contact: order.customer.phone,
+          email: order.customer.email,
+          name: order.customer.name,
+        },
+        theme: {
+          color: '#111827',
+        },
+      });
+
+      checkout.open();
+    });
   };
 
   const handleOpenMatterFromInvoice = (matterId: string | null) => {
@@ -476,7 +590,7 @@ export const ClientDashboard = () => {
             Loading your dashboard
           </h1>
           <p className="mt-3 text-sm text-gray-500">
-            We are fetching your matters, documents, billing, and messages from the portal API.
+            We are loading your matters, documents, billing, and messages.
           </p>
         </div>
       </div>
@@ -516,6 +630,7 @@ export const ClientDashboard = () => {
           onBack={handleCloseInvoice}
           onDownloadInvoice={handleDownloadInvoice}
           onOpenMatter={handleOpenMatterFromInvoice}
+          onPayOnline={handlePayInvoiceOnline}
         />
       );
     }
@@ -548,13 +663,14 @@ export const ClientDashboard = () => {
         return (
           <DashboardOverviewSection
             user={user}
+            billingCountryCode={accountSettings?.account.address.countryCode || user.countryCode}
             activeMatters={activeMatters}
             myEvents={myEvents}
             totalUnread={totalUnread}
             myInvoices={myInvoices}
             myMatters={myMatters}
             myThreads={myThreads}
-            onOpenNewRequest={() => setShowNewRequest(true)}
+            onOpenNewRequest={handleOpenNewRequest}
             onOpenBilling={() => handleTabChange('billing')}
             onViewAllCases={() => handleTabChange('cases')}
             onSelectMatter={handleSelectMatter}
@@ -569,7 +685,7 @@ export const ClientDashboard = () => {
             caseFilter={caseFilter}
             onSearchQueryChange={setSearchQuery}
             onCaseFilterChange={setCaseFilter}
-            onOpenNewRequest={() => setShowNewRequest(true)}
+            onOpenNewRequest={handleOpenNewRequest}
             onSelectMatter={handleSelectMatter}
           />
         );
@@ -682,8 +798,14 @@ export const ClientDashboard = () => {
             onRefreshAccountSettings={loadAccountSettings}
             onRequestEmailChange={(payload) => dashboardApi.requestEmailChange(payload)}
             onRequestPhoneChange={(payload) => dashboardApi.requestPhoneChange(payload)}
-            onUpdateWhatsApp={async (payload) => {
-              const nextSettings = await dashboardApi.updateAccountContact(payload);
+            onUpdateName={async (payload) => {
+              const nextSettings = await dashboardApi.updateAccountName(payload);
+              setAccountSettings(nextSettings);
+              await reloadDashboard();
+              return nextSettings;
+            }}
+            onUpdateAddress={async (payload) => {
+              const nextSettings = await dashboardApi.updateAccountAddress(payload);
               setAccountSettings(nextSettings);
               await reloadDashboard();
               return nextSettings;
@@ -822,7 +944,7 @@ export const ClientDashboard = () => {
               <button
                 type="button"
                 onClick={() => {
-                  setShowNewRequest(true);
+                  handleOpenNewRequest();
                   setSidebarOpen(false);
                 }}
                 className="flex w-full items-center gap-3 rounded-xl border border-dashed border-gray-200 px-4 py-2.5 text-sm text-gray-600 transition hover:border-gray-300 hover:bg-gray-50"
@@ -868,10 +990,15 @@ export const ClientDashboard = () => {
           <NewRequestWizard
             isOpen={showNewRequest}
             onClose={() => setShowNewRequest(false)}
+            onOpenSettings={() => {
+              setShowNewRequest(false);
+              handleTabChange('settings');
+            }}
             onSubmit={handleNewRequestSubmit}
-            userName={user.name}
-            userEmail={user.email}
-            userMobile={user.phone}
+            userName={accountSettings?.account.name || user.name}
+            userEmail={accountSettings?.account.email || user.email}
+            userMobile={accountSettings?.account.mobileNumber || accountSettings?.account.phone || user.phone}
+            billingCountryCode={accountSettings?.account.address.countryCode || user.countryCode}
           />
         )}
       </AnimatePresence>

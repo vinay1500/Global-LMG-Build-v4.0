@@ -39,6 +39,17 @@ export interface AdminPasswordChangeResponse {
   user: AdminSessionUser;
 }
 
+export interface AdminPasswordResetRequestResponse {
+  deliveryMode: 'email' | 'manual';
+  message: string;
+  status: 'password_reset_requested';
+}
+
+export interface AdminPasswordResetConfirmResponse {
+  message: string;
+  status: 'password_reset_completed';
+}
+
 export interface AdminAccountProfile {
   avatarUrl: string | null;
   city: string;
@@ -103,8 +114,16 @@ export interface ClientListItem extends PlatformUser {
   totalDue: number;
 }
 
+export interface PaginationMeta {
+  hasMore: boolean;
+  limit: number;
+  offset: number;
+  total: number;
+}
+
 export interface ClientsListResponse {
   clients: ClientListItem[];
+  pagination?: PaginationMeta;
 }
 
 export interface CreateClientPayload {
@@ -161,7 +180,7 @@ export interface MatterCreateOptions {
   consultationModes: Array<{ code: string; label: string }>;
   domains: Array<{ code: string; name: string }>;
   priorities: Array<{ code: string; label: string }>;
-  services: Array<{ code: string; domainCode: string; domainName: string; name: string }>;
+  services: Array<{ code: string; domainCode?: string; domainName?: string; name: string }>;
   stages: Array<{ code: string; label: string }>;
   statuses: Array<{ code: string; label: string }>;
   urgencyRules: Array<{ code: string; label: string }>;
@@ -190,13 +209,34 @@ export interface CreateMatterResponse {
 export interface MattersListResponse {
   createOptions?: MatterCreateOptions;
   matters: Matter[];
+  pagination?: PaginationMeta;
 }
 
 export interface MatterWorkspaceResponse {
   assignmentOptions: {
-    counsel: Array<{ id: string; name: string; type?: 'external_counsel' | 'field_partner' }>;
-    staff: Array<{ id: string; name: string }>;
+    counsel: Array<{
+      city?: string | null;
+      country?: string | null;
+      email?: string | null;
+      id: string;
+      name: string;
+      phone?: string | null;
+      specialization?: string | null;
+      state?: string | null;
+      type?: 'external_counsel' | 'field_partner';
+    }>;
+    staff: Array<{
+      city?: string | null;
+      country?: string | null;
+      email?: string | null;
+      id: string;
+      name: string;
+      phone?: string | null;
+      specialization?: string | null;
+      state?: string | null;
+    }>;
   };
+  createOptions?: MatterCreateOptions;
   documents: PlatformDocument[];
   events: PlatformEvent[];
   invoices: Invoice[];
@@ -254,6 +294,7 @@ export interface DocumentsListResponse {
   documentTypes?: SettingsDocumentType[];
   documents: PlatformDocument[];
   matters: Matter[];
+  pagination?: PaginationMeta;
 }
 
 export interface AdminDocumentVersion {
@@ -266,6 +307,9 @@ export interface AdminDocumentVersion {
   originalFileName: string;
   retentionHold: boolean;
   reviewState: 'reviewed' | 'unreviewed';
+  scanCheckedAt: string | null;
+  scanError: string | null;
+  scanProvider: string | null;
   uploadedAt: string;
   uploadedBy: string;
   versionNo: number;
@@ -351,6 +395,7 @@ export interface MessagesWorkspaceResponse {
   invoices: Invoice[];
   matters: Matter[];
   messages: ChatMessage[];
+  pagination?: PaginationMeta;
   threads: MessageThread[];
 }
 
@@ -392,6 +437,7 @@ export interface BillingWorkspaceResponse {
   invoices: Invoice[];
   invoiceSettings: InvoiceSettings;
   matters: Matter[];
+  pagination?: PaginationMeta;
   payments: Payment[];
   refunds: RefundRecord[];
 }
@@ -424,10 +470,12 @@ export interface EventsWorkspaceResponse {
   clients: PlatformUser[];
   events: PlatformEvent[];
   matters: Matter[];
+  pagination?: PaginationMeta;
 }
 
 export interface NotificationsListResponse {
   notifications: SystemNotification[];
+  pagination?: PaginationMeta;
 }
 
 export interface ReminderQueueItem {
@@ -483,6 +531,7 @@ export interface ReminderRetryResponse {
 
 export interface AuditEntriesResponse {
   entries: AuditEntry[];
+  pagination?: PaginationMeta;
 }
 
 export interface SearchResultItem {
@@ -655,8 +704,13 @@ export interface ReportDrilldownResponse {
 
 export interface InvoiceSettings {
   billingDisplayName: string;
+  businessAddress: string | null;
+  businessEmail: string | null;
   businessLegalName: string;
+  businessPhone: string | null;
   businessState: string;
+  businessWebsite: string | null;
+  defaultInvoiceTemplateId: string | null;
   defaultGstRateBps: number;
   defaultGstRatePercent: number;
   defaultSacCode: string | null;
@@ -665,6 +719,8 @@ export interface InvoiceSettings {
   gstin: string | null;
   invoiceFooter: string | null;
   invoicePrefix: string;
+  invoiceTerms: string | null;
+  paymentInstructions: string | null;
   paymentTermsDays: number;
   pricesIncludeTax: boolean;
   reverseChargeNote: string | null;
@@ -673,8 +729,13 @@ export interface InvoiceSettings {
 
 export type UpdateInvoiceSettingsPayload = Partial<{
   billingDisplayName: string;
+  businessAddress: string | null;
+  businessEmail: string | null;
   businessLegalName: string;
+  businessPhone: string | null;
   businessState: string;
+  businessWebsite: string | null;
+  defaultInvoiceTemplateId: string | null;
   defaultGstRatePercent: number;
   defaultSacCode: string | null;
   fallbackTaxType: InvoiceSettings['fallbackTaxType'];
@@ -682,10 +743,47 @@ export type UpdateInvoiceSettingsPayload = Partial<{
   gstin: string | null;
   invoiceFooter: string | null;
   invoicePrefix: string;
+  invoiceTerms: string | null;
+  paymentInstructions: string | null;
   paymentTermsDays: number;
   pricesIncludeTax: boolean;
   reverseChargeNote: string | null;
   taxMode: InvoiceSettings['taxMode'];
+}>;
+
+export interface InvoicePdfTemplate {
+  archivedAt: string | null;
+  contentBottomMargin: number;
+  contentLeftMargin: number;
+  contentRightMargin: number;
+  contentTopMargin: number;
+  createdAt: string;
+  fileSizeBytes: number;
+  id: string;
+  isActive: boolean;
+  name: string;
+  originalFileName: string;
+  updatedAt: string;
+}
+
+export type InvoicePdfTemplateUploadPayload = {
+  contentBase64: string;
+  contentBottomMargin?: number;
+  contentLeftMargin?: number;
+  contentRightMargin?: number;
+  contentTopMargin?: number;
+  name: string;
+  originalFileName: string;
+  setActive?: boolean;
+};
+
+export type InvoicePdfTemplateUpdatePayload = Partial<{
+  contentBottomMargin: number;
+  contentLeftMargin: number;
+  contentRightMargin: number;
+  contentTopMargin: number;
+  isActive: boolean;
+  name: string;
 }>;
 
 export type PlatformSettingValue = boolean | number | string | null;
@@ -724,8 +822,8 @@ export interface SettingsService {
   baseFee: number;
   code: string;
   description: string;
-  domainCode: string;
-  domainName: string;
+  domainCode?: string;
+  domainName?: string;
   icon: string;
   id: string;
   isActive: boolean;
@@ -745,14 +843,21 @@ export interface SettingsPricingSlab {
 }
 
 export interface SettingsUrgencyRule {
+  allowInPerson: boolean;
+  allowPhone: boolean;
+  allowVideo: boolean;
+  allowedConsultationModes?: string[];
   code: string;
   id: string;
   isActive: boolean;
   label: string;
+  maxResponseHours: number | null;
+  minResponseHours: number | null;
   responseWindowHours: number | null;
   sortOrder: number;
   surchargeType: 'flat' | 'percent' | string;
   surchargeValue: number;
+  timingLabel: string;
 }
 
 export interface SettingsConsultationMode {
@@ -775,6 +880,29 @@ export interface SettingsCountryPricing {
   multiplier: number;
 }
 
+export type PricingSubjectType = 'consultation_mode' | 'service' | 'urgency';
+
+export interface SettingsPriceOverride {
+  countryCode: string;
+  countryName: string;
+  currencyCode: string;
+  id: string;
+  isActive: boolean;
+  priceAmount: number;
+  subjectCode: string;
+  subjectType: PricingSubjectType;
+}
+
+export interface SettingsExchangeRate {
+  baseCurrency: string;
+  fetchedAt: string;
+  id: string;
+  provider: string;
+  quoteCurrency: string;
+  rate: number;
+  rateDate: string;
+}
+
 export interface ServiceCatalogResponse {
   domains: SettingsServiceDomain[];
   services: SettingsService[];
@@ -783,7 +911,8 @@ export interface ServiceCatalogResponse {
 export interface PricingRulesResponse {
   consultationModes: SettingsConsultationMode[];
   countryPricing: SettingsCountryPricing[];
-  serviceSlabs: SettingsPricingSlab[];
+  exchangeRates: SettingsExchangeRate[];
+  priceOverrides: SettingsPriceOverride[];
   urgencyRules: SettingsUrgencyRule[];
 }
 
@@ -791,7 +920,7 @@ export interface CreateServiceCatalogPayload {
   baseFee?: number;
   code?: string;
   description?: string | null;
-  domainCode: string;
+  domainCode?: string | null;
   icon?: string | null;
   isActive?: boolean;
   name: string;
@@ -811,13 +940,19 @@ export interface PricingSlabPayload {
 }
 
 export interface UrgencyRulePayload {
+  allowInPerson?: boolean;
+  allowPhone?: boolean;
+  allowVideo?: boolean;
   code?: string;
   isActive?: boolean;
   label: string;
+  maxResponseHours?: number | null;
+  minResponseHours?: number | null;
   responseWindowHours?: number | null;
   sortOrder?: number;
   surchargeType: 'flat' | 'percent';
   surchargeValue: number;
+  timingLabel?: string | null;
 }
 
 export type UpdateUrgencyRulePayload = Partial<Omit<UrgencyRulePayload, 'code'>>;
@@ -844,6 +979,18 @@ export interface CountryPricingPayload {
 }
 
 export type UpdateCountryPricingPayload = Partial<Omit<CountryPricingPayload, 'countryCode'>>;
+
+export interface PriceOverridePayload {
+  countryCode: string;
+  countryName?: string;
+  currencyCode: string;
+  isActive?: boolean;
+  priceAmount: number;
+  subjectCode: string;
+  subjectType: PricingSubjectType;
+}
+
+export type UpdatePriceOverridePayload = Partial<Omit<PriceOverridePayload, 'subjectCode' | 'subjectType'>>;
 
 export type TemplateType = 'document_checklist' | 'general' | 'invoice' | 'message' | 'notification';
 
@@ -1021,6 +1168,7 @@ export interface SettingsWorkspaceResponse {
     invoiceStatuses: Array<{ code: string; label: string }>;
     latestInvoiceNumber: string | null;
     nextInvoiceNumber: string | null;
+    pdfTemplates: InvoicePdfTemplate[];
     settings: InvoiceSettings;
     taxRates: Array<{
       code: string;
@@ -1036,7 +1184,10 @@ export interface SettingsWorkspaceResponse {
   notificationSettings: NotificationSettingsResponse;
   platformSettings: PlatformSetting[];
   pricingRules: {
-    serviceSlabs: SettingsPricingSlab[];
+    consultationModes: SettingsConsultationMode[];
+    countryPricing: SettingsCountryPricing[];
+    exchangeRates: SettingsExchangeRate[];
+    priceOverrides: SettingsPriceOverride[];
     urgencyRules: SettingsUrgencyRule[];
   };
   rbac: {

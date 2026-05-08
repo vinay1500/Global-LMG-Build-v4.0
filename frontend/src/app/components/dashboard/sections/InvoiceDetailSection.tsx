@@ -1,5 +1,5 @@
-import React from 'react';
-import { ArrowLeft, Download, FileText, ReceiptIndianRupee } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { ArrowLeft, CreditCard, Download, FileText, Loader2, ReceiptIndianRupee } from 'lucide-react';
 import { StatusBadge } from '../StatusBadge';
 import { formatCurrency, formatDate } from '../../../utils/dashboardFormatting';
 import type { InvoiceDetailResponse } from '../../../lib/api/contracts';
@@ -11,6 +11,7 @@ interface InvoiceDetailSectionProps {
   onBack: () => void;
   onDownloadInvoice: (invoiceId: string) => void;
   onOpenMatter: (matterId: string | null) => void;
+  onPayOnline: (invoiceId: string, amount?: number | null) => Promise<void>;
 }
 
 export const InvoiceDetailSection = ({
@@ -20,7 +21,23 @@ export const InvoiceDetailSection = ({
   onBack,
   onDownloadInvoice,
   onOpenMatter,
+  onPayOnline,
 }: InvoiceDetailSectionProps) => {
+  const [paymentError, setPaymentError] = useState<string | null>(null);
+  const [paymentMessage, setPaymentMessage] = useState<string | null>(null);
+  const [paymentSelection, setPaymentSelection] = useState<'full' | 'installment'>('full');
+  const [isPayingOnline, setIsPayingOnline] = useState(false);
+  const selectedPaymentAmount = useMemo(() => {
+    if (!invoice) {
+      return null;
+    }
+
+    if (paymentSelection === 'installment' && invoice.paymentOptions.allowsPartial) {
+      return invoice.paymentOptions.minimumPaymentAmount;
+    }
+
+    return invoice.amountDue;
+  }, [invoice, paymentSelection]);
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -36,7 +53,7 @@ export const InvoiceDetailSection = ({
             Loading invoice
           </h1>
           <p className="mt-3 text-sm text-gray-500">
-            We are fetching the invoice detail from the portal API.
+            We are loading the invoice details.
           </p>
         </div>
       </div>
@@ -65,6 +82,26 @@ export const InvoiceDetailSection = ({
     );
   }
 
+  const currencyCode = invoice.currencyCode || 'USD';
+  const canPayOnline =
+    invoice.paymentOptions.onlineEnabled && invoice.amountDue > 0 && !['paid', 'void', 'draft'].includes(invoice.statusCode);
+  const paymentAmount = selectedPaymentAmount ?? invoice.amountDue;
+
+  const handlePayOnline = async () => {
+    setPaymentError(null);
+    setPaymentMessage(null);
+    setIsPayingOnline(true);
+
+    try {
+      await onPayOnline(invoice.id, paymentAmount);
+      setPaymentMessage('Payment confirmed. Your invoice balance has been updated.');
+    } catch (error) {
+      setPaymentError(error instanceof Error ? error.message : 'We could not complete the online payment.');
+    } finally {
+      setIsPayingOnline(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <button
@@ -80,13 +117,18 @@ export const InvoiceDetailSection = ({
           <div>
             <div className="mb-1 flex flex-wrap items-center gap-2">
               <h1 className="text-xl" style={{ fontFamily: "'Playfair Display', serif" }}>
-                {invoice.invoiceNumber}
+                {invoice.template?.subject || invoice.invoiceNumber}
               </h1>
               <StatusBadge status={invoice.statusCode} size="md" />
             </div>
             <p className="text-sm text-gray-500">
               Issued {formatDate(invoice.issueDate)} · Due {formatDate(invoice.dueDate)}
             </p>
+            {invoice.template?.body ? (
+              <p className="mt-4 max-w-2xl whitespace-pre-line text-sm text-gray-600">
+                {invoice.template.body}
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
             {invoice.matterId && (
@@ -112,22 +154,22 @@ export const InvoiceDetailSection = ({
           {[
             {
               label: 'Subtotal',
-              value: formatCurrency(invoice.subtotalAmount),
+              value: formatCurrency(invoice.subtotalAmount, currencyCode),
               tone: 'text-gray-900',
             },
             {
               label: 'Tax',
-              value: formatCurrency(invoice.taxAmount),
+              value: formatCurrency(invoice.taxAmount, currencyCode),
               tone: 'text-sky-700',
             },
             {
               label: 'Paid',
-              value: formatCurrency(invoice.amountPaid),
+              value: formatCurrency(invoice.amountPaid, currencyCode),
               tone: 'text-emerald-600',
             },
             {
               label: 'Due',
-              value: formatCurrency(invoice.amountDue),
+              value: formatCurrency(invoice.amountDue, currencyCode),
               tone: invoice.amountDue > 0 ? 'text-amber-600' : 'text-emerald-600',
             },
           ].map((card) => (
@@ -173,10 +215,10 @@ export const InvoiceDetailSection = ({
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-600">{line.quantity}</td>
                         <td className="px-4 py-3 text-sm text-gray-600">
-                          {formatCurrency(line.unitPrice)}
+                          {formatCurrency(line.unitPrice, currencyCode)}
                         </td>
                         <td className="px-4 py-3 text-sm text-gray-900">
-                          {formatCurrency(line.lineTotal)}
+                          {formatCurrency(line.lineTotal, currencyCode)}
                         </td>
                       </tr>
                     ))}
@@ -199,18 +241,38 @@ export const InvoiceDetailSection = ({
                           Installment {installment.installmentNo} · {formatDate(installment.dueDate)}
                         </p>
                         <p className="text-xs text-gray-400">
-                          Paid {formatCurrency(installment.amountPaid)} · Remaining{' '}
-                          {formatCurrency(installment.amountRemaining)}
+                          Paid {formatCurrency(installment.amountPaid, currencyCode)} · Remaining{' '}
+                          {formatCurrency(installment.amountRemaining, currencyCode)}
                         </p>
                       </div>
                       <div className="flex items-center gap-3">
                         <StatusBadge status={installment.statusCode} />
                         <span className="text-sm text-gray-900">
-                          {formatCurrency(installment.amountDue)}
+                          {formatCurrency(installment.amountDue, currencyCode)}
                         </span>
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {(invoice.template?.terms || invoice.template?.footer) && (
+              <div className="rounded-xl border border-gray-100 bg-white p-4 shadow-sm">
+                <div className="mb-3 flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-gray-400" />
+                  <h2 className="text-sm text-gray-500">Invoice Notes</h2>
+                </div>
+                <div className="space-y-3 text-sm text-gray-600">
+                  {invoice.template?.terms ? (
+                    <div>
+                      <p className="mb-1 text-xs uppercase tracking-wider text-gray-400">Payment Terms</p>
+                      <p className="whitespace-pre-line">{invoice.template.terms}</p>
+                    </div>
+                  ) : null}
+                  {invoice.template?.footer ? (
+                    <p className="whitespace-pre-line text-xs text-gray-500">{invoice.template.footer}</p>
+                  ) : null}
                 </div>
               </div>
             )}
@@ -222,21 +284,105 @@ export const InvoiceDetailSection = ({
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-500">Subtotal</span>
-                  <span>{formatCurrency(invoice.subtotalAmount)}</span>
+                  <span>{formatCurrency(invoice.subtotalAmount, currencyCode)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Discount</span>
-                  <span>{formatCurrency(invoice.discountAmount)}</span>
+                  <span>{formatCurrency(invoice.discountAmount, currencyCode)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Tax</span>
-                  <span>{formatCurrency(invoice.taxAmount)}</span>
+                  <span>{formatCurrency(invoice.taxAmount, currencyCode)}</span>
                 </div>
                 <div className="flex justify-between border-t border-gray-200 pt-2 font-medium">
                   <span>Total</span>
-                  <span>{formatCurrency(invoice.totalAmount)}</span>
+                  <span>{formatCurrency(invoice.totalAmount, currencyCode)}</span>
                 </div>
               </div>
+            </div>
+
+            <div className="rounded-xl bg-gray-50 p-4">
+              <div className="mb-3 flex items-center gap-2">
+                <CreditCard className="h-4 w-4 text-gray-400" />
+                <h2 className="text-xs uppercase tracking-wider text-gray-400">Payment</h2>
+              </div>
+
+              {paymentError ? (
+                <div className="mb-3 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {paymentError}
+                </div>
+              ) : null}
+              {paymentMessage ? (
+                <div className="mb-3 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                  {paymentMessage}
+                </div>
+              ) : null}
+
+              {invoice.amountDue <= 0 ? (
+                <p className="text-sm text-emerald-700">This invoice is fully paid.</p>
+              ) : (
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-xs text-gray-500">Amount due</p>
+                    <p className="text-2xl text-gray-900" style={{ fontFamily: "'Playfair Display', serif" }}>
+                      {formatCurrency(invoice.amountDue, currencyCode)}
+                    </p>
+                  </div>
+
+                  {invoice.paymentOptions.allowsPartial ? (
+                    <div className="grid grid-cols-1 gap-2">
+                      <label className="flex cursor-pointer items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm">
+                        <span>Full balance</span>
+                        <span className="flex items-center gap-2">
+                          <span className="text-gray-600">{formatCurrency(invoice.amountDue, currencyCode)}</span>
+                          <input
+                            type="radio"
+                            checked={paymentSelection === 'full'}
+                            onChange={() => setPaymentSelection('full')}
+                          />
+                        </span>
+                      </label>
+                      <label className="flex cursor-pointer items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm">
+                        <span>Next installment</span>
+                        <span className="flex items-center gap-2">
+                          <span className="text-gray-600">
+                            {formatCurrency(invoice.paymentOptions.minimumPaymentAmount, currencyCode)}
+                          </span>
+                          <input
+                            type="radio"
+                            checked={paymentSelection === 'installment'}
+                            onChange={() => setPaymentSelection('installment')}
+                          />
+                        </span>
+                      </label>
+                    </div>
+                  ) : null}
+
+                  {canPayOnline ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handlePayOnline();
+                      }}
+                      disabled={isPayingOnline}
+                      className="flex w-full items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 py-2.5 text-sm text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isPayingOnline ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
+                      Pay {formatCurrency(paymentAmount, currencyCode)}
+                    </button>
+                  ) : (
+                    <p className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600">
+                      Online payment is not available for this invoice right now.
+                    </p>
+                  )}
+
+                  {invoice.paymentOptions.offlineEnabled ? (
+                    <p className="text-xs text-gray-500">
+                      For offline payment, contact the billing team or use the payment instructions below.
+                    </p>
+                  ) : null}
+                </div>
+              )}
             </div>
 
             {invoice.billingSnapshot && (
@@ -254,6 +400,26 @@ export const InvoiceDetailSection = ({
                   </p>
                   <p>{invoice.billingSnapshot.countryCode}</p>
                   {invoice.billingSnapshot.gstin && <p>GSTIN: {invoice.billingSnapshot.gstin}</p>}
+                </div>
+              </div>
+            )}
+
+            {invoice.business && (
+              <div className="rounded-xl bg-gray-50 p-4">
+                <h2 className="mb-3 text-xs uppercase tracking-wider text-gray-400">From</h2>
+                <div className="space-y-1 text-sm text-gray-600">
+                  {invoice.business.name && <p className="text-gray-900">{invoice.business.name}</p>}
+                  {invoice.business.address && <p className="whitespace-pre-line">{invoice.business.address}</p>}
+                  {invoice.business.phone && <p>Phone: {invoice.business.phone}</p>}
+                  {invoice.business.email && <p>Email: {invoice.business.email}</p>}
+                  {invoice.business.website && <p>{invoice.business.website}</p>}
+                  {invoice.business.gstin && <p>GSTIN: {invoice.business.gstin}</p>}
+                  {invoice.business.paymentInstructions && (
+                    <div className="border-t border-gray-200 pt-2">
+                      <p className="mb-1 text-xs uppercase tracking-wider text-gray-400">Payment Instructions</p>
+                      <p className="whitespace-pre-line">{invoice.business.paymentInstructions}</p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

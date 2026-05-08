@@ -3493,4 +3493,1300 @@ export const NORMALIZED_MIGRATIONS: SchemaMigrationDefinition[] = [
       `DEALLOCATE PREPARE add_pricing_quotes_country_pricing_stmt`
     ],
   },
+  {
+    id: '023-invoice-template-rendering',
+    description: 'Connect invoice settings to template snapshots used by invoice rendering and delivery.',
+    statements: [
+      `SET @invoice_settings_has_default_template := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'invoice_settings'
+          AND column_name = 'default_invoice_template_public_id'
+      )`,
+      `SET @add_invoice_settings_default_template_sql := IF(
+        @invoice_settings_has_default_template = 0,
+        'ALTER TABLE invoice_settings ADD COLUMN default_invoice_template_public_id CHAR(26) NULL AFTER reverse_charge_note',
+        'DO 0'
+      )`,
+      `PREPARE add_invoice_settings_default_template_stmt FROM @add_invoice_settings_default_template_sql`,
+      `EXECUTE add_invoice_settings_default_template_stmt`,
+      `DEALLOCATE PREPARE add_invoice_settings_default_template_stmt`,
+      `UPDATE invoice_settings invs
+       JOIN (
+         SELECT public_id
+         FROM admin_templates
+         WHERE template_type_code = 'invoice'
+           AND is_active = 1
+           AND archived_at IS NULL
+         ORDER BY is_default DESC, updated_at DESC, id DESC
+         LIMIT 1
+       ) tpl
+       SET invs.default_invoice_template_public_id = COALESCE(invs.default_invoice_template_public_id, tpl.public_id),
+           invs.updated_at = UTC_TIMESTAMP(6)
+       WHERE invs.id = 1`,
+      `SET @invoices_has_template_public_id_snapshot := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'invoices'
+          AND column_name = 'template_public_id_snapshot'
+      )`,
+      `SET @add_invoices_template_public_id_snapshot_sql := IF(
+        @invoices_has_template_public_id_snapshot = 0,
+        'ALTER TABLE invoices ADD COLUMN template_public_id_snapshot CHAR(26) NULL AFTER archived_at',
+        'DO 0'
+      )`,
+      `PREPARE add_invoices_template_public_id_snapshot_stmt FROM @add_invoices_template_public_id_snapshot_sql`,
+      `EXECUTE add_invoices_template_public_id_snapshot_stmt`,
+      `DEALLOCATE PREPARE add_invoices_template_public_id_snapshot_stmt`,
+      `SET @invoices_has_template_version_snapshot := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'invoices'
+          AND column_name = 'template_version_snapshot'
+      )`,
+      `SET @add_invoices_template_version_snapshot_sql := IF(
+        @invoices_has_template_version_snapshot = 0,
+        'ALTER TABLE invoices ADD COLUMN template_version_snapshot INT UNSIGNED NULL AFTER template_public_id_snapshot',
+        'DO 0'
+      )`,
+      `PREPARE add_invoices_template_version_snapshot_stmt FROM @add_invoices_template_version_snapshot_sql`,
+      `EXECUTE add_invoices_template_version_snapshot_stmt`,
+      `DEALLOCATE PREPARE add_invoices_template_version_snapshot_stmt`,
+      `SET @invoices_has_rendered_subject_snapshot := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'invoices'
+          AND column_name = 'rendered_subject_snapshot'
+      )`,
+      `SET @add_invoices_rendered_subject_snapshot_sql := IF(
+        @invoices_has_rendered_subject_snapshot = 0,
+        'ALTER TABLE invoices ADD COLUMN rendered_subject_snapshot VARCHAR(255) NULL AFTER template_version_snapshot',
+        'DO 0'
+      )`,
+      `PREPARE add_invoices_rendered_subject_snapshot_stmt FROM @add_invoices_rendered_subject_snapshot_sql`,
+      `EXECUTE add_invoices_rendered_subject_snapshot_stmt`,
+      `DEALLOCATE PREPARE add_invoices_rendered_subject_snapshot_stmt`,
+      `SET @invoices_has_rendered_body_snapshot := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'invoices'
+          AND column_name = 'rendered_body_snapshot'
+      )`,
+      `SET @add_invoices_rendered_body_snapshot_sql := IF(
+        @invoices_has_rendered_body_snapshot = 0,
+        'ALTER TABLE invoices ADD COLUMN rendered_body_snapshot TEXT NULL AFTER rendered_subject_snapshot',
+        'DO 0'
+      )`,
+      `PREPARE add_invoices_rendered_body_snapshot_stmt FROM @add_invoices_rendered_body_snapshot_sql`,
+      `EXECUTE add_invoices_rendered_body_snapshot_stmt`,
+      `DEALLOCATE PREPARE add_invoices_rendered_body_snapshot_stmt`,
+      `SET @invoices_has_rendered_terms_snapshot := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'invoices'
+          AND column_name = 'rendered_terms_snapshot'
+      )`,
+      `SET @add_invoices_rendered_terms_snapshot_sql := IF(
+        @invoices_has_rendered_terms_snapshot = 0,
+        'ALTER TABLE invoices ADD COLUMN rendered_terms_snapshot TEXT NULL AFTER rendered_body_snapshot',
+        'DO 0'
+      )`,
+      `PREPARE add_invoices_rendered_terms_snapshot_stmt FROM @add_invoices_rendered_terms_snapshot_sql`,
+      `EXECUTE add_invoices_rendered_terms_snapshot_stmt`,
+      `DEALLOCATE PREPARE add_invoices_rendered_terms_snapshot_stmt`,
+      `SET @invoices_has_rendered_footer_snapshot := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'invoices'
+          AND column_name = 'rendered_footer_snapshot'
+      )`,
+      `SET @add_invoices_rendered_footer_snapshot_sql := IF(
+        @invoices_has_rendered_footer_snapshot = 0,
+        'ALTER TABLE invoices ADD COLUMN rendered_footer_snapshot TEXT NULL AFTER rendered_terms_snapshot',
+        'DO 0'
+      )`,
+      `PREPARE add_invoices_rendered_footer_snapshot_stmt FROM @add_invoices_rendered_footer_snapshot_sql`,
+      `EXECUTE add_invoices_rendered_footer_snapshot_stmt`,
+      `DEALLOCATE PREPARE add_invoices_rendered_footer_snapshot_stmt`
+    ],
+  },
+  {
+    id: '024-document-malware-scan-metadata',
+    description: 'Add malware scan metadata to document versions for honest scan status and blocking policy.',
+    statements: [
+      `SET @document_versions_has_scan_provider := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'document_versions'
+          AND column_name = 'scan_provider_code'
+      )`,
+      `SET @add_document_versions_scan_provider_sql := IF(
+        @document_versions_has_scan_provider = 0,
+        'ALTER TABLE document_versions ADD COLUMN scan_provider_code VARCHAR(32) NULL AFTER virus_scan_status_code',
+        'DO 0'
+      )`,
+      `PREPARE add_document_versions_scan_provider_stmt FROM @add_document_versions_scan_provider_sql`,
+      `EXECUTE add_document_versions_scan_provider_stmt`,
+      `DEALLOCATE PREPARE add_document_versions_scan_provider_stmt`,
+      `SET @document_versions_has_scan_checked_at := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'document_versions'
+          AND column_name = 'scan_checked_at'
+      )`,
+      `SET @add_document_versions_scan_checked_at_sql := IF(
+        @document_versions_has_scan_checked_at = 0,
+        'ALTER TABLE document_versions ADD COLUMN scan_checked_at DATETIME(6) NULL AFTER scan_provider_code',
+        'DO 0'
+      )`,
+      `PREPARE add_document_versions_scan_checked_at_stmt FROM @add_document_versions_scan_checked_at_sql`,
+      `EXECUTE add_document_versions_scan_checked_at_stmt`,
+      `DEALLOCATE PREPARE add_document_versions_scan_checked_at_stmt`,
+      `SET @document_versions_has_scan_error := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'document_versions'
+          AND column_name = 'scan_error_text'
+      )`,
+      `SET @add_document_versions_scan_error_sql := IF(
+        @document_versions_has_scan_error = 0,
+        'ALTER TABLE document_versions ADD COLUMN scan_error_text VARCHAR(500) NULL AFTER scan_checked_at',
+        'DO 0'
+      )`,
+      `PREPARE add_document_versions_scan_error_stmt FROM @add_document_versions_scan_error_sql`,
+      `EXECUTE add_document_versions_scan_error_stmt`,
+      `DEALLOCATE PREPARE add_document_versions_scan_error_stmt`,
+      `SET @document_versions_has_quarantine_flag := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'document_versions'
+          AND column_name = 'quarantine_flag'
+      )`,
+      `SET @add_document_versions_quarantine_flag_sql := IF(
+        @document_versions_has_quarantine_flag = 0,
+        'ALTER TABLE document_versions ADD COLUMN quarantine_flag TINYINT(1) NOT NULL DEFAULT 0 AFTER scan_error_text',
+        'DO 0'
+      )`,
+      `PREPARE add_document_versions_quarantine_flag_stmt FROM @add_document_versions_quarantine_flag_sql`,
+      `EXECUTE add_document_versions_quarantine_flag_stmt`,
+      `DEALLOCATE PREPARE add_document_versions_quarantine_flag_stmt`,
+      `SET @document_versions_has_scan_status_index := (
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'document_versions'
+          AND index_name = 'idx_document_versions_scan_status'
+      )`,
+      `SET @add_document_versions_scan_status_index_sql := IF(
+        @document_versions_has_scan_status_index = 0,
+        'ALTER TABLE document_versions ADD INDEX idx_document_versions_scan_status (virus_scan_status_code, scan_checked_at)',
+        'DO 0'
+      )`,
+      `PREPARE add_document_versions_scan_status_index_stmt FROM @add_document_versions_scan_status_index_sql`,
+      `EXECUTE add_document_versions_scan_status_index_stmt`,
+      `DEALLOCATE PREPARE add_document_versions_scan_status_index_stmt`
+    ],
+  },
+  {
+    id: '025-google-calendar-sync-metadata',
+    description: 'Add Google Calendar sync status metadata to events.',
+    statements: [
+      `SET @events_has_calendar_sync_status := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'events'
+          AND column_name = 'calendar_sync_status_code'
+      )`,
+      `SET @add_events_calendar_sync_status_sql := IF(
+        @events_has_calendar_sync_status = 0,
+        'ALTER TABLE events ADD COLUMN calendar_sync_status_code VARCHAR(32) NOT NULL DEFAULT ''local'' AFTER host_url',
+        'DO 0'
+      )`,
+      `PREPARE add_events_calendar_sync_status_stmt FROM @add_events_calendar_sync_status_sql`,
+      `EXECUTE add_events_calendar_sync_status_stmt`,
+      `DEALLOCATE PREPARE add_events_calendar_sync_status_stmt`,
+      `SET @events_has_calendar_sync_error := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'events'
+          AND column_name = 'calendar_sync_error_text'
+      )`,
+      `SET @add_events_calendar_sync_error_sql := IF(
+        @events_has_calendar_sync_error = 0,
+        'ALTER TABLE events ADD COLUMN calendar_sync_error_text VARCHAR(1000) NULL AFTER calendar_sync_status_code',
+        'DO 0'
+      )`,
+      `PREPARE add_events_calendar_sync_error_stmt FROM @add_events_calendar_sync_error_sql`,
+      `EXECUTE add_events_calendar_sync_error_stmt`,
+      `DEALLOCATE PREPARE add_events_calendar_sync_error_stmt`,
+      `SET @events_has_calendar_synced_at := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'events'
+          AND column_name = 'calendar_synced_at'
+      )`,
+      `SET @add_events_calendar_synced_at_sql := IF(
+        @events_has_calendar_synced_at = 0,
+        'ALTER TABLE events ADD COLUMN calendar_synced_at DATETIME(6) NULL AFTER calendar_sync_error_text',
+        'DO 0'
+      )`,
+      `PREPARE add_events_calendar_synced_at_stmt FROM @add_events_calendar_synced_at_sql`,
+      `EXECUTE add_events_calendar_synced_at_stmt`,
+      `DEALLOCATE PREPARE add_events_calendar_synced_at_stmt`,
+      `SET @events_has_meet_conference_id := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'events'
+          AND column_name = 'meet_conference_id'
+      )`,
+      `SET @add_events_meet_conference_id_sql := IF(
+        @events_has_meet_conference_id = 0,
+        'ALTER TABLE events ADD COLUMN meet_conference_id VARCHAR(255) NULL AFTER calendar_synced_at',
+        'DO 0'
+      )`,
+      `PREPARE add_events_meet_conference_id_stmt FROM @add_events_meet_conference_id_sql`,
+      `EXECUTE add_events_meet_conference_id_stmt`,
+      `DEALLOCATE PREPARE add_events_meet_conference_id_stmt`,
+      `SET @events_has_calendar_sync_index := (
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'events'
+          AND index_name = 'idx_events_calendar_sync_status'
+      )`,
+      `SET @add_events_calendar_sync_index_sql := IF(
+        @events_has_calendar_sync_index = 0,
+        'ALTER TABLE events ADD INDEX idx_events_calendar_sync_status (calendar_sync_status_code, calendar_synced_at)',
+        'DO 0'
+      )`,
+      `PREPARE add_events_calendar_sync_index_stmt FROM @add_events_calendar_sync_index_sql`,
+      `EXECUTE add_events_calendar_sync_index_stmt`,
+      `DEALLOCATE PREPARE add_events_calendar_sync_index_stmt`
+    ],
+  },
+  {
+    id: '026-workspace-calendar-owner-and-attendee-metadata',
+    description: 'Add Workspace delegated organizer and client attendee invite metadata to events.',
+    statements: [
+      `SET @events_has_calendar_owner_user_id := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'events'
+          AND column_name = 'calendar_owner_user_id'
+      )`,
+      `SET @add_events_calendar_owner_user_id_sql := IF(
+        @events_has_calendar_owner_user_id = 0,
+        'ALTER TABLE events ADD COLUMN calendar_owner_user_id BIGINT UNSIGNED NULL AFTER meet_conference_id',
+        'DO 0'
+      )`,
+      `PREPARE add_events_calendar_owner_user_id_stmt FROM @add_events_calendar_owner_user_id_sql`,
+      `EXECUTE add_events_calendar_owner_user_id_stmt`,
+      `DEALLOCATE PREPARE add_events_calendar_owner_user_id_stmt`,
+      `SET @events_has_calendar_owner_email := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'events'
+          AND column_name = 'calendar_owner_email'
+      )`,
+      `SET @add_events_calendar_owner_email_sql := IF(
+        @events_has_calendar_owner_email = 0,
+        'ALTER TABLE events ADD COLUMN calendar_owner_email VARCHAR(255) NULL AFTER calendar_owner_user_id',
+        'DO 0'
+      )`,
+      `PREPARE add_events_calendar_owner_email_stmt FROM @add_events_calendar_owner_email_sql`,
+      `EXECUTE add_events_calendar_owner_email_stmt`,
+      `DEALLOCATE PREPARE add_events_calendar_owner_email_stmt`,
+      `SET @events_has_client_invite_mode := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'events'
+          AND column_name = 'client_invite_mode_code'
+      )`,
+      `SET @add_events_client_invite_mode_sql := IF(
+        @events_has_client_invite_mode = 0,
+        'ALTER TABLE events ADD COLUMN client_invite_mode_code VARCHAR(32) NOT NULL DEFAULT ''google_attendee'' AFTER calendar_owner_email',
+        'DO 0'
+      )`,
+      `PREPARE add_events_client_invite_mode_stmt FROM @add_events_client_invite_mode_sql`,
+      `EXECUTE add_events_client_invite_mode_stmt`,
+      `DEALLOCATE PREPARE add_events_client_invite_mode_stmt`,
+      `SET @events_has_google_attendee_status := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'events'
+          AND column_name = 'google_attendee_status_code'
+      )`,
+      `SET @add_events_google_attendee_status_sql := IF(
+        @events_has_google_attendee_status = 0,
+        'ALTER TABLE events ADD COLUMN google_attendee_status_code VARCHAR(32) NOT NULL DEFAULT ''not_applicable'' AFTER client_invite_mode_code',
+        'DO 0'
+      )`,
+      `PREPARE add_events_google_attendee_status_stmt FROM @add_events_google_attendee_status_sql`,
+      `EXECUTE add_events_google_attendee_status_stmt`,
+      `DEALLOCATE PREPARE add_events_google_attendee_status_stmt`,
+      `SET @events_has_calendar_owner_index := (
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'events'
+          AND index_name = 'idx_events_calendar_owner'
+      )`,
+      `SET @add_events_calendar_owner_index_sql := IF(
+        @events_has_calendar_owner_index = 0,
+        'ALTER TABLE events ADD INDEX idx_events_calendar_owner (calendar_owner_user_id, calendar_owner_email)',
+        'DO 0'
+      )`,
+      `PREPARE add_events_calendar_owner_index_stmt FROM @add_events_calendar_owner_index_sql`,
+      `EXECUTE add_events_calendar_owner_index_stmt`,
+      `DEALLOCATE PREPARE add_events_calendar_owner_index_stmt`
+    ],
+  },
+  {
+    id: '027-invoice-settings-business-contact-fields',
+    description: 'Add business contact, address, terms, and payment instruction fields to invoice settings.',
+    statements: [
+      `SET @invoice_settings_has_business_address := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'invoice_settings'
+          AND column_name = 'business_address'
+      )`,
+      `SET @add_invoice_settings_business_address_sql := IF(
+        @invoice_settings_has_business_address = 0,
+        'ALTER TABLE invoice_settings ADD COLUMN business_address TEXT NULL AFTER business_state',
+        'DO 0'
+      )`,
+      `PREPARE add_invoice_settings_business_address_stmt FROM @add_invoice_settings_business_address_sql`,
+      `EXECUTE add_invoice_settings_business_address_stmt`,
+      `DEALLOCATE PREPARE add_invoice_settings_business_address_stmt`,
+      `SET @invoice_settings_has_business_phone := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'invoice_settings'
+          AND column_name = 'business_phone'
+      )`,
+      `SET @add_invoice_settings_business_phone_sql := IF(
+        @invoice_settings_has_business_phone = 0,
+        'ALTER TABLE invoice_settings ADD COLUMN business_phone VARCHAR(40) NULL AFTER business_address',
+        'DO 0'
+      )`,
+      `PREPARE add_invoice_settings_business_phone_stmt FROM @add_invoice_settings_business_phone_sql`,
+      `EXECUTE add_invoice_settings_business_phone_stmt`,
+      `DEALLOCATE PREPARE add_invoice_settings_business_phone_stmt`,
+      `SET @invoice_settings_has_business_email := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'invoice_settings'
+          AND column_name = 'business_email'
+      )`,
+      `SET @add_invoice_settings_business_email_sql := IF(
+        @invoice_settings_has_business_email = 0,
+        'ALTER TABLE invoice_settings ADD COLUMN business_email VARCHAR(255) NULL AFTER business_phone',
+        'DO 0'
+      )`,
+      `PREPARE add_invoice_settings_business_email_stmt FROM @add_invoice_settings_business_email_sql`,
+      `EXECUTE add_invoice_settings_business_email_stmt`,
+      `DEALLOCATE PREPARE add_invoice_settings_business_email_stmt`,
+      `SET @invoice_settings_has_business_website := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'invoice_settings'
+          AND column_name = 'business_website'
+      )`,
+      `SET @add_invoice_settings_business_website_sql := IF(
+        @invoice_settings_has_business_website = 0,
+        'ALTER TABLE invoice_settings ADD COLUMN business_website VARCHAR(255) NULL AFTER business_email',
+        'DO 0'
+      )`,
+      `PREPARE add_invoice_settings_business_website_stmt FROM @add_invoice_settings_business_website_sql`,
+      `EXECUTE add_invoice_settings_business_website_stmt`,
+      `DEALLOCATE PREPARE add_invoice_settings_business_website_stmt`,
+      `SET @invoice_settings_has_payment_instructions := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'invoice_settings'
+          AND column_name = 'payment_instructions'
+      )`,
+      `SET @add_invoice_settings_payment_instructions_sql := IF(
+        @invoice_settings_has_payment_instructions = 0,
+        'ALTER TABLE invoice_settings ADD COLUMN payment_instructions TEXT NULL AFTER payment_terms_days',
+        'DO 0'
+      )`,
+      `PREPARE add_invoice_settings_payment_instructions_stmt FROM @add_invoice_settings_payment_instructions_sql`,
+      `EXECUTE add_invoice_settings_payment_instructions_stmt`,
+      `DEALLOCATE PREPARE add_invoice_settings_payment_instructions_stmt`,
+      `SET @invoice_settings_has_invoice_terms := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'invoice_settings'
+          AND column_name = 'invoice_terms'
+      )`,
+      `SET @add_invoice_settings_invoice_terms_sql := IF(
+        @invoice_settings_has_invoice_terms = 0,
+        'ALTER TABLE invoice_settings ADD COLUMN invoice_terms TEXT NULL AFTER payment_instructions',
+        'DO 0'
+      )`,
+      `PREPARE add_invoice_settings_invoice_terms_stmt FROM @add_invoice_settings_invoice_terms_sql`,
+      `EXECUTE add_invoice_settings_invoice_terms_stmt`,
+      `DEALLOCATE PREPARE add_invoice_settings_invoice_terms_stmt`
+    ],
+  },
+  {
+    id: '028-invoice-business-rendering-snapshots',
+    description: 'Snapshot invoice business/contact/payment settings used by invoice rendering.',
+    statements: [
+      ...[
+        ['business_name_snapshot', "VARCHAR(255) NULL AFTER rendered_footer_snapshot"],
+        ['business_address_snapshot', "TEXT NULL AFTER business_name_snapshot"],
+        ['business_phone_snapshot', "VARCHAR(40) NULL AFTER business_address_snapshot"],
+        ['business_email_snapshot', "VARCHAR(255) NULL AFTER business_phone_snapshot"],
+        ['business_website_snapshot', "VARCHAR(255) NULL AFTER business_email_snapshot"],
+        ['business_gstin_snapshot', "VARCHAR(32) NULL AFTER business_website_snapshot"],
+        ['business_state_snapshot', "VARCHAR(96) NULL AFTER business_gstin_snapshot"],
+        ['payment_instructions_snapshot', "TEXT NULL AFTER business_state_snapshot"],
+      ].flatMap(([columnName, definition]) => [
+        `SET @invoices_has_${columnName} := (
+          SELECT COUNT(*)
+          FROM information_schema.columns
+          WHERE table_schema = DATABASE()
+            AND table_name = 'invoices'
+            AND column_name = '${columnName}'
+        )`,
+        `SET @add_invoices_${columnName}_sql := IF(
+          @invoices_has_${columnName} = 0,
+          'ALTER TABLE invoices ADD COLUMN ${columnName} ${definition}',
+          'DO 0'
+        )`,
+        `PREPARE add_invoices_${columnName}_stmt FROM @add_invoices_${columnName}_sql`,
+        `EXECUTE add_invoices_${columnName}_stmt`,
+        `DEALLOCATE PREPARE add_invoices_${columnName}_stmt`,
+      ]),
+    ],
+  },
+  {
+    id: '029-request-pricing-matrix',
+    description:
+      'Add exact country price overrides and editable urgency timing/mode eligibility for the request pricing matrix.',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS pricing_country_price_overrides (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        public_id CHAR(26) NOT NULL,
+        subject_type_code VARCHAR(32) NOT NULL,
+        subject_code VARCHAR(64) NOT NULL,
+        country_code VARCHAR(8) NOT NULL,
+        country_name VARCHAR(120) NOT NULL,
+        currency_code CHAR(3) NOT NULL,
+        price_amount DECIMAL(14,2) NOT NULL,
+        is_active TINYINT(1) NOT NULL DEFAULT 1,
+        created_at DATETIME(6) NOT NULL,
+        updated_at DATETIME(6) NOT NULL,
+        archived_at DATETIME(6) NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_pricing_country_price_public_id (public_id),
+        INDEX idx_pricing_country_price_lookup (subject_type_code, subject_code, country_code, is_active, archived_at),
+        INDEX idx_pricing_country_price_country (country_code, is_active, archived_at),
+        CONSTRAINT chk_pricing_country_price_amount CHECK (price_amount >= 0)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+      ...[
+        ['timing_label', "VARCHAR(120) NULL AFTER label"],
+        ['min_response_hours', "INT UNSIGNED NULL AFTER timing_label"],
+        ['max_response_hours', "INT UNSIGNED NULL AFTER min_response_hours"],
+        ['allow_phone', "TINYINT(1) NOT NULL DEFAULT 1 AFTER max_response_hours"],
+        ['allow_video', "TINYINT(1) NOT NULL DEFAULT 1 AFTER allow_phone"],
+        ['allow_in_person', "TINYINT(1) NOT NULL DEFAULT 0 AFTER allow_video"],
+      ].flatMap(([columnName, definition]) => [
+        `SET @pricing_urgency_rules_has_${columnName} := (
+          SELECT COUNT(*)
+          FROM information_schema.columns
+          WHERE table_schema = DATABASE()
+            AND table_name = 'pricing_urgency_rules'
+            AND column_name = '${columnName}'
+        )`,
+        `SET @add_pricing_urgency_rules_${columnName}_sql := IF(
+          @pricing_urgency_rules_has_${columnName} = 0,
+          'ALTER TABLE pricing_urgency_rules ADD COLUMN ${columnName} ${definition}',
+          'DO 0'
+        )`,
+        `PREPARE add_pricing_urgency_rules_${columnName}_stmt FROM @add_pricing_urgency_rules_${columnName}_sql`,
+        `EXECUTE add_pricing_urgency_rules_${columnName}_stmt`,
+        `DEALLOCATE PREPARE add_pricing_urgency_rules_${columnName}_stmt`,
+      ]),
+      `UPDATE pricing_urgency_rules
+       SET timing_label = COALESCE(
+             timing_label,
+             CASE
+               WHEN response_window_hours IS NULL THEN label
+               WHEN response_window_hours >= 24 THEN CONCAT('Within ', response_window_hours, ' hours')
+               ELSE CONCAT('Within ', response_window_hours, ' hours')
+             END
+           ),
+           min_response_hours = COALESCE(
+             min_response_hours,
+             CASE WHEN urgency_code = 'standard' THEN 24 ELSE NULL END
+           ),
+           max_response_hours = COALESCE(max_response_hours, response_window_hours),
+           allow_phone = COALESCE(allow_phone, 1),
+           allow_video = COALESCE(allow_video, 1),
+           allow_in_person = CASE
+             WHEN urgency_code = 'standard' THEN 1
+             ELSE COALESCE(allow_in_person, 0)
+           END
+      WHERE 1 = 1`
+    ],
+  },
+  {
+    id: '030-invoice-pdf-letterhead-templates',
+    description: 'Add DB-backed invoice PDF letterhead templates and invoice snapshot metadata.',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS invoice_pdf_templates (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        public_id CHAR(26) NOT NULL,
+        name VARCHAR(180) NOT NULL,
+        original_file_name VARCHAR(255) NOT NULL,
+        content_type VARCHAR(80) NOT NULL DEFAULT 'application/pdf',
+        file_size_bytes BIGINT UNSIGNED NOT NULL,
+        pdf_content LONGBLOB NOT NULL,
+        content_top_margin DECIMAL(10,2) NOT NULL DEFAULT 120.00,
+        content_left_margin DECIMAL(10,2) NOT NULL DEFAULT 54.00,
+        content_right_margin DECIMAL(10,2) NOT NULL DEFAULT 54.00,
+        content_bottom_margin DECIMAL(10,2) NOT NULL DEFAULT 72.00,
+        is_active TINYINT(1) NOT NULL DEFAULT 0,
+        created_by_user_id BIGINT UNSIGNED NULL,
+        created_at DATETIME(6) NOT NULL,
+        updated_at DATETIME(6) NOT NULL,
+        archived_at DATETIME(6) NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_invoice_pdf_templates_public_id (public_id),
+        INDEX idx_invoice_pdf_templates_active (is_active, archived_at),
+        CONSTRAINT fk_invoice_pdf_templates_created_by FOREIGN KEY (created_by_user_id)
+          REFERENCES users (id)
+          ON UPDATE CASCADE
+          ON DELETE SET NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+      ...[
+        ['pdf_template_public_id_snapshot', "CHAR(26) NULL AFTER template_version_snapshot"],
+        ['pdf_template_name_snapshot', "VARCHAR(180) NULL AFTER pdf_template_public_id_snapshot"],
+        ['pdf_content_top_margin_snapshot', "DECIMAL(10,2) NULL AFTER pdf_template_name_snapshot"],
+        ['pdf_content_left_margin_snapshot', "DECIMAL(10,2) NULL AFTER pdf_content_top_margin_snapshot"],
+        ['pdf_content_right_margin_snapshot', "DECIMAL(10,2) NULL AFTER pdf_content_left_margin_snapshot"],
+        ['pdf_content_bottom_margin_snapshot', "DECIMAL(10,2) NULL AFTER pdf_content_right_margin_snapshot"],
+      ].flatMap(([columnName, definition]) => [
+        `SET @invoices_has_${columnName} := (
+          SELECT COUNT(*)
+          FROM information_schema.columns
+          WHERE table_schema = DATABASE()
+            AND table_name = 'invoices'
+            AND column_name = '${columnName}'
+        )`,
+        `SET @add_invoices_${columnName}_sql := IF(
+          @invoices_has_${columnName} = 0,
+          'ALTER TABLE invoices ADD COLUMN ${columnName} ${definition}',
+          'DO 0'
+        )`,
+        `PREPARE add_invoices_${columnName}_stmt FROM @add_invoices_${columnName}_sql`,
+        `EXECUTE add_invoices_${columnName}_stmt`,
+        `DEALLOCATE PREPARE add_invoices_${columnName}_stmt`,
+      ]),
+    ],
+  },
+  {
+    id: '031-persistent-auth-rate-limits',
+    description: 'Add persistent auth rate limit buckets shared by client and admin backends.',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS rate_limit_buckets (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        scope_code VARCHAR(48) NOT NULL,
+        bucket_key_hash CHAR(64) NOT NULL,
+        attempt_count INT UNSIGNED NOT NULL DEFAULT 0,
+        window_started_at DATETIME(6) NOT NULL,
+        window_resets_at DATETIME(6) NOT NULL,
+        blocked_until DATETIME(6) NULL,
+        created_at DATETIME(6) NOT NULL,
+        updated_at DATETIME(6) NOT NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_rate_limit_bucket_scope_key (scope_code, bucket_key_hash),
+        INDEX idx_rate_limit_bucket_resets (window_resets_at),
+        INDEX idx_rate_limit_bucket_blocked (blocked_until)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+    ],
+  },
+  {
+    id: '032-provider-delivery-webhook-events',
+    description: 'Store verified Resend and Twilio provider delivery webhook events.',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS email_events (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        public_id CHAR(26) NOT NULL,
+        provider_code VARCHAR(32) NOT NULL,
+        provider_event_id VARCHAR(160) NULL,
+        provider_message_id VARCHAR(160) NULL,
+        event_type_code VARCHAR(80) NOT NULL,
+        delivery_status_code VARCHAR(40) NOT NULL,
+        recipient_email VARCHAR(255) NULL,
+        payload_json JSON NULL,
+        received_at DATETIME(6) NOT NULL,
+        created_at DATETIME(6) NOT NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_email_events_public_id (public_id),
+        UNIQUE KEY uq_email_events_provider_event (provider_code, provider_event_id),
+        INDEX idx_email_events_message (provider_code, provider_message_id),
+        INDEX idx_email_events_status (delivery_status_code, received_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+      `CREATE TABLE IF NOT EXISTS sms_events (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        public_id CHAR(26) NOT NULL,
+        provider_code VARCHAR(32) NOT NULL,
+        provider_message_id VARCHAR(160) NULL,
+        event_type_code VARCHAR(80) NOT NULL,
+        delivery_status_code VARCHAR(40) NOT NULL,
+        to_phone VARCHAR(64) NULL,
+        from_phone VARCHAR(64) NULL,
+        error_code VARCHAR(64) NULL,
+        error_message VARCHAR(255) NULL,
+        payload_json JSON NULL,
+        received_at DATETIME(6) NOT NULL,
+        created_at DATETIME(6) NOT NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_sms_events_public_id (public_id),
+        INDEX idx_sms_events_message (provider_code, provider_message_id),
+        INDEX idx_sms_events_status (delivery_status_code, received_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+    ],
+  },
+  {
+    id: '033-idempotency-keys',
+    description: 'Add DB-backed idempotency keys for critical create and payment endpoints.',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS idempotency_keys (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        scope_code VARCHAR(96) NOT NULL,
+        idempotency_key_hash CHAR(64) NOT NULL,
+        actor_key_hash CHAR(64) NULL,
+        actor_user_id BIGINT UNSIGNED NULL,
+        request_method VARCHAR(16) NOT NULL,
+        request_path VARCHAR(255) NOT NULL,
+        request_fingerprint_hash CHAR(64) NOT NULL,
+        status_code VARCHAR(32) NOT NULL DEFAULT 'processing',
+        response_status_code SMALLINT UNSIGNED NULL,
+        response_body_json JSON NULL,
+        locked_until DATETIME(6) NULL,
+        created_at DATETIME(6) NOT NULL,
+        updated_at DATETIME(6) NOT NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_idempotency_scope_key (scope_code, idempotency_key_hash),
+        INDEX idx_idempotency_actor (actor_user_id, created_at),
+        INDEX idx_idempotency_status (status_code, locked_until),
+        CONSTRAINT fk_idempotency_actor_user FOREIGN KEY (actor_user_id)
+          REFERENCES users (id)
+          ON UPDATE CASCADE
+          ON DELETE SET NULL
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+    ],
+  },
+  {
+    id: '034-admin-list-pagination-indexes',
+    description: 'Add covering indexes used by paginated admin list endpoints.',
+    statements: [
+      ...[
+        ['client_accounts', 'idx_client_accounts_archived_updated', 'archived_at, updated_at'],
+        ['matters', 'idx_matters_archived_activity', 'archived_at, last_activity_at'],
+        ['events', 'idx_events_status_start', 'status_code, scheduled_start_at, cancelled_at'],
+        ['invoices', 'idx_invoices_status_due_client', 'status_code, due_date, client_account_id, archived_at'],
+        ['messages', 'idx_messages_thread_sent', 'thread_id, sent_at, deleted_at'],
+        ['message_reads', 'idx_message_reads_user_message', 'user_id, message_id'],
+        ['documents', 'idx_documents_visibility_updated', 'visibility_scope_code, archived_at, updated_at'],
+        ['document_versions', 'idx_document_versions_current_scan_uploaded', 'is_current, virus_scan_status_code, uploaded_at'],
+        ['notifications', 'idx_notifications_read_created', 'is_read, dismissed_at, created_at'],
+        ['audit_events', 'idx_audit_events_occurred_at', 'occurred_at'],
+        ['conversation_threads', 'idx_conversation_threads_status_updated', 'archived_at, status_code, updated_at'],
+      ].flatMap(([tableName, indexName, columns], index) => {
+        const variableName = `idx_${index}`;
+
+        return [
+          `SET @has_${variableName} := (
+            SELECT COUNT(*)
+            FROM information_schema.statistics
+            WHERE table_schema = DATABASE()
+              AND table_name = '${tableName}'
+              AND index_name = '${indexName}'
+          )`,
+          `SET @add_${variableName}_sql := IF(
+            @has_${variableName} = 0,
+            'ALTER TABLE ${tableName} ADD INDEX ${indexName} (${columns})',
+            'DO 0'
+          )`,
+          `PREPARE add_${variableName}_stmt FROM @add_${variableName}_sql`,
+          `EXECUTE add_${variableName}_stmt`,
+          `DEALLOCATE PREPARE add_${variableName}_stmt`,
+        ];
+      }),
+    ],
+  },
+  {
+    id: '035-address-country-source-metadata',
+    description: 'Track address source, validation status, and pricing country provenance.',
+    statements: [
+      ...[
+        ['source_code', "VARCHAR(32) NOT NULL DEFAULT ''manual'' AFTER country_code"],
+        ['google_place_id', "VARCHAR(255) NULL AFTER source_code"],
+        ['validation_status_code', "VARCHAR(32) NOT NULL DEFAULT ''manual'' AFTER google_place_id"],
+      ].flatMap(([columnName, definition]) => [
+        `SET @client_addresses_has_${columnName} := (
+          SELECT COUNT(*)
+          FROM information_schema.columns
+          WHERE table_schema = DATABASE()
+            AND table_name = 'client_addresses'
+            AND column_name = '${columnName}'
+        )`,
+        `SET @add_client_addresses_${columnName}_sql := IF(
+          @client_addresses_has_${columnName} = 0,
+          'ALTER TABLE client_addresses ADD COLUMN ${columnName} ${definition}',
+          'DO 0'
+        )`,
+        `PREPARE add_client_addresses_${columnName}_stmt FROM @add_client_addresses_${columnName}_sql`,
+        `EXECUTE add_client_addresses_${columnName}_stmt`,
+        `DEALLOCATE PREPARE add_client_addresses_${columnName}_stmt`,
+      ]),
+      ...[
+        ['request_address_line1_snapshot', "VARCHAR(255) NULL AFTER currency_code"],
+        ['request_address_line2_snapshot', "VARCHAR(255) NULL AFTER request_address_line1_snapshot"],
+        ['request_city_snapshot', "VARCHAR(100) NULL AFTER request_address_line2_snapshot"],
+        ['request_state_snapshot', "VARCHAR(100) NULL AFTER request_city_snapshot"],
+        ['request_postal_code_snapshot', "VARCHAR(20) NULL AFTER request_state_snapshot"],
+        ['request_country_code_snapshot', "VARCHAR(16) NULL AFTER request_postal_code_snapshot"],
+        ['pricing_country_source_code', "VARCHAR(32) NULL AFTER request_country_code_snapshot"],
+      ].flatMap(([columnName, definition]) => [
+        `SET @service_requests_has_${columnName} := (
+          SELECT COUNT(*)
+          FROM information_schema.columns
+          WHERE table_schema = DATABASE()
+            AND table_name = 'service_requests'
+            AND column_name = '${columnName}'
+        )`,
+        `SET @add_service_requests_${columnName}_sql := IF(
+          @service_requests_has_${columnName} = 0,
+          'ALTER TABLE service_requests ADD COLUMN ${columnName} ${definition}',
+          'DO 0'
+        )`,
+        `PREPARE add_service_requests_${columnName}_stmt FROM @add_service_requests_${columnName}_sql`,
+        `EXECUTE add_service_requests_${columnName}_stmt`,
+        `DEALLOCATE PREPARE add_service_requests_${columnName}_stmt`,
+      ]),
+      ...[
+        ['pricing_country_source_code', "VARCHAR(32) NULL AFTER country_code"],
+      ].flatMap(([columnName, definition], index) => {
+        const variableName = `pqfx${index}`;
+
+        return [
+        `SET @${variableName}_has := (
+          SELECT COUNT(*)
+          FROM information_schema.columns
+          WHERE table_schema = DATABASE()
+            AND table_name = 'pricing_quotes'
+            AND column_name = '${columnName}'
+        )`,
+        `SET @${variableName}_sql := IF(
+          @${variableName}_has = 0,
+          'ALTER TABLE pricing_quotes ADD COLUMN ${columnName} ${definition}',
+          'DO 0'
+        )`,
+        `PREPARE ${variableName}_stmt FROM @${variableName}_sql`,
+        `EXECUTE ${variableName}_stmt`,
+        `DEALLOCATE PREPARE ${variableName}_stmt`,
+      ];
+      }),
+    ],
+  },
+  {
+    id: '036-remove-whatsapp-active-columns',
+    description: 'Remove obsolete WhatsApp-only columns from the active client schema.',
+    statements: [
+      ...[
+        ['client_account_contacts', 'whatsapp_number', 'contacts_whatsapp_number'],
+        ['client_account_contacts', 'whatsapp_same_as_mobile', 'contacts_whatsapp_same_as_mobile'],
+        ['user_notification_preferences', 'whatsapp_alerts', 'preferences_whatsapp_alerts'],
+        ['service_requests', 'contact_whatsapp_snapshot', 'requests_contact_whatsapp_snapshot'],
+        ['service_requests', 'whatsapp_same_as_mobile', 'requests_whatsapp_same_as_mobile'],
+      ].flatMap(([tableName, columnName, variableName]) => [
+        `SET @has_${variableName} := (
+          SELECT COUNT(*)
+          FROM information_schema.columns
+          WHERE table_schema = DATABASE()
+            AND table_name = '${tableName}'
+            AND column_name = '${columnName}'
+        )`,
+        `SET @drop_${variableName}_sql := IF(
+          @has_${variableName} = 1,
+          'ALTER TABLE ${tableName} DROP COLUMN ${columnName}',
+          'DO 0'
+        )`,
+        `PREPARE drop_${variableName}_stmt FROM @drop_${variableName}_sql`,
+        `EXECUTE drop_${variableName}_stmt`,
+        `DEALLOCATE PREPARE drop_${variableName}_stmt`,
+      ]),
+    ],
+  },
+  {
+    id: '037-exchange-rate-pricing-snapshots',
+    description: 'Add daily exchange rates and frozen FX metadata for quotes and invoices.',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS exchange_rates (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        base_currency CHAR(3) NOT NULL,
+        quote_currency CHAR(3) NOT NULL,
+        rate DECIMAL(20,8) NOT NULL,
+        rate_date DATE NOT NULL,
+        provider VARCHAR(64) NOT NULL DEFAULT 'manual',
+        fetched_at DATETIME(6) NOT NULL,
+        created_at DATETIME(6) NOT NULL,
+        updated_at DATETIME(6) NOT NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_exchange_rates_daily_provider (base_currency, quote_currency, rate_date, provider),
+        INDEX idx_exchange_rates_lookup (base_currency, quote_currency, rate_date),
+        CONSTRAINT chk_exchange_rates_rate CHECK (rate > 0)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+      ...[
+        ['original_currency_code', "CHAR(3) NULL AFTER currency_code"],
+        ['original_base_amount', "DECIMAL(14,2) NULL AFTER original_currency_code"],
+        ['original_urgency_surcharge_amount', "DECIMAL(14,2) NULL AFTER original_base_amount"],
+        ['original_consultation_mode_surcharge_amount', "DECIMAL(14,2) NULL AFTER original_urgency_surcharge_amount"],
+        ['original_total_amount', "DECIMAL(14,2) NULL AFTER original_consultation_mode_surcharge_amount"],
+        ['exchange_rate', "DECIMAL(20,8) NULL AFTER original_total_amount"],
+        ['exchange_rate_date', "DATE NULL AFTER exchange_rate"],
+        ['exchange_rate_provider', "VARCHAR(64) NULL AFTER exchange_rate_date"],
+        ['fx_snapshot_json', "JSON NULL AFTER exchange_rate_provider"],
+      ].flatMap(([columnName, definition], index) => {
+        const variableName = `pqfx${index}`;
+
+        return [
+        `SET @${variableName}_has := (
+          SELECT COUNT(*)
+          FROM information_schema.columns
+          WHERE table_schema = DATABASE()
+            AND table_name = 'pricing_quotes'
+            AND column_name = '${columnName}'
+        )`,
+        `SET @${variableName}_sql := IF(
+          @${variableName}_has = 0,
+          'ALTER TABLE pricing_quotes ADD COLUMN ${columnName} ${definition}',
+          'DO 0'
+        )`,
+        `PREPARE ${variableName}_stmt FROM @${variableName}_sql`,
+        `EXECUTE ${variableName}_stmt`,
+        `DEALLOCATE PREPARE ${variableName}_stmt`,
+      ];
+      }),
+      ...[
+        ['original_currency_code', "CHAR(3) NULL AFTER line_amount"],
+        ['original_unit_amount', "DECIMAL(14,2) NULL AFTER original_currency_code"],
+        ['original_line_amount', "DECIMAL(14,2) NULL AFTER original_unit_amount"],
+        ['exchange_rate', "DECIMAL(20,8) NULL AFTER original_line_amount"],
+        ['exchange_rate_date', "DATE NULL AFTER exchange_rate"],
+        ['exchange_rate_provider', "VARCHAR(64) NULL AFTER exchange_rate_date"],
+      ].flatMap(([columnName, definition], index) => {
+        const variableName = `pqlfx${index}`;
+
+        return [
+        `SET @${variableName}_has := (
+          SELECT COUNT(*)
+          FROM information_schema.columns
+          WHERE table_schema = DATABASE()
+            AND table_name = 'pricing_quote_lines'
+            AND column_name = '${columnName}'
+        )`,
+        `SET @${variableName}_sql := IF(
+          @${variableName}_has = 0,
+          'ALTER TABLE pricing_quote_lines ADD COLUMN ${columnName} ${definition}',
+          'DO 0'
+        )`,
+        `PREPARE ${variableName}_stmt FROM @${variableName}_sql`,
+        `EXECUTE ${variableName}_stmt`,
+        `DEALLOCATE PREPARE ${variableName}_stmt`,
+      ];
+      }),
+      ...[
+        ['original_currency_code', "CHAR(3) NULL AFTER country_pricing_override_id"],
+        ['original_quoted_base_fee', "DECIMAL(14,2) NULL AFTER original_currency_code"],
+        ['exchange_rate', "DECIMAL(20,8) NULL AFTER original_quoted_base_fee"],
+        ['exchange_rate_date', "DATE NULL AFTER exchange_rate"],
+        ['exchange_rate_provider', "VARCHAR(64) NULL AFTER exchange_rate_date"],
+        ['pricing_rule_source_code', "VARCHAR(64) NULL AFTER exchange_rate_provider"],
+      ].flatMap(([columnName, definition], index) => {
+        const variableName = `rsfx${index}`;
+
+        return [
+        `SET @${variableName}_has := (
+          SELECT COUNT(*)
+          FROM information_schema.columns
+          WHERE table_schema = DATABASE()
+            AND table_name = 'request_services'
+            AND column_name = '${columnName}'
+        )`,
+        `SET @${variableName}_sql := IF(
+          @${variableName}_has = 0,
+          'ALTER TABLE request_services ADD COLUMN ${columnName} ${definition}',
+          'DO 0'
+        )`,
+        `PREPARE ${variableName}_stmt FROM @${variableName}_sql`,
+        `EXECUTE ${variableName}_stmt`,
+        `DEALLOCATE PREPARE ${variableName}_stmt`,
+      ];
+      }),
+      ...[
+        ['original_currency_code', "CHAR(3) NULL AFTER currency_code"],
+        ['original_subtotal_amount', "DECIMAL(14,2) NULL AFTER original_currency_code"],
+        ['original_tax_amount', "DECIMAL(14,2) NULL AFTER original_subtotal_amount"],
+        ['original_total_amount', "DECIMAL(14,2) NULL AFTER original_tax_amount"],
+        ['exchange_rate', "DECIMAL(20,8) NULL AFTER original_total_amount"],
+        ['exchange_rate_date', "DATE NULL AFTER exchange_rate"],
+        ['exchange_rate_provider', "VARCHAR(64) NULL AFTER exchange_rate_date"],
+        ['fx_snapshot_json', "JSON NULL AFTER exchange_rate_provider"],
+      ].flatMap(([columnName, definition], index) => {
+        const variableName = `ifx${index}`;
+
+        return [
+        `SET @${variableName}_has := (
+          SELECT COUNT(*)
+          FROM information_schema.columns
+          WHERE table_schema = DATABASE()
+            AND table_name = 'invoices'
+            AND column_name = '${columnName}'
+        )`,
+        `SET @${variableName}_sql := IF(
+          @${variableName}_has = 0,
+          'ALTER TABLE invoices ADD COLUMN ${columnName} ${definition}',
+          'DO 0'
+        )`,
+        `PREPARE ${variableName}_stmt FROM @${variableName}_sql`,
+        `EXECUTE ${variableName}_stmt`,
+        `DEALLOCATE PREPARE ${variableName}_stmt`,
+      ];
+      }),
+      ...[
+        ['original_currency_code', "CHAR(3) NULL AFTER line_total"],
+        ['original_unit_price', "DECIMAL(14,2) NULL AFTER original_currency_code"],
+        ['original_line_subtotal', "DECIMAL(14,2) NULL AFTER original_unit_price"],
+        ['original_taxable_amount', "DECIMAL(14,2) NULL AFTER original_line_subtotal"],
+        ['original_line_total', "DECIMAL(14,2) NULL AFTER original_taxable_amount"],
+        ['exchange_rate', "DECIMAL(20,8) NULL AFTER original_line_total"],
+        ['exchange_rate_date', "DATE NULL AFTER exchange_rate"],
+        ['exchange_rate_provider', "VARCHAR(64) NULL AFTER exchange_rate_date"],
+      ].flatMap(([columnName, definition], index) => {
+        const variableName = `ilfx${index}`;
+
+        return [
+        `SET @${variableName}_has := (
+          SELECT COUNT(*)
+          FROM information_schema.columns
+          WHERE table_schema = DATABASE()
+            AND table_name = 'invoice_lines'
+            AND column_name = '${columnName}'
+        )`,
+        `SET @${variableName}_sql := IF(
+          @${variableName}_has = 0,
+          'ALTER TABLE invoice_lines ADD COLUMN ${columnName} ${definition}',
+          'DO 0'
+        )`,
+        `PREPARE ${variableName}_stmt FROM @${variableName}_sql`,
+        `EXECUTE ${variableName}_stmt`,
+        `DEALLOCATE PREPARE ${variableName}_stmt`,
+      ];
+      }),
+    ],
+  },
+  {
+    id: '038-usd-default-currency',
+    description: 'Make USD the default/fallback currency for new pricing, invoice, and payment records.',
+    statements: [
+      `ALTER TABLE service_requests MODIFY COLUMN currency_code CHAR(3) NOT NULL DEFAULT 'USD'`,
+      `ALTER TABLE pricing_quotes MODIFY COLUMN currency_code CHAR(3) NOT NULL DEFAULT 'USD'`,
+      `ALTER TABLE invoices MODIFY COLUMN currency_code CHAR(3) NOT NULL DEFAULT 'USD'`,
+      `ALTER TABLE payment_transactions MODIFY COLUMN currency_code CHAR(3) NOT NULL DEFAULT 'USD'`,
+      `UPDATE platform_settings
+       SET setting_value_json = JSON_OBJECT('value', 'USD'),
+           updated_at = UTC_TIMESTAMP(6)
+       WHERE setting_key = 'platform.default_currency'`,
+      `INSERT INTO country_pricing_overrides (
+         public_id, country_code, country_name, currency_code, price_multiplier, is_default, is_active, created_at, updated_at
+       ) VALUES
+         (UPPER(SUBSTRING(REPLACE(UUID(), '-', ''), 1, 26)), 'DEFAULT', 'Default', 'USD', 1.000000, 1, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+         (UPPER(SUBSTRING(REPLACE(UUID(), '-', ''), 1, 26)), 'US', 'United States', 'USD', 1.000000, 0, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+       ON DUPLICATE KEY UPDATE
+         country_name = VALUES(country_name),
+         currency_code = VALUES(currency_code),
+         price_multiplier = VALUES(price_multiplier),
+         is_active = VALUES(is_active),
+         updated_at = VALUES(updated_at)`,
+    ],
+  },
+  {
+    id: '039-razorpay-payment-gateway',
+    description: 'Add Razorpay gateway order/event tracking and link captured transactions to gateway orders.',
+    statements: [
+      `CREATE TABLE IF NOT EXISTS payment_gateway_orders (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        public_id CHAR(26) NOT NULL,
+        provider_code VARCHAR(32) NOT NULL,
+        provider_order_id VARCHAR(120) NOT NULL,
+        invoice_id BIGINT UNSIGNED NULL,
+        service_request_id BIGINT UNSIGNED NULL,
+        client_account_id BIGINT UNSIGNED NOT NULL,
+        amount DECIMAL(14,2) NOT NULL,
+        amount_minor BIGINT UNSIGNED NOT NULL,
+        currency_code CHAR(3) NOT NULL,
+        status_code VARCHAR(32) NOT NULL,
+        receipt VARCHAR(40) NOT NULL,
+        idempotency_key_hash CHAR(64) NULL,
+        provider_payload_json JSON NULL,
+        created_by_user_id BIGINT UNSIGNED NULL,
+        created_at DATETIME(6) NOT NULL,
+        updated_at DATETIME(6) NOT NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_payment_gateway_orders_public_id (public_id),
+        UNIQUE KEY uq_payment_gateway_orders_provider_order (provider_code, provider_order_id),
+        INDEX idx_payment_gateway_orders_invoice (invoice_id, status_code),
+        INDEX idx_payment_gateway_orders_request (service_request_id, status_code),
+        INDEX idx_payment_gateway_orders_client (client_account_id, created_at),
+        CONSTRAINT fk_payment_gateway_orders_invoice FOREIGN KEY (invoice_id)
+          REFERENCES invoices (id)
+          ON UPDATE CASCADE
+          ON DELETE SET NULL,
+        CONSTRAINT fk_payment_gateway_orders_request FOREIGN KEY (service_request_id)
+          REFERENCES service_requests (id)
+          ON UPDATE CASCADE
+          ON DELETE SET NULL,
+        CONSTRAINT fk_payment_gateway_orders_client FOREIGN KEY (client_account_id)
+          REFERENCES client_accounts (id)
+          ON UPDATE CASCADE
+          ON DELETE RESTRICT,
+        CONSTRAINT fk_payment_gateway_orders_created_by FOREIGN KEY (created_by_user_id)
+          REFERENCES users (id)
+          ON UPDATE CASCADE
+          ON DELETE SET NULL,
+        CONSTRAINT chk_payment_gateway_orders_amount CHECK (amount >= 0 AND amount_minor > 0)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+      `CREATE TABLE IF NOT EXISTS payment_gateway_events (
+        id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        public_id CHAR(26) NOT NULL,
+        provider_code VARCHAR(32) NOT NULL,
+        event_type VARCHAR(120) NOT NULL,
+        provider_event_id VARCHAR(160) NOT NULL,
+        signature_valid TINYINT(1) NOT NULL DEFAULT 0,
+        provider_order_id VARCHAR(120) NULL,
+        provider_payment_id VARCHAR(120) NULL,
+        payload_json JSON NOT NULL,
+        received_at DATETIME(6) NOT NULL,
+        processed_at DATETIME(6) NULL,
+        created_at DATETIME(6) NOT NULL,
+        PRIMARY KEY (id),
+        UNIQUE KEY uq_payment_gateway_events_public_id (public_id),
+        UNIQUE KEY uq_payment_gateway_events_provider_event (provider_code, provider_event_id),
+        INDEX idx_payment_gateway_events_order (provider_order_id),
+        INDEX idx_payment_gateway_events_payment (provider_payment_id),
+        INDEX idx_payment_gateway_events_type (event_type, received_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci`,
+      `SET @pt_has_gateway_order_id := (
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = 'payment_transactions'
+          AND column_name = 'payment_gateway_order_id'
+      )`,
+      `SET @pt_add_gateway_order_id_sql := IF(
+        @pt_has_gateway_order_id = 0,
+        'ALTER TABLE payment_transactions ADD COLUMN payment_gateway_order_id BIGINT UNSIGNED NULL AFTER payment_method_id',
+        'DO 0'
+      )`,
+      `PREPARE pt_add_gateway_order_id_stmt FROM @pt_add_gateway_order_id_sql`,
+      `EXECUTE pt_add_gateway_order_id_stmt`,
+      `DEALLOCATE PREPARE pt_add_gateway_order_id_stmt`,
+      `SET @pt_has_gateway_order_idx := (
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'payment_transactions'
+          AND index_name = 'idx_payment_transactions_gateway_order'
+      )`,
+      `SET @pt_add_gateway_order_idx_sql := IF(
+        @pt_has_gateway_order_idx = 0,
+        'ALTER TABLE payment_transactions ADD INDEX idx_payment_transactions_gateway_order (payment_gateway_order_id)',
+        'DO 0'
+      )`,
+      `PREPARE pt_add_gateway_order_idx_stmt FROM @pt_add_gateway_order_idx_sql`,
+      `EXECUTE pt_add_gateway_order_idx_stmt`,
+      `DEALLOCATE PREPARE pt_add_gateway_order_idx_stmt`,
+      `SET @pt_has_gateway_payment_idx := (
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'payment_transactions'
+          AND index_name = 'idx_payment_transactions_gateway_payment'
+      )`,
+      `SET @pt_add_gateway_payment_idx_sql := IF(
+        @pt_has_gateway_payment_idx = 0,
+        'ALTER TABLE payment_transactions ADD INDEX idx_payment_transactions_gateway_payment (gateway_provider_code, gateway_payment_ref)',
+        'DO 0'
+      )`,
+      `PREPARE pt_add_gateway_payment_idx_stmt FROM @pt_add_gateway_payment_idx_sql`,
+      `EXECUTE pt_add_gateway_payment_idx_stmt`,
+      `DEALLOCATE PREPARE pt_add_gateway_payment_idx_stmt`,
+      `SET @pt_has_gateway_order_fk := (
+        SELECT COUNT(*)
+        FROM information_schema.referential_constraints
+        WHERE constraint_schema = DATABASE()
+          AND table_name = 'payment_transactions'
+          AND constraint_name = 'fk_payment_transactions_gateway_order'
+      )`,
+      `SET @pt_add_gateway_order_fk_sql := IF(
+        @pt_has_gateway_order_fk = 0,
+        'ALTER TABLE payment_transactions ADD CONSTRAINT fk_payment_transactions_gateway_order FOREIGN KEY (payment_gateway_order_id) REFERENCES payment_gateway_orders (id) ON UPDATE CASCADE ON DELETE SET NULL',
+        'DO 0'
+      )`,
+      `PREPARE pt_add_gateway_order_fk_stmt FROM @pt_add_gateway_order_fk_sql`,
+      `EXECUTE pt_add_gateway_order_fk_stmt`,
+      `DEALLOCATE PREPARE pt_add_gateway_order_fk_stmt`,
+    ],
+  },
+  {
+    id: '040-active-usd-only-pricing',
+    description:
+      'Remove old active non-USD pricing from new quote/billing paths and keep exact USD amounts for future records.',
+    statements: [
+      `ALTER TABLE subscription_plans MODIFY COLUMN currency_code CHAR(3) NOT NULL DEFAULT 'USD'`,
+      `ALTER TABLE service_requests MODIFY COLUMN currency_code CHAR(3) NOT NULL DEFAULT 'USD'`,
+      `ALTER TABLE pricing_quotes MODIFY COLUMN currency_code CHAR(3) NOT NULL DEFAULT 'USD'`,
+      `ALTER TABLE invoices MODIFY COLUMN currency_code CHAR(3) NOT NULL DEFAULT 'USD'`,
+      `ALTER TABLE payment_transactions MODIFY COLUMN currency_code CHAR(3) NOT NULL DEFAULT 'USD'`,
+      `UPDATE platform_settings
+       SET setting_value_json = JSON_OBJECT('value', 'USD'),
+           updated_at = UTC_TIMESTAMP(6)
+       WHERE setting_key = 'platform.default_currency'`,
+      `INSERT INTO country_pricing_overrides (
+         public_id, country_code, country_name, currency_code, price_multiplier, is_default, is_active, created_at, updated_at
+       ) VALUES
+         (UPPER(SUBSTRING(REPLACE(UUID(), '-', ''), 1, 26)), 'DEFAULT', 'Default', 'USD', 1.000000, 1, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+         (UPPER(SUBSTRING(REPLACE(UUID(), '-', ''), 1, 26)), 'US', 'United States', 'USD', 1.000000, 0, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+       ON DUPLICATE KEY UPDATE
+         country_name = VALUES(country_name),
+         currency_code = VALUES(currency_code),
+         price_multiplier = VALUES(price_multiplier),
+         is_active = VALUES(is_active),
+         archived_at = NULL,
+         updated_at = VALUES(updated_at)`,
+      `UPDATE country_pricing_overrides
+       SET currency_code = 'USD',
+           price_multiplier = 1.000000,
+           updated_at = UTC_TIMESTAMP(6)
+       WHERE archived_at IS NULL`,
+      `UPDATE pricing_country_price_overrides
+       SET is_active = 0,
+           archived_at = UTC_TIMESTAMP(6),
+           updated_at = UTC_TIMESTAMP(6)
+       WHERE archived_at IS NULL
+         AND currency_code <> 'USD'`,
+    ],
+  },
+  {
+    id: '041-normalize-existing-active-currencies-to-usd',
+    description:
+      'Normalize existing active pricing, invoice, payment, and gateway rows to USD without recalculating stored amounts.',
+    statements: [
+      `UPDATE subscription_plans
+       SET currency_code = 'USD'
+       WHERE currency_code <> 'USD'`,
+      `UPDATE service_requests
+       SET currency_code = 'USD'
+       WHERE currency_code <> 'USD'`,
+      `UPDATE request_services
+       SET currency_code = 'USD',
+           original_currency_code = NULL,
+           original_quoted_base_fee = NULL,
+           exchange_rate = NULL,
+           exchange_rate_date = NULL,
+           exchange_rate_provider = NULL
+       WHERE currency_code <> 'USD'
+          OR original_currency_code IS NOT NULL
+          OR exchange_rate IS NOT NULL`,
+      `UPDATE pricing_quotes
+       SET currency_code = 'USD',
+           original_currency_code = NULL,
+           original_base_amount = NULL,
+           original_urgency_surcharge_amount = NULL,
+           original_consultation_mode_surcharge_amount = NULL,
+           original_total_amount = NULL,
+           exchange_rate = NULL,
+           exchange_rate_date = NULL,
+           exchange_rate_provider = NULL,
+           fx_snapshot_json = NULL
+       WHERE currency_code <> 'USD'
+          OR original_currency_code IS NOT NULL
+          OR exchange_rate IS NOT NULL
+          OR fx_snapshot_json IS NOT NULL`,
+      `UPDATE pricing_quote_lines
+       SET original_currency_code = NULL,
+           original_unit_amount = NULL,
+           original_line_amount = NULL,
+           exchange_rate = NULL,
+           exchange_rate_date = NULL,
+           exchange_rate_provider = NULL
+       WHERE original_currency_code IS NOT NULL
+          OR exchange_rate IS NOT NULL`,
+      `UPDATE invoices
+       SET currency_code = 'USD',
+           original_currency_code = NULL,
+           original_subtotal_amount = NULL,
+           original_tax_amount = NULL,
+           original_total_amount = NULL,
+           exchange_rate = NULL,
+           exchange_rate_date = NULL,
+           exchange_rate_provider = NULL,
+           fx_snapshot_json = NULL
+       WHERE currency_code <> 'USD'
+          OR original_currency_code IS NOT NULL
+          OR exchange_rate IS NOT NULL
+          OR fx_snapshot_json IS NOT NULL`,
+      `UPDATE invoice_lines
+       SET original_currency_code = NULL,
+           original_unit_price = NULL,
+           original_line_subtotal = NULL,
+           original_taxable_amount = NULL,
+           original_line_total = NULL,
+           exchange_rate = NULL,
+           exchange_rate_date = NULL,
+           exchange_rate_provider = NULL
+       WHERE original_currency_code IS NOT NULL
+          OR exchange_rate IS NOT NULL`,
+      `UPDATE payment_transactions
+       SET currency_code = 'USD'
+       WHERE currency_code <> 'USD'`,
+      `UPDATE payment_gateway_orders
+       SET currency_code = 'USD'
+       WHERE currency_code <> 'USD'`,
+    ],
+  },
 ];

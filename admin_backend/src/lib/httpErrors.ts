@@ -1,4 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
+import { env } from '../config/env.js';
+import { getRequestId, logEvent } from './observability.js';
 
 export class AppError extends Error {
   public readonly code: string;
@@ -36,22 +38,45 @@ export const asyncHandler =
 
 export const errorMiddleware = (
   error: unknown,
-  _request: Request,
+  request: Request,
   response: Response,
   _next: NextFunction
 ) => {
+  const requestId = getRequestId(response);
+
   if (error instanceof AppError) {
+    logEvent(error.statusCode >= 500 ? 'error' : 'warn', 'request.error', {
+      errorCode: error.code,
+      issues: error.issues,
+      method: request.method,
+      path: request.originalUrl,
+      requestId,
+      statusCode: error.statusCode,
+    });
+
     response.status(error.statusCode).json({
       error: error.code,
       issues: error.issues,
       message: error.message,
+      requestId,
     });
     return;
   }
 
   const message = error instanceof Error ? error.message : 'Unexpected server error.';
+  logEvent('error', 'request.error', {
+    errorMessage: message,
+    errorName: error instanceof Error ? error.name : 'UnknownError',
+    errorStack: env.APP_ENV === 'production' ? undefined : error instanceof Error ? error.stack : undefined,
+    method: request.method,
+    path: request.originalUrl,
+    requestId,
+    statusCode: 500,
+  });
+
   response.status(500).json({
     error: 'internal_server_error',
     message,
+    requestId,
   });
 };

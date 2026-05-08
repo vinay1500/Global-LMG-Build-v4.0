@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../lib/httpErrors.js';
+import { runIdempotentJson } from '../lib/idempotency.js';
 import { createClient, getClientWorkspace, listClients } from '../modules/clients/service.js';
 import { requireMutationPermission, requireReadPermission } from './shared.js';
 
@@ -24,7 +25,7 @@ clientsRouter.get(
     await requireReadPermission(request, 'client_account.view');
     response.json(
       await listClients({
-        limit: Number(request.query.limit || 100),
+        limit: Number(request.query.limit || 50),
         offset: Number(request.query.offset || 0),
         search: typeof request.query.search === 'string' ? request.query.search : undefined,
       })
@@ -36,7 +37,16 @@ clientsRouter.post(
   '/clients',
   asyncHandler(async (request, response) => {
     const actor = await requireMutationPermission(request, 'client_account.manage');
-    response.status(201).json(await createClient(actor, createClientSchema.parse(request.body)));
+    const payload = createClientSchema.parse(request.body);
+    const result = await runIdempotentJson(request, {
+      actorKey: actor.id,
+      actorUserId: actor.userId,
+      operation: () => createClient(actor, payload),
+      scope: 'admin:client:create',
+      statusCode: 201,
+    });
+    response.setHeader('Idempotency-Replayed', result.replayed ? 'true' : 'false');
+    response.status(result.statusCode).json(result.body);
   })
 );
 

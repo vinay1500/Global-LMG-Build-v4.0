@@ -58,7 +58,7 @@ export const loadGoogleIdentitySdk = async () => {
   }
 
   if (!GOOGLE_CLIENT_ID) {
-    throw new Error('Google sign-in is not configured for this environment.');
+    throw new Error('Google sign-in is not available right now.');
   }
 
   if (window.google?.accounts?.id) {

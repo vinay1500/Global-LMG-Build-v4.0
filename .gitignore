@@ -4,16 +4,22 @@ admin_frontend/node_modules
 admin_backend/node_modules
 dist/
 **/dist/
+*.tsbuildinfo
 .env
 .env.*
+!.env.example
 backend/.env
 backend/.env.*
+!backend/.env.example
 admin_backend/.env
 admin_backend/.env.*
+!admin_backend/.env.example
 frontend/.env
 frontend/.env.*
+!frontend/.env.example
 admin_frontend/.env
 admin_frontend/.env.*
+!admin_frontend/.env.example
 credentials
 certs/aiven/ca.pem
 .DS_Store
@@ -23,4 +29,5 @@ yarn-error.log*
 app (4)
 admin_panel (8)
 storage/glmg-uploads/
+backend/var/uploads/
 backups/db/

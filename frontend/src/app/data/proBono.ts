@@ -26,7 +26,7 @@ export interface ProBonoCaseStudy {
 export const PRO_BONO_PAGE_CONTENT = {
   eyebrow: 'GIVING BACK',
   title: 'Pro Bono\nCommitment',
-  intro: `At ${BRAND_NAME}, we believe access to justice is a fundamental right. Our pro bono program reflects a commitment to using legal expertise to serve those most in need.`,
+  intro: `At ${BRAND_NAME}, we believe access to justice matters. Our pro bono coordination program supports qualified independent professionals and nonprofit partners serving people with limited resources.`,
   impactTitle: 'Our Impact Areas',
   storiesTitle: 'Recent Success Stories',
   recognitionTitle: 'Recognized Excellence',
@@ -34,7 +34,7 @@ export const PRO_BONO_PAGE_CONTENT = {
     'Our pro bono program has been recognized by leading legal organizations for our commitment to social justice and community service.',
   partnershipTitle: 'Partner with Us',
   partnershipDescription:
-    "If you represent a nonprofit organization or community group that could benefit from our legal expertise, we'd like to hear from you.",
+    "If you represent a nonprofit organization or community group that could benefit from coordination and support, we'd like to hear from you.",
 } as const;
 
 export const PRO_BONO_STATS: ProBonoStat[] = [
@@ -61,7 +61,7 @@ export const PRO_BONO_IMPACT_AREAS: ProBonoImpactArea[] = [
     iconKey: 'scale',
     title: 'Access to Justice',
     description:
-      'Providing legal representation to individuals and communities who cannot afford it.',
+      'Coordinating access-to-justice support with qualified independent professionals and community partners.',
     stats: '500+ cases annually',
   },
   {
@@ -107,7 +107,7 @@ export const PRO_BONO_CASE_STUDIES: ProBonoCaseStudy[] = [
     id: 3,
     title: 'Small Business Legal Clinic',
     description:
-      'Providing free legal advice to entrepreneurs from disadvantaged communities to help them launch and grow their businesses.',
+      'Coordinated clinic support for entrepreneurs from disadvantaged communities working with qualified independent professionals.',
     impact: '200+ businesses supported',
     image: selfHostedUnsplashImage('photo-1556761175-b413da4baf72'),
   },

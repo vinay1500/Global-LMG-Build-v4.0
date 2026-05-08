@@ -29,7 +29,7 @@ export const emailAuthProvider = {
     if (env.EMAIL_PROVIDER_MODE === 'disabled') {
       throw serviceUnavailable(
         'email_provider_disabled',
-        'Email delivery is disabled in this environment.'
+        'Email delivery is not available right now.'
       );
     }
 

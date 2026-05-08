@@ -45,6 +45,7 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
   const [actionsOpen, setActionsOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const initials = currentUser?.displayName?.slice(0, 1)?.toUpperCase() || 'A';
+  const hasPermission = (permission: string) => Boolean(currentUser?.permissionCodes.includes(permission));
 
   useEffect(() => {
     const handlePointerDown = (event: MouseEvent) => {
@@ -136,56 +137,71 @@ export const AdminTopbar: React.FC<AdminTopbarProps> = ({
               className="absolute right-0 top-full mt-2 w-72 rounded-xl border border-[#E6E4DD] bg-white p-2 shadow-xl"
               role="menu"
             >
-              <MenuAction
-                description="Start or reply from Communications Desk"
-                icon={MessageSquare}
-                label="New Message"
-                onClick={() => navigateAndClose('/messages')}
-              />
-              <MenuAction
-                description="Create or manage scheduled meetings"
-                icon={Calendar}
-                label="Create Event / Meetings"
-                onClick={() => navigateAndClose('/meetings')}
-              />
-              <MenuAction
-                description="Upload and review client documents"
-                icon={FileUp}
-                label="Upload Document / Documents"
-                onClick={() => navigateAndClose('/documents')}
-              />
-              <MenuAction
-                description="Create invoices or record payments"
-                icon={CreditCard}
-                label="Open Billing"
-                onClick={() => navigateAndClose('/billing')}
-              />
-              <MenuAction
-                description="Open DB-backed drilldowns and exports"
-                icon={BarChart3}
-                label="Open Reports"
-                onClick={() => navigateAndClose('/reports')}
-              />
+              {hasPermission('message.send') ? (
+                <MenuAction
+                  description="Start or reply from Communications Desk"
+                  icon={MessageSquare}
+                  label="New Message"
+                  onClick={() => navigateAndClose('/messages')}
+                />
+              ) : null}
+              {hasPermission('event.view') ? (
+                <MenuAction
+                  description="Create or manage scheduled meetings"
+                  icon={Calendar}
+                  label="Create Event / Meetings"
+                  onClick={() => navigateAndClose('/meetings')}
+                />
+              ) : null}
+              {hasPermission('document.view') ? (
+                <MenuAction
+                  description="Upload and review client documents"
+                  icon={FileUp}
+                  label="Upload Document / Documents"
+                  onClick={() => navigateAndClose('/documents')}
+                />
+              ) : null}
+              {hasPermission('invoice.view') ? (
+                <MenuAction
+                  description="Create invoices or record payments"
+                  icon={CreditCard}
+                  label="Open Billing"
+                  onClick={() => navigateAndClose('/billing')}
+                />
+              ) : null}
+              {hasPermission('dashboard.view') ? (
+                <MenuAction
+                  description="Open DB-backed drilldowns and exports"
+                  icon={BarChart3}
+                  label="Open Reports"
+                  onClick={() => navigateAndClose('/reports')}
+                />
+              ) : null}
               <div className="my-2 border-t border-[#F4F1EA]" />
-              <MenuAction
-                description="Open Client Directory create flow"
-                icon={Users}
-                label="New Client"
-                onClick={() => navigateAndClose('/clients?action=new')}
-              />
-              <MenuAction
-                description="Open Matter Desk create flow"
-                icon={Briefcase}
-                label="New Matter"
-                onClick={() => navigateAndClose('/matters?action=new')}
-              />
+              {hasPermission('client_account.manage') ? (
+                <MenuAction
+                  description="Open Client Directory create flow"
+                  icon={Users}
+                  label="New Client"
+                  onClick={() => navigateAndClose('/clients?action=new')}
+                />
+              ) : null}
+              {hasPermission('matter.update') ? (
+                <MenuAction
+                  description="Open Matter Desk create flow"
+                  icon={Briefcase}
+                  label="New Matter"
+                  onClick={() => navigateAndClose('/matters?action=new')}
+                />
+              ) : null}
             </div>
           ) : null}
         </div>
         <div className="h-6 w-px bg-[#E6E4DD] hidden sm:block" />
         <button
           aria-label="Open notifications"
-          className="p-2 text-[#8C8981] hover:text-[#2C2B29] hover:bg-[#E6E4DD] rounded-full transition relative"
+          className="p-2 text-[#8C8981] hover:text-[#2C2B29] hover:bg-[#E6E4DD] rounded-full transition relative disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={!hasPermission('matter.view')}
           onClick={() => navigateAndClose('/notifications')}
           type="button"
         >

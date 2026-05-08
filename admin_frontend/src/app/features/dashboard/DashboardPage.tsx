@@ -11,7 +11,7 @@ import { useNavigate } from 'react-router';
 import { WorkspaceState } from '../../components/shared/WorkspaceState';
 import { useAsyncResource } from '../../hooks/useAsyncResource';
 import { adminApi } from '../../lib/api/admin';
-import { formatCurrency } from '../../data/seedData';
+import { formatCurrency } from '../../data/formatters';
 
 export const DashboardPage = () => {
   const navigate = useNavigate();
@@ -88,10 +88,10 @@ export const DashboardPage = () => {
           </div>
         </div>
         <div className="bg-[#FDF8EF] border border-[#EAD2A8] p-4 rounded-xl lg:col-span-2">
-          <p className="text-sm font-medium text-[#2C2B29]">Phase 2 Live Status</p>
+          <p className="text-sm font-medium text-[#2C2B29]">Operational Snapshot</p>
           <p className="text-xs text-[#8C8981] mt-1">
-            Dashboard cards, stage mix, revenue trend, receivables aging, recent audit, recent
-            notifications, and access-control snapshots are now live from `admin_backend`.
+            Dashboard cards, stage mix, revenue trend, receivables aging, recent audit,
+            notifications, and access-control activity are up to date.
           </p>
         </div>
       </div>

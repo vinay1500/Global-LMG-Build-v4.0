@@ -4,7 +4,7 @@ import {
   CheckCircle, Briefcase, User, MoreVertical, ChevronDown, 
   ArrowDownToLine, ArrowUpToLine, DollarSign, Calendar, Loader2
 } from 'lucide-react';
-import { type Matter, PLATFORM_USERS, type PlatformUser } from '../data/seedData';
+import type { Matter, PlatformUser } from '../data/seedData';
 import { StatusBadge, UrgencyDot } from '../components/dashboard/StatusBadge';
 import { EmptyState } from './EmptyState';
 import type { CreateMatterPayload, CreateMatterResponse, MatterCreateOptions } from '../lib/api/contracts';
@@ -59,10 +59,7 @@ export const MatterDeskAdmin: React.FC<MatterDeskAdminProps> = ({
     billing: null
   });
 
-  const clients = useMemo(
-    () => providedClients || PLATFORM_USERS.filter(u => u.lifecycle === 'client'),
-    [providedClients]
-  );
+  const clients = useMemo(() => providedClients || [], [providedClients]);
   const canCreateMatter = Boolean(
     onCreateMatter && createOptions?.clients?.length && createOptions?.domains?.length
   );
@@ -126,7 +123,7 @@ export const MatterDeskAdmin: React.FC<MatterDeskAdminProps> = ({
     }
 
     if (!createForm.clientAccountPublicId || !createForm.title.trim() || !createForm.legalDomainCode) {
-      setCreateError('Client, title, and domain are required.');
+      setCreateError('Client, title, and legal domain are required.');
       return;
     }
 
@@ -158,7 +155,7 @@ export const MatterDeskAdmin: React.FC<MatterDeskAdminProps> = ({
       if (filters.status && m.operationalStatus !== filters.status) return false;
       if (filters.clientId && m.clientId !== filters.clientId) return false;
       if (filters.billing) {
-        // Mock billing state logic based on paidAmount/totalFee
+        // Derived billing state based on recorded payments and matter fee totals.
         const isOverdue = m.paidAmount === 0 && m.totalFee > 0;
         const isUnbilled = m.totalFee === 0;
         const isCurrent = m.paidAmount >= m.totalFee && m.totalFee > 0;
@@ -193,6 +190,25 @@ export const MatterDeskAdmin: React.FC<MatterDeskAdminProps> = ({
       case 'stale': return 'bg-gray-200 text-gray-700';
       default: return 'bg-gray-100 text-gray-700';
     }
+  };
+
+  const getAssignmentSummary = (matter: Matter) => {
+    const assignments = matter.assignments || [];
+    if (assignments.length === 0) {
+      return matter.assignedCounsel || matter.assignedStaff || 'Unassigned';
+    }
+
+    const staffCount = assignments.filter((entry) => entry.type === 'internal_staff').length;
+    const counselCount = assignments.filter((entry) => entry.type === 'external_counsel').length;
+    const fieldPartnerCount = assignments.filter((entry) => entry.type === 'field_partner').length;
+
+    return [
+      staffCount ? `${staffCount} staff` : null,
+      counselCount ? `${counselCount} counsel` : null,
+      fieldPartnerCount ? `${fieldPartnerCount} field partner${fieldPartnerCount === 1 ? '' : 's'}` : null,
+    ]
+      .filter(Boolean)
+      .join(' · ') || 'Unassigned';
   };
 
   return (
@@ -235,7 +251,7 @@ export const MatterDeskAdmin: React.FC<MatterDeskAdminProps> = ({
             }`}
             disabled={!canCreateMatter}
             onClick={() => openCreateModal(preselectedClientId)}
-            title={canCreateMatter ? 'Create a new matter.' : 'Create at least one active client and configured domain first.'}
+            title={canCreateMatter ? 'Create a new matter.' : 'Create at least one active client and configured legal domain first.'}
             type="button"
           >
             <Plus className="w-4 h-4" /> New Matter
@@ -356,7 +372,7 @@ export const MatterDeskAdmin: React.FC<MatterDeskAdminProps> = ({
                     <td className="p-4">
                       <p className="text-sm text-[#2C2B29]">{m.clientName}</p>
                       <div className="flex items-center gap-1 mt-1 text-[10px] text-[#8C8981]">
-                        <User className="w-3 h-3" /> Unassigned
+                        <User className="w-3 h-3" /> {getAssignmentSummary(m)}
                       </div>
                     </td>
                     <td className="p-4">
@@ -564,14 +580,13 @@ export const MatterDeskAdmin: React.FC<MatterDeskAdminProps> = ({
               </label>
 
               <label className="space-y-1.5">
-                <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Domain</span>
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Legal domain</span>
                 <select
                   className="w-full rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
                   onChange={(event) =>
                     setCreateForm((current) => ({
                       ...current,
                       legalDomainCode: event.target.value,
-                      serviceCodes: [],
                     }))
                   }
                   required
@@ -586,26 +601,44 @@ export const MatterDeskAdmin: React.FC<MatterDeskAdminProps> = ({
               </label>
 
               <label className="space-y-1.5">
-                <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Service</span>
-                <select
-                  className="w-full rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29] outline-none transition focus:border-[#C19A5B]"
-                  onChange={(event) =>
-                    setCreateForm((current) => ({
-                      ...current,
-                      serviceCodes: event.target.value ? [event.target.value] : [],
-                    }))
-                  }
-                  value={createForm.serviceCodes?.[0] || ''}
-                >
-                  <option value="">No specific service</option>
-                  {createOptions?.services
-                    .filter((service) => service.domainCode === createForm.legalDomainCode)
-                    .map((service) => (
-                      <option key={service.code} value={service.code}>
-                        {service.name}
-                      </option>
-                    ))}
-                </select>
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#8C8981]">Primary services</span>
+                <div className="max-h-40 overflow-y-auto rounded-lg border border-[#E6E4DD] bg-white p-2">
+                  {(createOptions?.services || []).map((service) => {
+                    const selected = Boolean(createForm.serviceCodes?.includes(service.code));
+                    return (
+                      <label
+                        className="flex cursor-pointer items-start gap-2 rounded-md px-2 py-1.5 text-sm text-[#2C2B29] hover:bg-[#F4F1EA]"
+                        key={service.code}
+                      >
+                        <input
+                          checked={selected}
+                          className="mt-0.5 h-4 w-4 accent-[#C19A5B]"
+                          onChange={(event) =>
+                            setCreateForm((current) => {
+                              const existing = current.serviceCodes || [];
+                              return {
+                                ...current,
+                                serviceCodes: event.target.checked
+                                  ? Array.from(new Set([...existing, service.code]))
+                                  : existing.filter((code) => code !== service.code),
+                              };
+                            })
+                          }
+                          type="checkbox"
+                        />
+                        <span>
+                          {service.name}
+                          {service.domainName ? (
+                            <span className="ml-1 text-xs text-[#A8A69F]">({service.domainName})</span>
+                          ) : null}
+                        </span>
+                      </label>
+                    );
+                  })}
+                  {(createOptions?.services || []).length === 0 ? (
+                    <p className="px-2 py-1.5 text-xs text-[#8C8981]">No active services configured.</p>
+                  ) : null}
+                </div>
               </label>
 
               <label className="space-y-1.5">

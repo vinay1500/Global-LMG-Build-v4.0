@@ -1,8 +1,10 @@
-import { type Response, Router } from 'express';
+import { createHash } from 'node:crypto';
+import { type Request, type Response, Router } from 'express';
 import { z } from 'zod';
 import { requireAuthenticatedUser } from '../lib/authSession.js';
 import { requireCsrf } from '../lib/csrf.js';
 import { asyncHandler } from '../lib/httpErrors.js';
+import { runIdempotentJson } from '../lib/idempotency.js';
 import { dashboardService } from '../modules/dashboard/service.js';
 import type { PlatformUser } from '../modules/dashboard/types.js';
 
@@ -15,11 +17,6 @@ const requestDocumentSchema = z.object({
 });
 
 const dashboardRequestSchema = z.object({
-  fullName: z.string().trim().min(2).max(120),
-  email: z.string().trim().email(),
-  mobile: z.string().trim().min(8).max(40),
-  whatsappNumber: z.string().trim().min(8).max(40).optional(),
-  whatsappSame: z.boolean(),
   services: z.array(z.string().trim().min(1)).min(1),
   legalDomain: z.string().trim().min(2).max(80),
   caseDetails: z.string().trim().min(10).max(5000),
@@ -27,7 +24,10 @@ const dashboardRequestSchema = z.object({
   documents: z.array(requestDocumentSchema).max(12),
   consultationMode: z.string().trim().min(1).max(32),
   preferredDate: z.string().trim().min(1),
+  preferredEndAtUtc: z.string().datetime().optional(),
+  preferredStartAtUtc: z.string().datetime().optional(),
   preferredTime: z.string().trim().min(1),
+  preferredTimezone: z.string().trim().min(1).max(80).optional(),
   urgency: z.string().trim().min(1).max(32),
   pastLegalAction: z.boolean(),
 });
@@ -67,12 +67,31 @@ const respondWithSnapshot = (response: Response, snapshot: Awaited<ReturnType<ty
   response.json(snapshot);
 };
 
+const respondWithCacheableSnapshot = (
+  request: Request,
+  response: Response,
+  snapshot: Awaited<ReturnType<typeof dashboardService.getSnapshot>>
+) => {
+  const serialized = JSON.stringify(snapshot);
+  const etag = `W/"${createHash('sha256').update(serialized).digest('base64url')}"`;
+
+  response.setHeader('Cache-Control', 'private, no-cache');
+  response.setHeader('ETag', etag);
+
+  if (request.header('if-none-match') === etag) {
+    response.status(304).end();
+    return;
+  }
+
+  response.type('application/json').send(serialized);
+};
+
 dashboardRouter.get(
   '/dashboard',
   asyncHandler(async (request, response) => {
     const authenticatedUser = await requireAuthenticatedUser(request, response);
     const snapshot = await dashboardService.getSnapshot(toDashboardUser(authenticatedUser));
-    respondWithSnapshot(response, snapshot);
+    respondWithCacheableSnapshot(request, response, snapshot);
   })
 );
 
@@ -90,11 +109,15 @@ dashboardRouter.post(
     requireCsrf(request);
     const authenticatedUser = await requireAuthenticatedUser(request, response);
     const payload = dashboardRequestSchema.parse(request.body);
-    const snapshot = await dashboardService.submitRequest(
-      toDashboardUser(authenticatedUser),
-      payload
-    );
-    respondWithSnapshot(response, snapshot);
+    const dashboardUser = toDashboardUser(authenticatedUser);
+    const result = await runIdempotentJson(request, {
+      actorKey: dashboardUser.id,
+      operation: () => dashboardService.submitRequest(dashboardUser, payload),
+      scope: 'client:dashboard:request:submit',
+    });
+    response.setHeader('Idempotency-Replayed', result.replayed ? 'true' : 'false');
+    response.status(result.statusCode);
+    respondWithSnapshot(response, result.body);
   })
 );
 

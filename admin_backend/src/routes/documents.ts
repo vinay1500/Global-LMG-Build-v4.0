@@ -6,6 +6,7 @@ import {
   getAdminDocumentFile,
   getDocumentDetail,
   listDocuments,
+  rescanAdminDocument,
   updateDocumentControls,
   uploadAdminDocument,
   uploadAdminDocumentVersion,
@@ -67,7 +68,12 @@ documentsRouter.get(
   '/documents',
   asyncHandler(async (request, response) => {
     await requireReadPermission(request, 'document.view');
-    response.json(await listDocuments());
+    response.json(
+      await listDocuments({
+        limit: Number(request.query.limit || 50),
+        offset: Number(request.query.offset || 0),
+      })
+    );
   })
 );
 
@@ -89,29 +95,11 @@ documentsRouter.get(
       'download'
     );
 
-    await new Promise<void>((resolve, reject) => {
-      response.sendFile(
-        result.absolutePath,
-        {
-          headers: {
-            'Cache-Control': 'no-store',
-            'Content-Disposition': `attachment; filename="${sanitizeDownloadFilename(
-              result.originalName
-            )}"`,
-            'Content-Type': result.mimeType,
-            'X-Content-Type-Options': 'nosniff',
-          },
-        },
-        (error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-
-          resolve();
-        }
-      );
-    });
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Content-Disposition', `attachment; filename="${sanitizeDownloadFilename(result.originalName)}"`);
+    response.setHeader('Content-Type', result.mimeType);
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.send(result.content);
   })
 );
 
@@ -121,30 +109,12 @@ documentsRouter.get(
     const actor = await requireReadPermission(request, 'document.view');
     const result = await getAdminDocumentFile(actor, String(request.params.documentId || ''), 'preview');
 
-    await new Promise<void>((resolve, reject) => {
-      response.sendFile(
-        result.absolutePath,
-        {
-          headers: {
-            'Cache-Control': 'no-store',
-            'Content-Disposition': `inline; filename="${sanitizeDownloadFilename(
-              result.originalName
-            )}"`,
-            'Content-Security-Policy': 'sandbox',
-            'Content-Type': result.mimeType,
-            'X-Content-Type-Options': 'nosniff',
-          },
-        },
-        (error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-
-          resolve();
-        }
-      );
-    });
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Content-Disposition', `inline; filename="${sanitizeDownloadFilename(result.originalName)}"`);
+    response.setHeader('Content-Security-Policy', 'sandbox');
+    response.setHeader('Content-Type', result.mimeType);
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.send(result.content);
   })
 );
 
@@ -209,5 +179,13 @@ documentsRouter.patch(
         updateDocumentSchema.parse(request.body)
       )
     );
+  })
+);
+
+documentsRouter.post(
+  '/documents/:documentId/scan',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'document.manage');
+    response.json(await rescanAdminDocument(actor, String(request.params.documentId || '')));
   })
 );

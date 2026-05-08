@@ -1,6 +1,8 @@
 import type {
   AdminAccountResponse,
   AdminPasswordChangeResponse,
+  AdminPasswordResetConfirmResponse,
+  AdminPasswordResetRequestResponse,
   AdminSessionResponse,
   UpdateAdminPreferencesPayload,
   UpdateAdminProfilePayload,
@@ -20,8 +22,18 @@ const postJson = <TResponse>(url: string, payload?: unknown) =>
 export const authApi = {
   changePassword: (payload: { currentPassword: string; newPassword: string }) =>
     postJson<AdminPasswordChangeResponse>(API_ENDPOINTS.admin.auth.password(), payload),
+  confirmPasswordReset: (payload: { code: string; newPassword: string; token: string }) =>
+    postJson<AdminPasswordResetConfirmResponse>(
+      API_ENDPOINTS.admin.auth.passwordResetConfirm(),
+      payload
+    ),
   getAccount: () => apiRequest<AdminAccountResponse>(API_ENDPOINTS.admin.auth.me()),
   getSession: () => apiRequest<AdminSessionResponse>(API_ENDPOINTS.admin.auth.session()),
+  requestPasswordReset: (payload: { identifier: string }) =>
+    postJson<AdminPasswordResetRequestResponse>(
+      API_ENDPOINTS.admin.auth.passwordResetRequest(),
+      payload
+    ),
   updatePreferences: (payload: UpdateAdminPreferencesPayload) =>
     apiRequest<AdminAccountResponse>(API_ENDPOINTS.admin.auth.preferences(), {
       body: JSON.stringify(payload),

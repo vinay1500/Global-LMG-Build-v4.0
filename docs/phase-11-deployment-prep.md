@@ -46,6 +46,33 @@ Ignored local production scaffolds also exist for dry-run validation:
 - `DOCUMENT_STORAGE_ROOT` for `backend`
 - provider credentials if production email, SMS, or Google auth are enabled
 
+### Provider Delivery Modes
+
+Provider credentials must live only in ignored local/deployment env files or hosting secret stores. Do not commit real keys.
+
+Client API auth delivery:
+
+- `EMAIL_PROVIDER_MODE=disabled|preview|resend`
+- `EMAIL_FROM_ADDRESS`
+- `RESEND_API_KEY`
+- `SMS_PROVIDER_MODE=disabled|preview|twilio|twilio-verify`
+- `TWILIO_ACCOUNT_SID`
+- `TWILIO_AUTH_TOKEN`
+- `TWILIO_FROM_NUMBER` or `TWILIO_MESSAGING_SERVICE_SID` when using `SMS_PROVIDER_MODE=twilio`
+- `TWILIO_VERIFY_SERVICE_SID`
+
+Admin API notification, reminder, and invoice delivery:
+
+- `EMAIL_PROVIDER_MODE=disabled|preview|resend`
+- `EMAIL_FROM_ADDRESS`
+- `RESEND_API_KEY`
+- `SMS_PROVIDER_MODE=disabled|preview|twilio`
+- `TWILIO_ACCOUNT_SID`
+- `TWILIO_AUTH_TOKEN`
+- `TWILIO_FROM_NUMBER` or `TWILIO_MESSAGING_SERVICE_SID`
+
+When a provider mode is `disabled`, the platform must describe delivery as in-app, local, or manual. Resend/Twilio success is claimed only after the provider returns success; failures are stored as safe audit/reminder failure metadata without logging secrets.
+
 ## Recommended Domain and Routing Plan
 
 Use separate web origins for client and admin, with each web app reverse-proxying its own API under `/api`.

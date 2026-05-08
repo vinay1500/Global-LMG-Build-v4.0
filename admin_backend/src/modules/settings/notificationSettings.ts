@@ -58,6 +58,13 @@ type NotificationTemplateRow = RowDataPacket & {
   name: string;
 };
 
+const REFERENCE_CACHE_TTL_MS = 5 * 60_000;
+let notificationSettingsCache: { expiresAt: number; value: unknown } | null = null;
+
+const clearNotificationSettingsCache = () => {
+  notificationSettingsCache = null;
+};
+
 export const providerMode = () => ({
   email: env.EMAIL_PROVIDER_MODE,
   inApp: 'local' as const,
@@ -214,7 +221,7 @@ export const getActiveReminderSettings = async (
   return rows.map(mapReminderSetting);
 };
 
-export const getNotificationSettings = async () => {
+const loadNotificationSettings = async () => {
   const [deliveryRows, reminderRows, eventTypeRows, templateRows] = await Promise.all([
     queryRows<DeliverySettingRow>(`${deliverySelectSql} ORDER BY nt.sort_order ASC, nt.label ASC`),
     queryRows<ReminderSettingRow>(
@@ -247,11 +254,22 @@ export const getNotificationSettings = async () => {
   };
 };
 
+export const getNotificationSettings = async () => {
+  if (notificationSettingsCache && notificationSettingsCache.expiresAt > Date.now()) {
+    return notificationSettingsCache.value as Awaited<ReturnType<typeof loadNotificationSettings>>;
+  }
+
+  const value = await loadNotificationSettings();
+  notificationSettingsCache = { expiresAt: Date.now() + REFERENCE_CACHE_TTL_MS, value };
+  return value;
+};
+
 export const updateNotificationDeliverySetting = async (
   actor: AdminActor,
   typeCode: string,
   payload: NotificationDeliverySettingsInput
 ) => {
+  clearNotificationSettingsCache();
   assertProviderAllows(payload);
   await assertNotificationTemplate(payload.templateId);
 
@@ -347,6 +365,7 @@ const normalizeReminderInput = (payload: ReminderSettingInput) => {
 };
 
 export const createReminderSetting = async (actor: AdminActor, payload: ReminderSettingInput) => {
+  clearNotificationSettingsCache();
   const next = normalizeReminderInput(payload);
   const duplicate = firstRow(
     await queryRows<RowDataPacket & { id: number }>(
@@ -444,6 +463,7 @@ export const updateReminderSetting = async (
   settingId: string,
   payload: ReminderSettingUpdateInput
 ) => {
+  clearNotificationSettingsCache();
   const existing = await getReminderSettingRow(settingId);
   const next = normalizeReminderInput({
     channelCode: payload.channelCode || existing.channelCode,
@@ -507,6 +527,7 @@ export const updateReminderSetting = async (
 };
 
 export const archiveReminderSetting = async (actor: AdminActor, settingId: string) => {
+  clearNotificationSettingsCache();
   const existing = await getReminderSettingRow(settingId);
 
   await executeStatement(

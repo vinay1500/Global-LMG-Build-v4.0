@@ -127,6 +127,7 @@ export const MatterDetailPage = () => {
       myThreads={workspaceSnapshot?.threads || []}
       packageErrorMessage={packageErrorMessage}
       packageWorkspace={packageWorkspace}
+      serviceOptions={workspaceSnapshot?.createOptions?.services}
       onAddMatterNote={async (payload) => {
         await adminApi.createMatterNote(matter.id, payload);
         const nextWorkspace = await refresh();
@@ -134,6 +135,11 @@ export const MatterDetailPage = () => {
       }}
       onAssignMatter={async (payload) => {
         await adminApi.createMatterAssignment(matter.id, payload);
+        const nextWorkspace = await refresh();
+        setWorkspace(nextWorkspace);
+      }}
+      onReplaceMatterAssignments={async (payload) => {
+        await adminApi.replaceMatterAssignments(matter.id, payload);
         const nextWorkspace = await refresh();
         setWorkspace(nextWorkspace);
       }}

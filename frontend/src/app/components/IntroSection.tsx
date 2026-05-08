@@ -1,6 +1,7 @@
 import React from 'react';
 import { Scale } from 'lucide-react';
 import { Link } from 'react-router';
+import { HOME_INTRO_CONTENT } from '../content/site/home';
 
 export const IntroSection = () => {
   return (
@@ -18,9 +19,12 @@ export const IntroSection = () => {
           <div className="flex-grow max-w-4xl space-y-8">
             <div className="space-y-2">
               <h4 className="text-xs font-bold uppercase tracking-[0.3em] text-gray-400 leading-tight">
-                Pioneering the next era of
-                <br />
-                Global Legal Excellence
+                {HOME_INTRO_CONTENT.eyebrowLines.map((line, index) => (
+                  <React.Fragment key={line}>
+                    {line}
+                    {index < HOME_INTRO_CONTENT.eyebrowLines.length - 1 ? <br /> : null}
+                  </React.Fragment>
+                ))}
               </h4>
             </div>
 
@@ -28,22 +32,22 @@ export const IntroSection = () => {
               className="text-4xl md:text-6xl font-medium leading-[1.1] tracking-tight"
               style={{ fontFamily: "'Playfair Display', serif" }}
             >
-              Redefining standard practices through
-              <br />
-              Digital innovation and specialized
-              <br />
-              Intelligence to solve the world's most
-              <br />
-              Complex legal challenges today.
+              {HOME_INTRO_CONTENT.titleLines.map((line, index) => (
+                <React.Fragment key={line}>
+                  {line}
+                  {index < HOME_INTRO_CONTENT.titleLines.length - 1 ? <br /> : null}
+                </React.Fragment>
+              ))}
             </h2>
 
             <div className="max-w-xl">
               <p className="text-sm text-gray-500 leading-relaxed">
-                Our collaborative framework integrates deep jurisdictional expertise with
-                <br />
-                Forward-thinking technological infrastructure to provide seamless results.
-                <br />
-                We bridge the gap between traditional law and future markets.
+                {HOME_INTRO_CONTENT.bodyLines.map((line, index) => (
+                  <React.Fragment key={line}>
+                    {line}
+                    {index < HOME_INTRO_CONTENT.bodyLines.length - 1 ? <br /> : null}
+                  </React.Fragment>
+                ))}
               </p>
               
               
@@ -51,7 +55,7 @@ export const IntroSection = () => {
                 to="/about"
                 className="inline-flex items-center gap-2 mt-6 text-sm font-bold text-blue-600 hover:text-blue-800 transition-colors group"
               >
-                READ MORE
+                {HOME_INTRO_CONTENT.ctaLabel}
                 <div className="w-6 h-[2px] bg-blue-600 group-hover:w-10 transition-all duration-300" />
               </Link>
             </div>

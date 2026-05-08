@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../lib/httpErrors.js';
+import { runIdempotentJson } from '../lib/idempotency.js';
 import {
   addMatterNote,
   createMatter,
   createMatterAssignment,
   getMatterWorkspace,
   listMatters,
+  replaceMatterAssignments,
   updateMatterDetails,
   updateMatterStage,
 } from '../modules/matters/service.js';
@@ -44,6 +46,17 @@ const assignmentSchema = z.object({
   isPrimary: z.boolean().optional(),
   notes: z.string().trim().max(2000).optional(),
   visibleToClient: z.boolean().optional(),
+});
+
+const assignmentEntrySchema = z.object({
+  id: z.string().trim().min(2).max(64),
+  visibleToClient: z.boolean().optional(),
+});
+
+const replaceAssignmentsSchema = z.object({
+  externalCounsel: z.array(assignmentEntrySchema).max(20).optional(),
+  fieldPartners: z.array(assignmentEntrySchema).max(20).optional(),
+  staff: z.array(assignmentEntrySchema).max(20).optional(),
 });
 
 const updateMatterDetailsSchema = z.object({
@@ -104,7 +117,8 @@ mattersRouter.get(
     await requireReadPermission(request, 'matter.view');
     response.json(
       await listMatters({
-        limit: Number(request.query.limit || 100),
+        limit: Number(request.query.limit || 50),
+        offset: Number(request.query.offset || 0),
         search: typeof request.query.search === 'string' ? request.query.search : undefined,
       })
     );
@@ -115,7 +129,16 @@ mattersRouter.post(
   '/matters',
   asyncHandler(async (request, response) => {
     const actor = await requireMutationPermission(request, 'matter.update');
-    response.status(201).json(await createMatter(actor, createMatterSchema.parse(request.body)));
+    const payload = createMatterSchema.parse(request.body);
+    const result = await runIdempotentJson(request, {
+      actorKey: actor.id,
+      actorUserId: actor.userId,
+      operation: () => createMatter(actor, payload),
+      scope: 'admin:matter:create',
+      statusCode: 201,
+    });
+    response.setHeader('Idempotency-Replayed', result.replayed ? 'true' : 'false');
+    response.status(result.statusCode).json(result.body);
   })
 );
 
@@ -228,6 +251,20 @@ mattersRouter.post(
         actor,
         String(request.params.matterId || ''),
         assignmentSchema.parse(request.body)
+      )
+    );
+  })
+);
+
+mattersRouter.put(
+  '/matters/:matterId/assignments',
+  asyncHandler(async (request, response) => {
+    const actor = await requireMutationPermission(request, 'matter.update');
+    response.json(
+      await replaceMatterAssignments(
+        actor,
+        String(request.params.matterId || ''),
+        replaceAssignmentsSchema.parse(request.body)
       )
     );
   })

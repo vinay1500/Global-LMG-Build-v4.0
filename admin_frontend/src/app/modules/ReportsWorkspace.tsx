@@ -15,7 +15,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router';
-import { formatCurrency } from '../data/seedData';
+import { formatCurrency } from '../data/formatters';
 import { adminApi } from '../lib/api/admin';
 import type {
   ReportDrilldownItem,

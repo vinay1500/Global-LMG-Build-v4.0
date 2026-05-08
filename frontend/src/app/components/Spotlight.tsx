@@ -2,6 +2,7 @@ import React from 'react';
 import { ArrowRight } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { ImageWithFallback } from './shared/ImageWithFallback';
+import { HOME_SPOTLIGHT_CONTENT } from '../content/site/home';
 import { INSIGHT_ARTICLES } from '../data/insights';
 
 export const Spotlight = () => {
@@ -36,15 +37,18 @@ export const Spotlight = () => {
             className="text-5xl md:text-7xl leading-tight"
             style={{ fontFamily: "'Playfair Display', serif" }}
           >
-            Spotlight on our news and
-            <br />
-            insights
+            {HOME_SPOTLIGHT_CONTENT.titleLines.map((line, index) => (
+              <React.Fragment key={line}>
+                {line}
+                {index < HOME_SPOTLIGHT_CONTENT.titleLines.length - 1 ? <br /> : null}
+              </React.Fragment>
+            ))}
           </h2>
           <button
             onClick={() => navigate('/insights')}
             className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-green-700 hover:text-green-800 transition-colors"
           >
-            VIEW ALL NEWS AND INSIGHTS
+            {HOME_SPOTLIGHT_CONTENT.ctaLabel}
             <ArrowRight size={16} />
           </button>
         </div>

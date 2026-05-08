@@ -4,11 +4,14 @@ import { GraduationCap, Briefcase, Users, MapPin, Clock, ArrowRight } from 'luci
 import { useNavigate } from 'react-router';
 import { ImageWithFallback } from '../components/shared/ImageWithFallback';
 import { Seo } from '../components/seo/Seo';
-import { BRAND_NAME } from '../config/brand';
 import { CLIENT_INTAKE_HREF } from '../config/launchLinks';
-import { CAREER_CATEGORIES, CAREER_OPENINGS } from '../data/careers';
+import {
+  CAREER_BENEFITS,
+  CAREER_CATEGORIES,
+  CAREER_OPENINGS,
+  CAREERS_PAGE_CONTENT,
+} from '../content/site/careers';
 import { buildWebPageJsonLd } from '../seo/jsonLd';
-import { selfHostedUnsplashImage } from '../utils/assets';
 
  
  
@@ -26,16 +29,16 @@ export const CareersPage = () => {
     <div className="pt-32 pb-24 bg-white">
       <Seo
         title="Careers"
-        description={`Explore legal, internship, and legal-operations opportunities at ${BRAND_NAME} across multiple jurisdictions.`}
+        description={CAREERS_PAGE_CONTENT.description}
         path="/careers"
-        image={selfHostedUnsplashImage('photo-1521737711867-e3b97375f902')}
+        image={CAREERS_PAGE_CONTENT.heroImage}
         breadcrumbs={[
           { name: 'Home', path: '/' },
           { name: 'Careers', path: '/careers' },
         ]}
         structuredData={buildWebPageJsonLd({
-          title: `Careers at ${BRAND_NAME}`,
-          description: `Explore legal, internship, and legal-operations opportunities at ${BRAND_NAME} across multiple jurisdictions.`,
+          title: CAREERS_PAGE_CONTENT.heroTitle.replace('\n', ' '),
+          description: CAREERS_PAGE_CONTENT.description,
           path: '/careers',
           type: 'CollectionPage',
         })}
@@ -48,28 +51,29 @@ export const CareersPage = () => {
           className="max-w-3xl mb-24"
         >
           <span className="text-[10px] font-bold uppercase tracking-[0.3em] text-blue-600 mb-6 block">
-            JOIN OUR TEAM
+            {CAREERS_PAGE_CONTENT.heroEyebrow}
           </span>
           <h1
             className="text-6xl md:text-8xl mb-8"
             style={{ fontFamily: "'Playfair Display', serif" }}
           >
-            Careers at
-            <br />
-            {BRAND_NAME}
+            {CAREERS_PAGE_CONTENT.heroTitle.split('\n').map((line, index, lines) => (
+              <React.Fragment key={line}>
+                {line}
+                {index < lines.length - 1 ? <br /> : null}
+              </React.Fragment>
+            ))}
           </h1>
           <p className="text-xl text-gray-500 font-light leading-relaxed">
-            We are always looking for exceptional talent to join our global network. Whether you are
-            a student, a seasoned advocate, or a professional in legal operations, discover your
-            next move with us.
+            {CAREERS_PAGE_CONTENT.heroIntro}
           </p>
         </motion.div>
 
         {/* Hero Image */}
         <div className="mb-32 aspect-[21/9] rounded-[3rem] overflow-hidden bg-gray-100">
           <ImageWithFallback
-            src={selfHostedUnsplashImage('photo-1521737711867-e3b97375f902')}
-            alt={`Careers at ${BRAND_NAME}`}
+            src={CAREERS_PAGE_CONTENT.heroImage}
+            alt={CAREERS_PAGE_CONTENT.heroTitle.replace('\n', ' ')}
             className="w-full h-full object-cover"
           />
         </div>
@@ -80,36 +84,11 @@ export const CareersPage = () => {
             className="text-4xl md:text-5xl mb-16"
             style={{ fontFamily: "'Playfair Display', serif" }}
           >
-            Why {BRAND_NAME}?
+            {CAREERS_PAGE_CONTENT.sectionTitle}
           </h2>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {[
-              {
-                title: 'World-Class Training',
-                desc: 'Comprehensive development programs and mentorship from industry leaders.',
-              },
-              {
-                title: 'Global Opportunities',
-                desc: 'Work across borders with clients and colleagues in 40+ countries.',
-              },
-              {
-                title: 'Innovation Culture',
-                desc: 'Be at the forefront of legal technology and innovative service delivery.',
-              },
-              {
-                title: 'Work-Life Balance',
-                desc: 'Flexible arrangements and support for your wellbeing and personal growth.',
-              },
-              {
-                title: 'Diverse & Inclusive',
-                desc: 'A workplace that celebrates diversity and fosters belonging for all.',
-              },
-              {
-                title: 'Competitive Packages',
-                desc: 'Industry-leading compensation and comprehensive benefits.',
-              },
-            ].map((benefit, i) => (
+            {CAREER_BENEFITS.map((benefit, i) => (
               <motion.div
                 key={i}
                 initial={{ opacity: 0, y: 20 }}
@@ -130,7 +109,7 @@ export const CareersPage = () => {
             className="text-4xl md:text-5xl mb-16"
             style={{ fontFamily: "'Playfair Display', serif" }}
           >
-            Explore Opportunities
+            {CAREERS_PAGE_CONTENT.opportunitiesTitle}
           </h2>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -172,7 +151,7 @@ export const CareersPage = () => {
             className="text-4xl md:text-5xl mb-16"
             style={{ fontFamily: "'Playfair Display', serif" }}
           >
-            Current Openings
+            {CAREERS_PAGE_CONTENT.openingsTitle}
           </h2>
 
           <div className="space-y-6">
@@ -234,11 +213,10 @@ export const CareersPage = () => {
             className="text-4xl md:text-5xl mb-6"
             style={{ fontFamily: "'Playfair Display', serif" }}
           >
-            Don't See the Right Role?
+            {CAREERS_PAGE_CONTENT.ctaTitle}
           </h2>
           <p className="text-xl text-gray-400 font-light mb-8 max-w-2xl mx-auto">
-            We're always interested in hearing from talented professionals. Send us your resume and
-            we'll keep you in mind for future opportunities.
+            {CAREERS_PAGE_CONTENT.ctaBody}
           </p>
           
           <a
@@ -248,7 +226,7 @@ export const CareersPage = () => {
             referrerPolicy="no-referrer"
             className="px-12 py-5 bg-white text-black text-xs font-bold uppercase tracking-[0.2em] hover:bg-gray-200 transition-colors inline-flex items-center gap-3"
           >
-            Submit Your Resume
+            {CAREERS_PAGE_CONTENT.ctaButtonLabel}
             <ArrowRight size={16} />
           </a>
         </div>

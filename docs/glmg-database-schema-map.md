@@ -923,7 +923,7 @@ Runtime references outside migrations: 0
 - `billing_interval_code` VARCHAR(32) NOT NULL
 - `interval_count` INT UNSIGNED NOT NULL DEFAULT 1
 - `fee_amount` DECIMAL(14,2) NOT NULL
-- `currency_code` CHAR(3) NOT NULL DEFAULT 'INR'
+- `currency_code` CHAR(3) NOT NULL DEFAULT 'USD'
 - `tax_rate_id` BIGINT UNSIGNED NULL
 - `is_active` TINYINT(1) NOT NULL DEFAULT 1
 - `created_at` DATETIME(6) NOT NULL
@@ -984,7 +984,6 @@ Runtime references outside migrations: 3 (`backend/src/modules/dashboard/normali
 - `contact_name_snapshot` VARCHAR(160) NOT NULL
 - `contact_email_snapshot` VARCHAR(255) NOT NULL
 - `contact_mobile_snapshot` VARCHAR(40) NOT NULL
-- `whatsapp_same_as_mobile` TINYINT(1) NOT NULL DEFAULT 1
 - `past_legal_action_flag` TINYINT(1) NOT NULL DEFAULT 0
 - `quote_total_amount` DECIMAL(14,2) NOT NULL DEFAULT 0
 - `submitted_at` DATETIME(6) NULL
@@ -1048,7 +1047,7 @@ Runtime references outside migrations: 1 (`backend/src/modules/dashboard/normali
 - `discount_amount` DECIMAL(14,2) NOT NULL DEFAULT 0
 - `tax_amount` DECIMAL(14,2) NOT NULL DEFAULT 0
 - `total_amount` DECIMAL(14,2) NOT NULL
-- `currency_code` CHAR(3) NOT NULL DEFAULT 'INR'
+- `currency_code` CHAR(3) NOT NULL DEFAULT 'USD'
 - `is_final` TINYINT(1) NOT NULL DEFAULT 0
 - `accepted_at` DATETIME(6) NULL
 - `created_by_user_id` BIGINT UNSIGNED NOT NULL
@@ -1858,7 +1857,7 @@ Runtime references outside migrations: 37 (`backend/src/modules/dashboard/helper
 - `subscription_id` BIGINT UNSIGNED NULL
 - `invoice_type_code` VARCHAR(32) NOT NULL
 - `status_code` VARCHAR(32) NOT NULL
-- `currency_code` CHAR(3) NOT NULL DEFAULT 'INR'
+- `currency_code` CHAR(3) NOT NULL DEFAULT 'USD'
 - `issue_date` DATE NOT NULL
 - `due_date` DATE NOT NULL
 - `subtotal_amount` DECIMAL(14,2) NOT NULL
@@ -2014,7 +2013,7 @@ Runtime references outside migrations: 9 (`backend/src/modules/dashboard/normali
 - `gateway_order_ref` VARCHAR(255) NULL
 - `gateway_payment_ref` VARCHAR(255) NULL
 - `status_code` VARCHAR(32) NOT NULL
-- `currency_code` CHAR(3) NOT NULL DEFAULT 'INR'
+- `currency_code` CHAR(3) NOT NULL DEFAULT 'USD'
 - `gross_amount` DECIMAL(14,2) NOT NULL
 - `gateway_fee_amount` DECIMAL(14,2) NOT NULL DEFAULT 0
 - `net_amount` DECIMAL(14,2) NOT NULL DEFAULT 0

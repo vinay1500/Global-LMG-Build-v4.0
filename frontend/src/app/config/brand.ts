@@ -3,7 +3,7 @@ export const BRAND_NAME = 'Global LMG';
 export const BRAND_WORDMARK = 'GLOBAL LMG';
 export const SITE_TITLE = 'Global LMG';
 export const SITE_DESCRIPTION =
-  'Global LMG is a modern legal advisory site for cross-border counsel, insights, and strategic client engagement.';
+  'Global LMG is an intermediary legal consultancy, lawyer-matching, coordination, and support platform. It is not a law firm and does not provide direct legal advice.';
 
  export const CONTACT_EMAIL = 'contact@globallmg.com';
 export const PRESS_EMAIL = 'press@globallmg.com';

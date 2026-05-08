@@ -33,6 +33,7 @@ import type {
   CreateClientResponse,
   ConsultationModePayload,
   CountryPricingPayload,
+  PriceOverridePayload,
   CreateMatterPayload,
   CreateMatterResponse,
   CreateRbacRolePayload,
@@ -47,6 +48,7 @@ import type {
   SettingsPricingSlab,
   SettingsConsultationMode,
   SettingsCountryPricing,
+  SettingsPriceOverride,
   SettingsService,
   SettingsUrgencyRule,
   TasksWorkspaceResponse,
@@ -57,8 +59,12 @@ import type {
   UpdateDocumentTypePayload,
   UpdateConsultationModePayload,
   UpdateCountryPricingPayload,
+  UpdatePriceOverridePayload,
   UpdateInvoiceSettingsPayload,
   InvoiceSettings,
+  InvoicePdfTemplate,
+  InvoicePdfTemplateUpdatePayload,
+  InvoicePdfTemplateUploadPayload,
   PlatformSetting,
   PlatformSettingsResponse,
   UpdatePlatformSettingPayload,
@@ -130,6 +136,39 @@ const downloadBlob = (blob: Blob, fileName: string) => {
   URL.revokeObjectURL(url);
 };
 
+const fetchBlob = async (url: string, fallbackFileName: string) => {
+  const response = await fetch(url, {
+    credentials: 'include',
+    headers: {
+      Accept: 'application/pdf',
+    },
+  });
+
+  if (!response.ok) {
+    let message = `Download failed with status ${response.status}`;
+
+    try {
+      const errorBody = (await response.json()) as { message?: string };
+      message = errorBody.message || message;
+    } catch {
+      // PDF endpoints may return non-JSON error bodies from proxies; keep the status-based message.
+    }
+
+    throw new ApiRequestError('download_failed', message);
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+
+  if (!contentType.toLowerCase().includes('application/pdf')) {
+    throw new ApiRequestError('invalid_pdf_response', 'The invoice PDF response was not a PDF.');
+  }
+
+  return {
+    blob: await response.blob(),
+    fileName: getAttachmentFileName(response.headers.get('content-disposition'), fallbackFileName),
+  };
+};
+
 export const adminApi = {
   createClient: (payload: CreateClientPayload) =>
     apiRequest<CreateClientResponse>(API_ENDPOINTS.admin.createClient(), {
@@ -196,6 +235,11 @@ export const adminApi = {
         method: 'POST',
       }
     ),
+  retryEventCalendarSync: (eventId: string) =>
+    apiRequest<{ eventId: string; status: 'cancelled' | 'failed' | 'local' | 'synced' }>(
+      API_ENDPOINTS.admin.eventCalendarSyncRetry(eventId),
+      { method: 'POST' }
+    ),
   createMatterAssignment: (
     matterId: string,
     payload: {
@@ -214,6 +258,19 @@ export const adminApi = {
       body: JSON.stringify(payload),
       headers: { 'content-type': 'application/json' },
       method: 'POST',
+    }),
+  replaceMatterAssignments: (
+    matterId: string,
+    payload: {
+      externalCounsel?: Array<{ id: string; visibleToClient?: boolean }>;
+      fieldPartners?: Array<{ id: string; visibleToClient?: boolean }>;
+      staff?: Array<{ id: string; visibleToClient?: boolean }>;
+    }
+  ) =>
+    apiRequest<{ status: 'updated' }>(API_ENDPOINTS.admin.replaceMatterAssignments(matterId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PUT',
     }),
   createMatterNote: (
     matterId: string,
@@ -254,27 +311,60 @@ export const adminApi = {
       headers: { 'content-type': 'application/json' },
       method: 'POST',
     }),
-  getAuditEntries: () => apiRequest<AuditEntriesResponse>(API_ENDPOINTS.admin.audit()),
-  getBillingWorkspace: () =>
-    apiRequest<BillingWorkspaceResponse>(API_ENDPOINTS.admin.billingWorkspace()),
+  getAuditEntries: (params: { limit?: number; offset?: number } = {}) =>
+    apiRequest<AuditEntriesResponse>(
+      withQuery(API_ENDPOINTS.admin.audit(), {
+        limit: params.limit ?? 50,
+        offset: params.offset ?? 0,
+      })
+    ),
+  getBillingWorkspace: (params: { limit?: number; offset?: number } = {}) =>
+    apiRequest<BillingWorkspaceResponse>(
+      withQuery(API_ENDPOINTS.admin.billingWorkspace(), {
+        limit: params.limit ?? 50,
+        offset: params.offset ?? 0,
+      })
+    ),
   getClientWorkspace: (clientId: string) =>
     apiRequest<ClientWorkspaceResponse>(API_ENDPOINTS.admin.clientWorkspace(clientId)),
   getDashboardWorkspace: () =>
     apiRequest<DashboardWorkspaceResponse>(API_ENDPOINTS.admin.dashboard()),
   getDocumentDetail: (documentId: string) =>
     apiRequest<AdminDocumentDetailResponse>(API_ENDPOINTS.admin.documentDetail(documentId)),
-  getDocuments: () => apiRequest<DocumentsListResponse>(API_ENDPOINTS.admin.documents()),
-  getEventsWorkspace: () => apiRequest<EventsWorkspaceResponse>(API_ENDPOINTS.admin.events()),
+  getDocuments: (params: { limit?: number; offset?: number } = {}) =>
+    apiRequest<DocumentsListResponse>(
+      withQuery(API_ENDPOINTS.admin.documents(), {
+        limit: params.limit ?? 50,
+        offset: params.offset ?? 0,
+      })
+    ),
+  getEventsWorkspace: (params: { limit?: number; offset?: number } = {}) =>
+    apiRequest<EventsWorkspaceResponse>(
+      withQuery(API_ENDPOINTS.admin.events(), {
+        limit: params.limit ?? 50,
+        offset: params.offset ?? 0,
+      })
+    ),
   getHealth: () =>
     apiRequest<{ service: string; status: 'ok' }>(API_ENDPOINTS.admin.health()),
   getMatterPackageProposals: (matterId: string) =>
     apiRequest<MatterPackageProposalsResponse>(API_ENDPOINTS.admin.matterPackageProposals(matterId)),
   getMatterWorkspace: (matterId: string) =>
     apiRequest<MatterWorkspaceResponse>(API_ENDPOINTS.admin.matterWorkspace(matterId)),
-  getMessagesWorkspace: () =>
-    apiRequest<MessagesWorkspaceResponse>(API_ENDPOINTS.admin.messagesWorkspace()),
-  getNotifications: () =>
-    apiRequest<NotificationsListResponse>(API_ENDPOINTS.admin.notifications()),
+  getMessagesWorkspace: (params: { limit?: number; offset?: number } = {}) =>
+    apiRequest<MessagesWorkspaceResponse>(
+      withQuery(API_ENDPOINTS.admin.messagesWorkspace(), {
+        limit: params.limit ?? 50,
+        offset: params.offset ?? 0,
+      })
+    ),
+  getNotifications: (params: { limit?: number; offset?: number } = {}) =>
+    apiRequest<NotificationsListResponse>(
+      withQuery(API_ENDPOINTS.admin.notifications(), {
+        limit: params.limit ?? 50,
+        offset: params.offset ?? 0,
+      })
+    ),
   getReminderWorkspace: () =>
     apiRequest<ReminderWorkspaceResponse>(API_ENDPOINTS.admin.reminderWorkspace()),
   getReportsWorkspace: () =>
@@ -508,6 +598,23 @@ export const adminApi = {
       API_ENDPOINTS.admin.pricingRuleCountryPricingArchive(countryPricingId),
       { method: 'POST' }
     ),
+  createPriceOverride: (payload: PriceOverridePayload) =>
+    apiRequest<SettingsPriceOverride>(API_ENDPOINTS.admin.pricingRulePriceOverrides(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  updatePriceOverride: (overrideId: string, payload: UpdatePriceOverridePayload) =>
+    apiRequest<SettingsPriceOverride>(API_ENDPOINTS.admin.pricingRulePriceOverride(overrideId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+    }),
+  archivePriceOverride: (overrideId: string) =>
+    apiRequest<{ id: string; status: 'archived' }>(
+      API_ENDPOINTS.admin.pricingRulePriceOverrideArchive(overrideId),
+      { method: 'POST' }
+    ),
   updateInvoiceSettings: (payload: UpdateInvoiceSettingsPayload) =>
     apiRequest<InvoiceSettings>(API_ENDPOINTS.admin.invoiceSettings(), {
       body: JSON.stringify(payload),
@@ -536,15 +643,16 @@ export const adminApi = {
   listClients: (params: { limit?: number; offset?: number; search?: string } = {}) =>
     apiRequest<ClientsListResponse>(
       withQuery(API_ENDPOINTS.admin.clients(), {
-        limit: params.limit ?? 100,
+        limit: params.limit ?? 50,
         offset: params.offset ?? 0,
         search: params.search,
       })
     ),
-  listMatters: (params: { limit?: number; search?: string } = {}) =>
+  listMatters: (params: { limit?: number; offset?: number; search?: string } = {}) =>
     apiRequest<MattersListResponse>(
       withQuery(API_ENDPOINTS.admin.matters(), {
-        limit: params.limit ?? 100,
+        limit: params.limit ?? 50,
+        offset: params.offset ?? 0,
         search: params.search,
       })
     ),
@@ -614,11 +722,42 @@ export const adminApi = {
       })
     ),
   sendInvoice: (invoiceId: string) =>
-    apiRequest<{ invoiceId: string; status: 'reminder_sent' | 'sent' }>(
+    apiRequest<{
+      emailDeliveryStatus?: 'failed' | 'manual' | 'sent';
+      invoiceId: string;
+      status: 'reminder_sent' | 'sent';
+    }>(
       API_ENDPOINTS.admin.sendInvoice(invoiceId),
       {
         method: 'POST',
       }
+    ),
+  buildInvoiceDownloadUrl: (invoiceId: string) => API_ENDPOINTS.admin.invoiceDownload(invoiceId),
+  downloadInvoicePdf: async (invoiceId: string) => {
+    const { blob, fileName } = await fetchBlob(
+      API_ENDPOINTS.admin.invoiceDownload(invoiceId),
+      `global-lmg-invoice-${invoiceId}.pdf`
+    );
+    downloadBlob(blob, fileName);
+  },
+  fetchInvoicePdfPreview: async (invoiceId: string) =>
+    fetchBlob(API_ENDPOINTS.admin.invoiceDownload(invoiceId), `global-lmg-invoice-${invoiceId}.pdf`),
+  uploadInvoicePdfTemplate: (payload: InvoicePdfTemplateUploadPayload) =>
+    apiRequest<{ template: InvoicePdfTemplate | null }>(API_ENDPOINTS.admin.invoicePdfTemplates(), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    }),
+  updateInvoicePdfTemplate: (templateId: string, payload: InvoicePdfTemplateUpdatePayload) =>
+    apiRequest<{ template: InvoicePdfTemplate | null }>(API_ENDPOINTS.admin.invoicePdfTemplate(templateId), {
+      body: JSON.stringify(payload),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+    }),
+  archiveInvoicePdfTemplate: (templateId: string) =>
+    apiRequest<{ archived: true; templateId: string }>(
+      API_ENDPOINTS.admin.invoicePdfTemplateArchive(templateId),
+      { method: 'POST' }
     ),
   saveMatterPackageDraft: (
     matterId: string,
@@ -756,6 +895,13 @@ export const adminApi = {
       }
     );
   },
+  rescanDocument: (documentId: string) =>
+    apiRequest<{ provider: string; scanStatus: string; status: 'rescanned' }>(
+      API_ENDPOINTS.admin.documentScan(documentId),
+      {
+        method: 'POST',
+      }
+    ),
   updateMatterDetails: (
     matterId: string,
     payload: {

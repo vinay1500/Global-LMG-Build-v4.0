@@ -40,6 +40,18 @@ export const SettingsPage = () => {
         await adminApi.archivePricingSlab(slabId);
         await refresh();
       }}
+      onArchiveConsultationMode={async (modeCode) => {
+        await adminApi.archiveConsultationMode(modeCode);
+        await refresh();
+      }}
+      onArchiveCountryPricing={async (countryPricingId) => {
+        await adminApi.archiveCountryPricing(countryPricingId);
+        await refresh();
+      }}
+      onArchivePriceOverride={async (overrideId) => {
+        await adminApi.archivePriceOverride(overrideId);
+        await refresh();
+      }}
       onArchiveService={async (serviceId) => {
         await adminApi.archiveServiceCatalogService(serviceId);
         await refresh();
@@ -58,6 +70,10 @@ export const SettingsPage = () => {
       }}
       onArchiveTemplate={async (templateId) => {
         await adminApi.archiveTemplate(templateId);
+        await refresh();
+      }}
+      onArchiveInvoicePdfTemplate={async (templateId) => {
+        await adminApi.archiveInvoicePdfTemplate(templateId);
         await refresh();
       }}
       onArchiveTeamMember={async (memberId) => {
@@ -80,6 +96,18 @@ export const SettingsPage = () => {
         await adminApi.createPricingSlab(payload);
         await refresh();
       }}
+      onCreateConsultationMode={async (payload) => {
+        await adminApi.createConsultationMode(payload);
+        await refresh();
+      }}
+      onCreateCountryPricing={async (payload) => {
+        await adminApi.createCountryPricing(payload);
+        await refresh();
+      }}
+      onCreatePriceOverride={async (payload) => {
+        await adminApi.createPriceOverride(payload);
+        await refresh();
+      }}
       onCreateService={async (payload) => {
         await adminApi.createServiceCatalogService(payload);
         await refresh();
@@ -90,6 +118,10 @@ export const SettingsPage = () => {
       }}
       onCreateTemplate={async (payload) => {
         await adminApi.createTemplate(payload);
+        await refresh();
+      }}
+      onCreateInvoicePdfTemplate={async (payload) => {
+        await adminApi.uploadInvoicePdfTemplate(payload);
         await refresh();
       }}
       onCreateTeamMember={async (payload) => {
@@ -124,6 +156,18 @@ export const SettingsPage = () => {
         await adminApi.updatePricingSlab(slabId, payload);
         await refresh();
       }}
+      onUpdateConsultationMode={async (modeCode, payload) => {
+        await adminApi.updateConsultationMode(modeCode, payload);
+        await refresh();
+      }}
+      onUpdateCountryPricing={async (countryPricingId, payload) => {
+        await adminApi.updateCountryPricing(countryPricingId, payload);
+        await refresh();
+      }}
+      onUpdatePriceOverride={async (overrideId, payload) => {
+        await adminApi.updatePriceOverride(overrideId, payload);
+        await refresh();
+      }}
       onUpdateReminderSetting={async (settingId, payload) => {
         await adminApi.updateReminderSetting(settingId, payload);
         await refresh();
@@ -142,6 +186,10 @@ export const SettingsPage = () => {
       }}
       onUpdateTeamMember={async (memberId, payload) => {
         await adminApi.updateTeamMember(memberId, payload);
+        await refresh();
+      }}
+      onUpdateInvoicePdfTemplate={async (templateId, payload) => {
+        await adminApi.updateInvoicePdfTemplate(templateId, payload);
         await refresh();
       }}
       onUpdateInvoiceSettings={async (payload) => {

@@ -27,6 +27,7 @@ export const API_ENDPOINTS = {
   },
   dashboard: {
     snapshot: () => joinApiPath('/v1/dashboard'),
+    requestConfig: () => joinApiPath('/v1/dashboard/request-config'),
     requests: () => joinApiPath('/v1/dashboard/requests'),
     messages: () => joinApiPath('/v1/dashboard/messages'),
     messageRead: (threadId: string) => joinApiPath(`/v1/dashboard/messages/${threadId}/read`),
@@ -34,9 +35,10 @@ export const API_ENDPOINTS = {
       joinApiPath(`/v1/dashboard/matters/${matterId}/package-selection`),
   },
   me: {
-    accountContact: () => joinApiPath('/v1/me/account/contact'),
+    accountAddress: () => joinApiPath('/v1/me/account/address'),
     accountEmailChangeConfirm: () => joinApiPath('/v1/me/account/email-change/confirm'),
     accountEmailChangeRequest: () => joinApiPath('/v1/me/account/email-change/request'),
+    accountName: () => joinApiPath('/v1/me/account/name'),
     accountPassword: () => joinApiPath('/v1/me/account/password'),
     accountPhoneChangeConfirm: () => joinApiPath('/v1/me/account/phone-change/confirm'),
     accountPhoneChangeRequest: () => joinApiPath('/v1/me/account/phone-change/request'),
@@ -49,6 +51,10 @@ export const API_ENDPOINTS = {
     invoiceDetail: (invoiceId: string) => joinApiPath(`/v1/me/invoices/${invoiceId}`),
     invoiceDownload: (invoiceId: string) =>
       joinApiPath(`/v1/me/invoices/${invoiceId}/download`),
+    invoicePaymentOrder: (invoiceId: string) =>
+      joinApiPath(`/v1/me/invoices/${invoiceId}/payment-order`),
+    invoicePaymentVerify: (invoiceId: string) =>
+      joinApiPath(`/v1/me/invoices/${invoiceId}/payment-verify`),
   },
   notifications: {
     list: () => joinApiPath('/v1/notifications'),

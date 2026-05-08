@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion } from 'motion/react';
 import { useNavigate } from 'react-router';
-import { BRAND_NAME } from '../config/brand';
+import { HOME_HERO_CONTENT } from '../content/site/home';
 import { useAuth } from '../contexts/useAuth';
 import { ImageWithFallback } from './shared/ImageWithFallback';
 
@@ -19,7 +19,7 @@ export const Hero = ({ image }: HeroProps) => {
         
         <ImageWithFallback
           src={image}
-          alt={`${BRAND_NAME} office building`}
+          alt={HOME_HERO_CONTENT.alt}
           className="w-full h-full object-cover"
           loading="eager"
           fetchPriority="high"
@@ -40,16 +40,18 @@ export const Hero = ({ image }: HeroProps) => {
             className="text-5xl md:text-8xl mb-8 leading-[1.1] tracking-tight"
             style={{ fontFamily: "'Playfair Display', serif" }}
           >
-            Empowering your
-            <br />
-            global legal strategy.
+            {HOME_HERO_CONTENT.titleLines.map((line) => (
+              <React.Fragment key={line}>
+                {line}
+                <br />
+              </React.Fragment>
+            ))}
           </h1>
           <p
             className="text-xl md:text-2xl mb-10 opacity-90 max-w-2xl font-light"
             style={{ fontFamily: "'Inter', sans-serif" }}
           >
-            {BRAND_NAME} delivers cross-border legal coordination, business-focused counsel, and
-            practical insights for modern clients operating across jurisdictions.
+            {HOME_HERO_CONTENT.body}
           </p>
           <div className="flex flex-wrap gap-4">
             <button
@@ -57,7 +59,7 @@ export const Hero = ({ image }: HeroProps) => {
               onClick={() => navigate(isAuthenticated ? '/dashboard' : '/about')}
               className="px-8 py-4 bg-white text-black font-semibold rounded-none hover:bg-gray-100 transition-colors"
             >
-              {isAuthenticated ? 'Open dashboard' : 'Read more'}
+              {isAuthenticated ? HOME_HERO_CONTENT.authenticatedCtaLabel : HOME_HERO_CONTENT.guestCtaLabel}
             </button>
           </div>
         </motion.div>

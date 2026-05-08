@@ -36,6 +36,7 @@ import {
   isValidPhone,
   trimField,
 } from '../../utils/authValidation';
+import { AddressForm, createEmptyAddressValue, type AddressFormValue } from '../address/AddressForm';
 
 type AuthView =
   | 'credentials'
@@ -74,7 +75,8 @@ export const AuthModal = () => {
   } = useAuth();
 
   // View state covers the full auth journey: credentials, recovery, and verification steps.
-  const showPreviewSignInHint = import.meta.env.DEV;
+  const showPreviewSignInHint =
+    import.meta.env.DEV && import.meta.env.VITE_PREVIEW_ACCOUNT_ENABLED === 'true';
   const [view, setView] = useState<AuthView>('credentials');
   const [alert, setAlert] = useState<AlertState>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -99,6 +101,14 @@ export const AuthModal = () => {
     fullName: '',
     email: '',
     phone: applyCountryDialCode('', DEFAULT_COUNTRY),
+    addressLine1: '',
+    addressLine2: '',
+    city: '',
+    stateRegion: '',
+    postalCode: '',
+    addressSourceCode: 'manual' as AddressFormValue['sourceCode'],
+    addressGooglePlaceId: null as string | null,
+    addressValidationStatusCode: 'manual' as AddressFormValue['validationStatusCode'],
     password: '',
     confirmPassword: '',
     country: DEFAULT_COUNTRY,
@@ -122,6 +132,18 @@ export const AuthModal = () => {
     () => getPasswordStrengthErrors(signUpForm.password),
     [signUpForm.password]
   );
+  const signUpAddressValue: AddressFormValue = {
+    ...createEmptyAddressValue(signUpForm.country),
+    city: signUpForm.city,
+    country: signUpForm.country,
+    googlePlaceId: signUpForm.addressGooglePlaceId,
+    line1: signUpForm.addressLine1,
+    line2: signUpForm.addressLine2,
+    postalCode: signUpForm.postalCode,
+    sourceCode: signUpForm.addressSourceCode,
+    state: signUpForm.stateRegion,
+    validationStatusCode: signUpForm.addressValidationStatusCode,
+  };
 
   const persistPendingAuthState = (
     nextPendingVerificationView: PendingVerificationView | null,
@@ -273,7 +295,7 @@ export const AuthModal = () => {
     if (view !== 'credentials' || !isGoogleIdentityConfigured) {
       setGoogleButtonReady(false);
       setGoogleButtonError(
-        isGoogleIdentityConfigured ? null : 'Google sign-in is not configured for this environment.'
+        isGoogleIdentityConfigured ? null : 'Google sign-in is not available right now.'
       );
       return;
     }
@@ -443,6 +465,18 @@ export const AuthModal = () => {
     if (!signUpForm.country.trim()) {
       nextErrors.country = 'Country is required.';
     }
+    if (trimField(signUpForm.addressLine1).length < 3) {
+      nextErrors.addressLine1 = 'Address line 1 is required.';
+    }
+    if (trimField(signUpForm.city).length < 2) {
+      nextErrors.city = 'City is required.';
+    }
+    if (trimField(signUpForm.stateRegion).length < 2) {
+      nextErrors.stateRegion = 'State or region is required.';
+    }
+    if (trimField(signUpForm.postalCode).length < 3) {
+      nextErrors.postalCode = 'Postal code is required.';
+    }
 
     const passwordErrors = getPasswordStrengthErrors(signUpForm.password);
     if (passwordErrors.length > 0) {
@@ -452,7 +486,8 @@ export const AuthModal = () => {
       nextErrors.confirmPassword = 'Confirm password must match the password.';
     }
     if (!signUpForm.acceptTerms) {
-      nextErrors.acceptTerms = 'You must accept the legal disclaimer and privacy policy.';
+      nextErrors.acceptTerms =
+        'You must accept the Terms, Refund and Cancellation Policy, Legal Disclaimer, and Privacy Policy.';
     }
 
     return nextErrors;
@@ -505,7 +540,7 @@ export const AuthModal = () => {
 
   const validatePhoneOtp = () => {
     if (verificationForm.otp.trim().length !== 6) {
-      return { otp: 'Enter the 6-digit OTP.' };
+      return { otp: 'Enter the 6-digit verification code.' };
     }
 
     return {} as Record<string, string>;
@@ -550,7 +585,7 @@ export const AuthModal = () => {
         return 'That email verification code is not valid.';
       case 'INVALID_PHONE_OTP':
       case 'invalid_phone_otp':
-        return 'That OTP is not valid.';
+        return 'That verification code is not valid.';
       case 'INVALID_RESET_CODE':
       case 'invalid_reset_code':
         return 'That reset code is invalid or expired.';
@@ -565,7 +600,7 @@ export const AuthModal = () => {
       case 'expired_verification_step':
         return 'That verification step expired. Start the flow again.';
       case 'google_sign_in_disabled':
-        return 'Google sign-in is not available in this environment.';
+        return 'Google sign-in is not available right now.';
       default:
         return authError.message || 'Something went wrong. Please try again.';
       }
@@ -589,7 +624,7 @@ export const AuthModal = () => {
       setAlert({
         type: 'info',
         message:
-          'Google returned a verified email, but we still need your phone number for secure OTP verification.',
+          'Google returned a verified email, but we still need your phone number for secure phone verification.',
       });
       return;
     }
@@ -671,6 +706,17 @@ export const AuthModal = () => {
         phone: trimField(signUpForm.phone),
         password: signUpForm.password,
         country: getCountryCode(signUpForm.country) || signUpForm.country,
+        address: {
+          city: trimField(signUpForm.city),
+          country: getCountryCode(signUpForm.country) || signUpForm.country,
+          line1: trimField(signUpForm.addressLine1),
+          line2: trimField(signUpForm.addressLine2),
+          postalCode: trimField(signUpForm.postalCode),
+          sourceCode: signUpForm.addressSourceCode,
+          state: trimField(signUpForm.stateRegion),
+          googlePlaceId: signUpForm.addressGooglePlaceId,
+          validationStatusCode: signUpForm.addressValidationStatusCode,
+        },
         acceptTerms: signUpForm.acceptTerms,
       });
 
@@ -772,16 +818,21 @@ export const AuthModal = () => {
 
     setIsSubmitting(true);
     try {
+      const requestedIdentifier = trimField(forgotPasswordIdentifier);
       const result = await requestPasswordReset({
-        identifier: trimField(forgotPasswordIdentifier),
+        identifier: requestedIdentifier,
       });
       clearPendingVerification();
-      setResetForm((current) => ({ ...current, email: result.email || '', code: '' }));
+      setResetForm((current) => ({
+        ...current,
+        email: requestedIdentifier.includes('@') ? requestedIdentifier : '',
+        code: '',
+      }));
       setView('reset-password');
-      setDeliveryHint(result.deliveryHint || null);
+      setDeliveryHint(null);
       setAlert({
         type: 'success',
-        message: buildAlertMessage(result.message, result.deliveryHint),
+        message: result.message,
       });
     } catch (error) {
       setAlert({ type: 'error', message: mapAuthError(error) });
@@ -884,7 +935,7 @@ export const AuthModal = () => {
               ? 'Email verification is still pending.'
               : pendingVerificationView === 'phone-capture'
                 ? 'Phone number confirmation is still pending.'
-                : 'Phone OTP verification is still pending. You can update the phone number if delivery failed.'}
+                : 'Phone verification is still pending. You can update the phone number if delivery failed.'}
           </span>
           <div className="flex items-center gap-2">
             {pendingVerificationView === 'phone-otp' && (
@@ -1007,8 +1058,8 @@ export const AuthModal = () => {
 
           {showPreviewSignInHint && (
             <div className="rounded-2xl border border-sky-200/20 bg-sky-400/10 px-4 py-3 text-sm text-sky-50">
-              Preview sign-in: use <strong>arjun.m@example.com</strong> with password{' '}
-              <strong>Preview@123</strong>.
+              Preview sign-in is enabled for this local build. Use the configured preview
+              credentials.
             </div>
           )}
 
@@ -1087,25 +1138,36 @@ export const AuthModal = () => {
               {fieldErrors.phone && <p className="mt-2 text-sm text-rose-200">{fieldErrors.phone}</p>}
             </label>
 
-            <label className="block md:col-span-2">
-              
-              <span className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/75">
-                Country
-              </span>
-              <select
-                value={signUpForm.country}
-                onChange={(event) => handleSignUpCountryChange(event.target.value)}
-                className={glassFieldClass}
-                aria-invalid={Boolean(fieldErrors.country)}
-              >
-                {COUNTRIES.map((country) => (
-                  <option key={country} value={country}>
-                    {country}
-                  </option>
-                ))}
-              </select>
+            <div className="md:col-span-2">
+              <AddressForm
+                idPrefix="signup-address"
+                value={signUpAddressValue}
+                variant="glass"
+                onChange={(address) => {
+                  setSignUpForm((current) => ({
+                    ...current,
+                    addressGooglePlaceId: address.googlePlaceId || null,
+                    addressLine1: address.line1,
+                    addressLine2: address.line2,
+                    addressSourceCode: address.sourceCode,
+                    addressValidationStatusCode: address.validationStatusCode,
+                    city: address.city,
+                    country: address.country,
+                    phone:
+                      address.country !== current.country
+                        ? applyCountryDialCode(current.phone, address.country)
+                        : current.phone,
+                    postalCode: address.postalCode,
+                    stateRegion: address.state,
+                  }));
+                }}
+              />
               {fieldErrors.country && <p className="mt-2 text-sm text-rose-200">{fieldErrors.country}</p>}
-            </label>
+              {fieldErrors.addressLine1 && <p className="mt-2 text-sm text-rose-200">{fieldErrors.addressLine1}</p>}
+              {fieldErrors.city && <p className="mt-2 text-sm text-rose-200">{fieldErrors.city}</p>}
+              {fieldErrors.stateRegion && <p className="mt-2 text-sm text-rose-200">{fieldErrors.stateRegion}</p>}
+              {fieldErrors.postalCode && <p className="mt-2 text-sm text-rose-200">{fieldErrors.postalCode}</p>}
+            </div>
 
             <label className="block">
               <span className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/75">
@@ -1170,11 +1232,10 @@ export const AuthModal = () => {
           </div>
 
           <div className="rounded-2xl border border-white/15 bg-black/20 px-4 py-3 text-sm text-white/85">
-            Required fields: full name, email, phone number, country, password, confirm password,
-            and the legal/privacy checkbox.
+            Required fields: full name, email, phone number, billing address, password,
+            confirm password, and the legal review checkbox.
             <br />
-            Optional fields have been removed from this launch-ready signup flow to keep onboarding
-            lighter and cleaner.
+            Your saved address is used for pricing country, billing, and invoice tax handling.
             {passwordStrengthHints.length > 0 && (
               <ul className="mt-3 list-disc pl-5 text-white/70">
                 {passwordStrengthHints.map((hint) => (
@@ -1193,8 +1254,20 @@ export const AuthModal = () => {
               }
               className="mt-1 h-4 w-4 rounded border-white/30 bg-white/10 text-black focus:ring-white/30"
             />
-            <span>
+          <span>
               I agree to the{' '}
+              <Link to="/terms" className="underline underline-offset-4" onClick={handleClose}>
+                Terms
+              </Link>
+              ,{' '}
+              <Link
+                to="/refund-cancellation"
+                className="underline underline-offset-4"
+                onClick={handleClose}
+              >
+                Refund and Cancellation Policy
+              </Link>
+              ,{' '}
               <Link to="/legal-disclaimer" className="underline underline-offset-4" onClick={handleClose}>
                 Legal Disclaimer
               </Link>{' '}
@@ -1234,8 +1307,8 @@ export const AuthModal = () => {
         <ArrowLeft className="h-4 w-4" /> Back to sign in
       </button>
       <p className="text-sm text-white/75">
-        Enter your email or phone number and we will send a verification code so you can reset
-        your password securely.
+        Enter your email or phone number. If an account exists, password reset instructions will
+        be sent securely.
       </p>
       <label className="block">
         <span className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/75">
@@ -1344,7 +1417,8 @@ export const AuthModal = () => {
 
       <div className="flex items-center justify-between text-sm text-white/75">
         <span>
-          {deliveryHint || 'Password reset code sent to your verified email address.'}
+          {deliveryHint ||
+            'If an account exists, use the code sent to the verified email address.'}
         </span>
         <button
           type="button"
@@ -1461,7 +1535,7 @@ export const AuthModal = () => {
         <ArrowLeft className="h-4 w-4" /> Back
       </button>
       <p className="text-sm text-white/75">
-        Confirm or update your phone number so we can send a fresh OTP before dashboard access.
+        Confirm or update your phone number so we can send a fresh verification code before dashboard access.
       </p>
       <label className="block">
         <span className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/75">
@@ -1503,7 +1577,7 @@ export const AuthModal = () => {
         className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-white px-5 py-3 text-sm font-semibold text-black transition hover:bg-white/90 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {isSubmitting ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
-        Send OTP
+        Send Code
       </button>
     </form>
   );
@@ -1522,11 +1596,11 @@ export const AuthModal = () => {
       </button>
       <div className="rounded-2xl border border-amber-200/20 bg-amber-400/10 px-4 py-3 text-sm text-amber-50">
         {deliveryHint ||
-          'Phone verification is required for client access. Enter the OTP sent to your registered number.'}
+          'Phone verification is required for client access. Enter the code sent to your registered number.'}
       </div>
       <label className="block">
         <span className="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-white/75">
-          One-Time Password
+          Verification Code
         </span>
         <input
           type="text"
@@ -1542,7 +1616,7 @@ export const AuthModal = () => {
       </label>
       {fieldErrors.otp && <p className="text-sm text-rose-200">{fieldErrors.otp}</p>}
       <div className="flex items-center justify-between text-sm text-white/75">
-        <span>OTP sent to your phone.</span>
+        <span>Verification code sent to your phone.</span>
         <div className="flex items-center gap-3">
           <button
             type="button"
@@ -1574,7 +1648,7 @@ export const AuthModal = () => {
             }}
             className="underline underline-offset-4"
           >
-            Resend OTP
+            Resend Code
           </button>
         </div>
       </div>
@@ -1647,7 +1721,7 @@ export const AuthModal = () => {
                               : 'Create your client profile'}
                 </h2>
                 <p className="mt-2 max-w-xl text-sm text-white/70">
-                  Secure client access for {BRAND_NAME} with server-backed sessions, verification,
+                  Secure client access for {BRAND_NAME} with protected sessions, verification,
                   and protected portal flows.
                 </p>
               </div>

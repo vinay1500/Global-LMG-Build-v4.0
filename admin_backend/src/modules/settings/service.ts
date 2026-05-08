@@ -3,6 +3,7 @@ import { queryRows } from '../../lib/mysql.js';
 import type { AdminActor } from '../auth/service.js';
 import { getWorkspace as getRbacWorkspace } from '../rbac/service.js';
 import { getPricingRules, getServiceCatalog } from './catalogPricing.js';
+import { getInvoicePdfTemplates } from './invoicePdfTemplates.js';
 import { getInvoiceSettings } from './invoiceSettings.js';
 import { getNotificationSettings } from './notificationSettings.js';
 import { getPlatformSettings } from './platformSettings.js';
@@ -45,6 +46,7 @@ export const getWorkspace = async (actor: AdminActor) => {
     latestInvoiceRows,
     sequenceRows,
     invoiceSettings,
+    invoicePdfTemplates,
     notificationSettings,
     platformSettings,
     teamRegistry,
@@ -93,6 +95,7 @@ export const getWorkspace = async (actor: AdminActor) => {
        LIMIT 1`
     ),
     getInvoiceSettings(),
+    getInvoicePdfTemplates(),
     getNotificationSettings(),
     getPlatformSettings(),
     getTeamRegistry(actor),
@@ -118,6 +121,7 @@ export const getWorkspace = async (actor: AdminActor) => {
       latestInvoiceNumber: latestInvoiceRows[0]?.invoiceNumber || null,
       nextInvoiceNumber: buildNextInvoiceNumber(sequenceRows[0]),
       settings: invoiceSettings,
+      pdfTemplates: invoicePdfTemplates.templates,
       taxRates: taxRateRows.map((row) => ({
         code: row.code,
         isActive: Boolean(row.isActive),

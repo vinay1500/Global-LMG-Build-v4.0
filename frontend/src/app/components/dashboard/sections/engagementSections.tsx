@@ -4,6 +4,7 @@ import {
   Bell,
   CreditCard,
   LogOut,
+  MapPin,
   MessageSquare,
   Paperclip,
   Search,
@@ -15,6 +16,8 @@ import {
 } from 'lucide-react';
 import { StatusBadge } from '../StatusBadge';
 import { formatCurrency, formatDate, formatDateTime } from '../../../utils/dashboardFormatting';
+import { DEFAULT_COUNTRY, getCountryCode, getCountryName } from '../../../utils/countryDialCodes';
+import { AddressForm, createEmptyAddressValue, type AddressFormValue } from '../../address/AddressForm';
 import type {
   ChatMessage,
   Invoice,
@@ -306,7 +309,7 @@ export const DashboardNotificationsSection = ({
         invoice.status === 'overdue'
           ? `Invoice ${invoice.id} is overdue`
           : `Invoice ${invoice.id} is ready for review`,
-      description: `${invoice.matterTitle} · ${formatCurrency(invoice.totalAmount)}`,
+      description: `${invoice.matterTitle} · ${formatCurrency(invoice.totalAmount, invoice.currencyCode)}`,
       timestamp: invoice.dueDate,
       timestampLabel: `Due ${formatDate(invoice.dueDate)}`,
       meta: `Due ${formatDate(invoice.dueDate)}`,
@@ -336,7 +339,7 @@ export const DashboardNotificationsSection = ({
           </h1>
           <p className="mt-1 text-sm text-gray-500">
             Your notification center brings together unread messages, upcoming events, and billing
-            reminders from your server-backed dashboard activity.
+            reminders from your dashboard activity.
           </p>
         </div>
         <button
@@ -426,7 +429,6 @@ interface DashboardSettingsSectionProps {
     emailUpdates: boolean;
     inAppAlerts: boolean;
     smsAlerts: boolean;
-    whatsappAlerts: boolean;
     invoiceReminders: boolean;
     caseActivityAlerts: boolean;
     productAnnouncements: boolean;
@@ -436,7 +438,6 @@ interface DashboardSettingsSectionProps {
       | 'emailUpdates'
       | 'inAppAlerts'
       | 'smsAlerts'
-      | 'whatsappAlerts'
       | 'invoiceReminders'
       | 'caseActivityAlerts'
       | 'productAnnouncements',
@@ -449,15 +450,73 @@ interface DashboardSettingsSectionProps {
   onConfirmEmailChange: (payload: { code: string; email: string }) => Promise<ClientAccountSettingsResponse>;
   onConfirmPhoneChange: (payload: { code: string; phone: string }) => Promise<ClientAccountSettingsResponse>;
   onRefreshAccountSettings: () => Promise<void>;
-  onRequestEmailChange: (payload: { email: string }) => Promise<{ deliveryHint?: string; providerMode: string }>;
-  onRequestPhoneChange: (payload: { phone: string }) => Promise<{ deliveryHint?: string; providerMode: string }>;
-  onUpdateWhatsApp: (payload: {
-    whatsappNumber: string;
-    whatsappSameAsMobile: boolean;
+  onRequestEmailChange: (payload: { email: string }) => Promise<{ deliveryHint?: string; deliveryStatus?: string }>;
+  onRequestPhoneChange: (payload: { phone: string }) => Promise<{ deliveryHint?: string; deliveryStatus?: string }>;
+  onUpdateName: (payload: { name: string }) => Promise<ClientAccountSettingsResponse>;
+  onUpdateAddress: (payload: {
+    city: string;
+    country: string;
+    googlePlaceId?: string | null;
+    line1: string;
+    line2?: string;
+    postalCode: string;
+    sourceCode?: 'google' | 'ip_prefill' | 'manual';
+    state: string;
+    validationStatusCode?: 'manual' | 'unverified' | 'verified';
   }) => Promise<ClientAccountSettingsResponse>;
   onOpenNotifications: () => void;
   onSignOut: () => void;
 }
+
+const toAccountAddressFormValue = (accountSettings: ClientAccountSettingsResponse): AddressFormValue => ({
+  city: accountSettings.account.address.city,
+  country: getCountryName(accountSettings.account.address.countryCode) || DEFAULT_COUNTRY,
+  googlePlaceId: null,
+  line1: accountSettings.account.address.line1,
+  line2: accountSettings.account.address.line2,
+  postalCode: accountSettings.account.address.postalCode,
+  sourceCode: accountSettings.account.address.sourceCode,
+  state: accountSettings.account.address.state,
+  validationStatusCode: accountSettings.account.address.validationStatusCode,
+});
+
+const getAddressSignature = (address: AddressFormValue) =>
+  JSON.stringify({
+    city: address.city.trim(),
+    countryCode: (getCountryCode(address.country) || address.country.trim()).toUpperCase(),
+    line1: address.line1.trim(),
+    line2: address.line2.trim(),
+    postalCode: address.postalCode.trim(),
+    sourceCode: address.sourceCode,
+    state: address.state.trim(),
+    validationStatusCode: address.validationStatusCode,
+  });
+
+type SettingsFeedbackSection = 'address' | 'communication' | 'email' | 'phone' | 'profile' | 'security';
+type SettingsFeedback = {
+  message: string;
+  section: SettingsFeedbackSection;
+  tone: 'error' | 'success' | 'warning';
+};
+
+const SettingsInlineAlert = ({ feedback }: { feedback: SettingsFeedback | null }) => {
+  if (!feedback) {
+    return null;
+  }
+
+  const toneClass =
+    feedback.tone === 'error'
+      ? 'border-red-200 bg-red-50 text-red-700'
+      : feedback.tone === 'warning'
+        ? 'border-amber-200 bg-amber-50 text-amber-800'
+        : 'border-emerald-200 bg-emerald-50 text-emerald-800';
+
+  return (
+    <div className={`mb-4 rounded-lg border px-3 py-2 text-sm ${toneClass}`}>
+      {feedback.message}
+    </div>
+  );
+};
 
 export const DashboardSettingsSection = ({
   user,
@@ -472,78 +531,86 @@ export const DashboardSettingsSection = ({
   onRefreshAccountSettings,
   onRequestEmailChange,
   onRequestPhoneChange,
-  onUpdateWhatsApp,
+  onUpdateName,
+  onUpdateAddress,
   onPreferenceChange,
   onOpenNotifications,
   onSignOut,
 }: DashboardSettingsSectionProps) => {
   const [passwordForm, setPasswordForm] = React.useState({ currentPassword: '', newPassword: '' });
+  const [nameForm, setNameForm] = React.useState({ name: accountSettings?.account.name || user.name });
   const [emailForm, setEmailForm] = React.useState({ code: '', email: '' });
   const [phoneForm, setPhoneForm] = React.useState({ code: '', phone: '' });
-  const [whatsappForm, setWhatsappForm] = React.useState({
-    whatsappNumber: accountSettings?.account.whatsappNumber || user.phone,
-    whatsappSameAsMobile: accountSettings?.account.whatsappSameAsMobile ?? true,
+  const [addressForm, setAddressForm] = React.useState<AddressFormValue>({
+    ...createEmptyAddressValue(DEFAULT_COUNTRY),
   });
-  const [statusMessage, setStatusMessage] = React.useState('');
-  const [actionError, setActionError] = React.useState('');
+  const [savedAddressSignature, setSavedAddressSignature] = React.useState('');
+  const [feedback, setFeedback] = React.useState<SettingsFeedback | null>(null);
   const [isSavingAccount, setIsSavingAccount] = React.useState(false);
 
   React.useEffect(() => {
     if (!accountSettings) {
       return;
     }
-    setWhatsappForm({
-      whatsappNumber: accountSettings.account.whatsappNumber || accountSettings.account.phone,
-      whatsappSameAsMobile: accountSettings.account.whatsappSameAsMobile,
-    });
+    setNameForm({ name: accountSettings.account.name });
     setEmailForm((current) => ({ ...current, email: accountSettings.account.email }));
     setPhoneForm((current) => ({ ...current, phone: accountSettings.account.phone }));
+    const nextAddressForm = toAccountAddressFormValue(accountSettings);
+    setAddressForm(nextAddressForm);
+    setSavedAddressSignature(getAddressSignature(nextAddressForm));
   }, [accountSettings]);
 
-  const runAccountAction = async (action: () => Promise<void>) => {
-    setStatusMessage('');
-    setActionError('');
+  const runAccountAction = async (
+    section: SettingsFeedbackSection,
+    action: () => Promise<void>
+  ) => {
+    setFeedback(null);
     setIsSavingAccount(true);
     try {
       await action();
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : 'Account action failed.');
+      setFeedback({
+        message: error instanceof Error ? error.message : 'We could not save that change right now. Please try again.',
+        section,
+        tone: 'error',
+      });
     } finally {
       setIsSavingAccount(false);
     }
   };
 
-  const providerStatus = accountSettings?.providerMode;
-  const emailProviderDisabled = providerStatus?.email === 'disabled';
-  const smsProviderDisabled = providerStatus?.sms === 'disabled';
+  const showSuccess = (section: SettingsFeedbackSection, message: string) => {
+    setFeedback({ message, section, tone: 'success' });
+  };
+
+  const deliveryAvailability = accountSettings?.deliveryAvailability;
+  const emailDeliveryUnavailable = deliveryAvailability?.email === 'unavailable';
+  const mobileVerificationUnavailable = deliveryAvailability?.sms === 'unavailable';
+  const savedName = accountSettings?.account.name || user.name;
+  const isNameDirty = nameForm.name.trim() !== savedName.trim();
+  const isAddressDirty = getAddressSignature(addressForm) !== savedAddressSignature;
 
   const preferenceItems = [
     {
       key: 'inAppAlerts' as const,
-      label: 'In-app notifications',
+      label: 'Portal notifications',
       description: 'Portal notifications for messages, billing, documents, events, and matter activity.',
       icon: Bell,
     },
     {
       key: 'emailUpdates' as const,
       label: 'Email updates',
-      description: emailProviderDisabled
-        ? 'Email provider is disabled; this preference is saved for when delivery is configured.'
+      description: emailDeliveryUnavailable
+        ? 'Email delivery is currently unavailable; this preference will apply once delivery is enabled.'
         : 'Matter progress, event reminders, and billing updates by email.',
       icon: Bell,
     },
     {
       key: 'smsAlerts' as const,
       label: 'SMS and phone alerts',
-      description: smsProviderDisabled
-        ? 'SMS provider is disabled; this preference is saved but no SMS is sent in this environment.'
+      description: mobileVerificationUnavailable
+        ? 'SMS delivery is currently unavailable; this preference will apply once delivery is enabled.'
         : 'Urgent notices and verification-related mobile updates.',
-      icon: Smartphone,
-    },
-    {
-      key: 'whatsappAlerts' as const,
-      label: 'WhatsApp preference',
-      description: 'Saved as an informational preference. No WhatsApp delivery provider is configured.',
       icon: Smartphone,
     },
     {
@@ -560,8 +627,8 @@ export const DashboardSettingsSection = ({
     },
     {
       key: 'productAnnouncements' as const,
-      label: 'Product announcements',
-      description: 'Future portal release notes and account feature updates.',
+      label: 'Service and account updates',
+      description: 'Important account updates and information about improvements to your portal experience.',
       icon: Shield,
     },
   ];
@@ -597,6 +664,7 @@ export const DashboardSettingsSection = ({
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
+          <SettingsInlineAlert feedback={feedback?.section === 'profile' ? feedback : null} />
           <div className="mb-3 flex items-center gap-2 text-gray-900">
             <User className="h-4 w-4" />
             <h2 className="text-sm">Account Details</h2>
@@ -604,7 +672,31 @@ export const DashboardSettingsSection = ({
           <div className="space-y-3 text-sm text-gray-600">
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Name</p>
-              <p className="mt-1 text-gray-900">{accountSettings?.account.name || user.name}</p>
+              <form
+                className="mt-2 flex flex-col gap-2 sm:flex-row"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void runAccountAction('profile', async () => {
+                    const nextSettings = await onUpdateName({ name: nameForm.name.trim() });
+                    setNameForm({ name: nextSettings.account.name });
+                    showSuccess('profile', 'Name saved.');
+                  });
+                }}
+              >
+                <input
+                  className="min-w-0 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-900"
+                  disabled={isAccountSettingsLoading}
+                  onChange={(event) => setNameForm({ name: event.target.value })}
+                  value={nameForm.name}
+                />
+                <button
+                  className="rounded-lg bg-gray-900 px-3 py-2 text-xs font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={isSavingAccount || isAccountSettingsLoading || !nameForm.name.trim() || !isNameDirty}
+                  type="submit"
+                >
+                  {isNameDirty ? 'Save' : 'Saved'}
+                </button>
+              </form>
             </div>
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-gray-400">Email</p>
@@ -626,13 +718,17 @@ export const DashboardSettingsSection = ({
         <div className="rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
           <div className="mb-3 flex items-center gap-2 text-gray-900">
             <Bell className="h-4 w-4" />
-            <h2 className="text-sm">Delivery Modes</h2>
+            <h2 className="text-sm">Communication</h2>
           </div>
           <div className="space-y-2 text-sm text-gray-600">
-            <p>In-app: local</p>
-            <p>Email: {providerStatus?.email || 'loading'}</p>
-            <p>SMS: {providerStatus?.sms || 'loading'}</p>
-            <p>WhatsApp: informational only</p>
+            <p>Choose how you would like to receive matter, billing, document, and event updates.</p>
+            <button
+              className="text-xs font-medium text-gray-900 underline-offset-4 hover:underline"
+              onClick={onOpenNotifications}
+              type="button"
+            >
+              Review notification center
+            </button>
           </div>
         </div>
 
@@ -647,18 +743,72 @@ export const DashboardSettingsSection = ({
         </div>
       </div>
 
+      <form
+        className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void runAccountAction('address', async () => {
+            const nextSettings = await onUpdateAddress({
+              city: addressForm.city,
+              country: getCountryCode(addressForm.country) || addressForm.country,
+              googlePlaceId: addressForm.googlePlaceId || null,
+              line1: addressForm.line1,
+              line2: addressForm.line2,
+              postalCode: addressForm.postalCode,
+              sourceCode: addressForm.sourceCode,
+              state: addressForm.state,
+              validationStatusCode: addressForm.validationStatusCode,
+            });
+            const nextAddressForm = toAccountAddressFormValue(nextSettings);
+            setAddressForm(nextAddressForm);
+            setSavedAddressSignature(getAddressSignature(nextAddressForm));
+            showSuccess('address', 'Billing address saved.');
+          });
+        }}
+      >
+        <SettingsInlineAlert feedback={feedback?.section === 'address' ? feedback : null} />
+        <div className="flex items-center gap-2 text-gray-900">
+          <MapPin className="h-4 w-4" />
+          <h2 className="text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>
+            Billing Address
+          </h2>
+        </div>
+        <p className="mt-2 text-sm text-gray-500">
+          This address controls the country used for new request pricing and invoice tax snapshots.
+          Status: {addressForm.validationStatusCode === 'verified' ? 'verified' : addressForm.sourceCode === 'google' ? 'selected from Google, not yet verified' : 'manual'}.
+        </p>
+        <div className="mt-4">
+          <AddressForm idPrefix="account-address" value={addressForm} onChange={setAddressForm} />
+        </div>
+        <button
+          className="mt-4 rounded-lg bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-50"
+          disabled={
+            isSavingAccount ||
+            !isAddressDirty ||
+            !addressForm.line1.trim() ||
+            !addressForm.city.trim() ||
+            !addressForm.state.trim() ||
+            !addressForm.postalCode.trim()
+          }
+          type="submit"
+        >
+          {isAddressDirty ? 'Save Address' : 'Address Saved'}
+        </button>
+      </form>
+
       <div className="grid gap-4 lg:grid-cols-2">
         <form
           className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm"
           onSubmit={(event) => {
             event.preventDefault();
-            void runAccountAction(async () => {
+            void runAccountAction('security', async () => {
               await onChangePassword(passwordForm);
               setPasswordForm({ currentPassword: '', newPassword: '' });
-              setStatusMessage('Password changed.');
+              showSuccess('security', 'Password changed.');
             });
           }}
         >
+          <SettingsInlineAlert feedback={feedback?.section === 'security' ? feedback : null} />
           <h2 className="text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>
             Change Password
           </h2>
@@ -686,89 +836,50 @@ export const DashboardSettingsSection = ({
             </button>
           </div>
         </form>
-
-        <form
-          className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void runAccountAction(async () => {
-              await onUpdateWhatsApp(whatsappForm);
-              setStatusMessage('WhatsApp contact preference saved.');
-            });
-          }}
-        >
-          <h2 className="text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>
-            WhatsApp Contact
-          </h2>
-          <label className="mt-4 flex items-center gap-2 text-sm text-gray-700">
-            <input
-              checked={whatsappForm.whatsappSameAsMobile}
-              onChange={(event) =>
-                setWhatsappForm((current) => ({
-                  ...current,
-                  whatsappNumber: event.target.checked ? accountSettings?.account.phone || user.phone : current.whatsappNumber,
-                  whatsappSameAsMobile: event.target.checked,
-                }))
-              }
-              type="checkbox"
-            />
-            WhatsApp number is same as mobile
-          </label>
-          <input
-            className="mt-3 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm disabled:bg-gray-50"
-            disabled={whatsappForm.whatsappSameAsMobile}
-            onChange={(event) => setWhatsappForm((current) => ({ ...current, whatsappNumber: event.target.value }))}
-            placeholder="WhatsApp number"
-            type="tel"
-            value={whatsappForm.whatsappNumber}
-          />
-          <button className="mt-3 rounded-lg bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-50" disabled={isSavingAccount} type="submit">
-            Save Contact
-          </button>
-        </form>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+          <SettingsInlineAlert feedback={feedback?.section === 'email' ? feedback : null} />
           <h2 className="text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>Email Change</h2>
           <div className="mt-4 space-y-3">
             <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" onChange={(event) => setEmailForm((current) => ({ ...current, email: event.target.value }))} placeholder="New email" type="email" value={emailForm.email} />
             <div className="flex flex-wrap gap-2">
-              <button className="rounded-lg border border-gray-200 px-4 py-2 text-sm" disabled={isSavingAccount || emailProviderDisabled} onClick={() => void runAccountAction(async () => { const result = await onRequestEmailChange({ email: emailForm.email }); setStatusMessage(result.deliveryHint || 'Verification code sent to the new email.'); })} type="button">
+              <button className="rounded-lg border border-gray-200 px-4 py-2 text-sm" disabled={isSavingAccount || emailDeliveryUnavailable} onClick={() => void runAccountAction('email', async () => { const result = await onRequestEmailChange({ email: emailForm.email }); showSuccess('email', result.deliveryHint || 'Verification code sent to the new email.'); })} type="button">
                 Send Code
               </button>
               <input className="min-w-32 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm" onChange={(event) => setEmailForm((current) => ({ ...current, code: event.target.value }))} placeholder="Code" value={emailForm.code} />
-              <button className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-50" disabled={isSavingAccount || !emailForm.code} onClick={() => void runAccountAction(async () => { await onConfirmEmailChange(emailForm); setStatusMessage('Email verified and updated.'); })} type="button">
+              <button className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-50" disabled={isSavingAccount || !emailForm.code} onClick={() => void runAccountAction('email', async () => { await onConfirmEmailChange(emailForm); showSuccess('email', 'Email verified and updated.'); })} type="button">
                 Confirm
               </button>
             </div>
-            {emailProviderDisabled ? <p className="text-xs text-amber-700">Email provider is disabled, so email changes cannot be verified in this environment.</p> : null}
+            {emailDeliveryUnavailable ? <p className="text-xs text-amber-700">Email verification is temporarily unavailable.</p> : null}
           </div>
         </div>
 
         <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+          <SettingsInlineAlert feedback={feedback?.section === 'phone' ? feedback : null} />
           <h2 className="text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>Phone Change</h2>
           <div className="mt-4 space-y-3">
             <input className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" onChange={(event) => setPhoneForm((current) => ({ ...current, phone: event.target.value }))} placeholder="New phone" type="tel" value={phoneForm.phone} />
             <div className="flex flex-wrap gap-2">
-              <button className="rounded-lg border border-gray-200 px-4 py-2 text-sm" disabled={isSavingAccount || smsProviderDisabled} onClick={() => void runAccountAction(async () => { const result = await onRequestPhoneChange({ phone: phoneForm.phone }); setStatusMessage(result.deliveryHint || 'OTP sent to the new phone.'); })} type="button">
-                Send OTP
+              <button className="rounded-lg border border-gray-200 px-4 py-2 text-sm" disabled={isSavingAccount || mobileVerificationUnavailable} onClick={() => void runAccountAction('phone', async () => { const result = await onRequestPhoneChange({ phone: phoneForm.phone }); showSuccess('phone', result.deliveryHint || 'Verification code sent to the new phone.'); })} type="button">
+                Send Code
               </button>
-              <input className="min-w-32 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm" onChange={(event) => setPhoneForm((current) => ({ ...current, code: event.target.value }))} placeholder="OTP" value={phoneForm.code} />
-              <button className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-50" disabled={isSavingAccount || !phoneForm.code} onClick={() => void runAccountAction(async () => { await onConfirmPhoneChange(phoneForm); setStatusMessage('Phone verified and updated.'); })} type="button">
+              <input className="min-w-32 flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm" onChange={(event) => setPhoneForm((current) => ({ ...current, code: event.target.value }))} placeholder="Code" value={phoneForm.code} />
+              <button className="rounded-lg bg-gray-900 px-4 py-2 text-sm text-white disabled:opacity-50" disabled={isSavingAccount || !phoneForm.code} onClick={() => void runAccountAction('phone', async () => { await onConfirmPhoneChange(phoneForm); showSuccess('phone', 'Phone verified and updated.'); })} type="button">
                 Confirm
               </button>
             </div>
-            {smsProviderDisabled ? <p className="text-xs text-amber-700">SMS provider is disabled, so phone changes cannot be verified in this environment.</p> : null}
+            {mobileVerificationUnavailable ? <p className="text-xs text-amber-700">Phone verification is temporarily unavailable.</p> : null}
           </div>
         </div>
       </div>
 
       {isAccountSettingsLoading ? <p className="text-sm text-gray-500">Loading account settings...</p> : null}
-      {actionError ? <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{actionError}</div> : null}
-      {statusMessage ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{statusMessage}</div> : null}
 
       <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+        <SettingsInlineAlert feedback={feedback?.section === 'communication' ? feedback : null} />
         <div className="mb-5 flex items-center gap-2">
           <Settings className="h-4 w-4 text-gray-500" />
           <h2 className="text-lg" style={{ fontFamily: "'Playfair Display', serif" }}>
@@ -796,7 +907,10 @@ export const DashboardSettingsSection = ({
                 <input
                   type="checkbox"
                   checked={isEnabled}
-                  onChange={(event) => onPreferenceChange(preference.key, event.target.checked)}
+                  onChange={(event) => {
+                    onPreferenceChange(preference.key, event.target.checked);
+                    showSuccess('communication', 'Communication preference saved.');
+                  }}
                   className="mt-1 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-300"
                 />
               </label>
@@ -811,7 +925,7 @@ export const DashboardSettingsSection = ({
             Legal and Privacy Controls
           </h2>
           <p className="mt-2 text-sm text-gray-500">
-            Public legal documents remain available from inside the dashboard while account settings are managed by the backend API.
+            Public legal documents remain available from inside the dashboard while your account settings remain securely managed.
           </p>
           <div className="mt-4 flex flex-wrap gap-3">
             <Link to="/privacy" className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-700 transition hover:bg-gray-50">

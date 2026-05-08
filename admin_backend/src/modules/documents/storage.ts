@@ -3,6 +3,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { badRequest } from '../../lib/httpErrors.js';
 import { env } from '../../config/env.js';
+import { S3DocumentStorage } from './s3DocumentStorage.js';
 
 const SAFE_PREVIEW_MIME_TYPES = new Set([
   'application/pdf',
@@ -88,6 +89,8 @@ export const assertSupportedDocumentUpload = (input: {
 };
 
 export class LocalDocumentStorage {
+  public readonly driverCode = 'local' as const;
+
   public constructor(private readonly rootDirectory: string) {}
 
   private assertEnabled() {
@@ -134,9 +137,25 @@ export class LocalDocumentStorage {
 
     return absolutePath;
   }
+
+  public async readBuffer(storageKey: string) {
+    return fs.readFile(this.resolvePath(storageKey));
+  }
 }
 
 export const getDocumentStorage = () => {
+  if (env.DOCUMENT_STORAGE_DRIVER === 's3') {
+    return new S3DocumentStorage({
+      accessKeyId: env.S3_ACCESS_KEY_ID || '',
+      bucket: env.S3_BUCKET || '',
+      endpoint: env.S3_ENDPOINT || '',
+      region: env.S3_REGION,
+      secretAccessKey: env.S3_SECRET_ACCESS_KEY || '',
+      sessionToken: env.S3_SESSION_TOKEN || null,
+      verifyUploadSha256: env.S3_VERIFY_UPLOAD_SHA256,
+    });
+  }
+
   const rootDirectory = path.isAbsolute(env.DOCUMENT_STORAGE_ROOT)
     ? env.DOCUMENT_STORAGE_ROOT
     : path.resolve(process.cwd(), env.DOCUMENT_STORAGE_ROOT);

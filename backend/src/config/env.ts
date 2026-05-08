@@ -11,6 +11,10 @@ if (!rawEnv.MYSQL_SSL_CA && rawEnv.MYSQL_SSL_CA_PATH) {
   rawEnv.MYSQL_SSL_CA = rawEnv.MYSQL_SSL_CA_PATH;
 }
 
+if (rawEnv.OBJECT_STORAGE_DRIVER) {
+  rawEnv.DOCUMENT_STORAGE_DRIVER = rawEnv.OBJECT_STORAGE_DRIVER;
+}
+
 const optionalString = z.preprocess((value) => {
   if (typeof value !== 'string') {
     return value;
@@ -47,12 +51,12 @@ const smsProviderMode = z.preprocess((value) => {
 
   const normalized = value.trim().toLowerCase();
 
-  if (normalized === 'twilio') {
-    return 'twilio-verify';
+  if (normalized === 'twilio-sms' || normalized === 'twilio-messaging') {
+    return 'twilio';
   }
 
   return normalized;
-}, z.enum(['preview', 'disabled', 'twilio-verify']));
+}, z.enum(['preview', 'disabled', 'twilio', 'twilio-verify']));
 
 const googleAuthMode = z.preprocess((value) => {
   if (typeof value !== 'string') {
@@ -68,6 +72,57 @@ const googleAuthMode = z.preprocess((value) => {
   return normalized;
 }, z.enum(['preview', 'disabled', 'google-jwt']));
 
+const fileScanMode = z.preprocess((value) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  return value.trim().toLowerCase();
+}, z.enum(['disabled', 'clamav']));
+
+const addressValidationMode = z.preprocess((value) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  return value.trim().toLowerCase();
+}, z.enum(['disabled', 'google']));
+
+const ipGeolocationMode = z.preprocess((value) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  return value.trim().toLowerCase();
+}, z.enum(['disabled', 'cloudflare', 'provider', 'maxmind', 'manual']));
+
+const fxProviderMode = z.preprocess((value) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'manual' ? 'api' : normalized;
+}, z.enum(['api']));
+
+const usdCurrency = z.preprocess(() => 'USD', z.literal('USD'));
+
+const paymentProviderMode = z.preprocess((value) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  return value.trim().toLowerCase();
+}, z.enum(['disabled', 'razorpay']));
+
+const razorpayCaptureMode = z.preprocess((value) => {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  return value.trim().toLowerCase();
+}, z.enum(['auto', 'manual']));
+
 const mysqlSslMode = z.preprocess((value) => {
   if (typeof value !== 'string') {
     return value;
@@ -80,6 +135,10 @@ const envSchema = z.object({
   APP_ENV: z.enum(['development', 'staging', 'production']).default('development'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   REQUEST_LOGGING_ENABLED: booleanFromEnv.default(true),
+  SENTRY_DSN: optionalString,
+  SENTRY_ENVIRONMENT: optionalString,
+  SENTRY_RELEASE: optionalString,
+  SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).default(0.05),
   PORT: z.coerce.number().int().positive().default(3001),
   PUBLIC_WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
   AUTH_STORE_MODE: z.enum(['mysql']).default('mysql'),
@@ -97,6 +156,7 @@ const envSchema = z.object({
   AUTH_FLOW_TTL_MINUTES: z.coerce.number().int().positive().default(30),
   AUTH_RATE_LIMIT_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
   AUTH_RATE_LIMIT_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+  AUTH_RATE_LIMIT_IP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(20),
   EMAIL_PROVIDER_MODE: z.enum(['preview', 'disabled', 'resend']).default('disabled'),
   SMS_PROVIDER_MODE: smsProviderMode.default('disabled'),
   GOOGLE_AUTH_MODE: googleAuthMode.default('disabled'),
@@ -104,8 +164,27 @@ const envSchema = z.object({
   RESEND_API_KEY: optionalString,
   TWILIO_ACCOUNT_SID: optionalString,
   TWILIO_AUTH_TOKEN: optionalString,
+  TWILIO_FROM_NUMBER: optionalString,
+  TWILIO_MESSAGING_SERVICE_SID: optionalString,
   TWILIO_VERIFY_SERVICE_SID: optionalString,
   GOOGLE_CLIENT_ID: optionalString,
+  ADDRESS_VALIDATION_MODE: addressValidationMode.default('disabled'),
+  GOOGLE_MAPS_API_KEY: optionalString,
+  GOOGLE_ADDRESS_VALIDATION_API_KEY: optionalString,
+  IP_GEOLOCATION_MODE: ipGeolocationMode.default('disabled'),
+  IP_GEOLOCATION_PROVIDER_API_KEY: optionalString,
+  DEFAULT_PRICING_COUNTRY: z.string().trim().min(2).max(8).default('US'),
+  DEFAULT_PRICING_CURRENCY: usdCurrency,
+  FX_BASE_CURRENCY: usdCurrency,
+  FX_DEFAULT_FALLBACK_POLICY: z.enum(['fail_closed', 'use_base_currency']).default('fail_closed'),
+  FX_PROVIDER_MODE: fxProviderMode.default('api'),
+  FX_PROVIDER_URL_TEMPLATE: optionalString,
+  PAYMENT_PROVIDER_MODE: paymentProviderMode.default('disabled'),
+  RAZORPAY_CAPTURE_MODE: razorpayCaptureMode.default('auto'),
+  RAZORPAY_KEY_ID: optionalString,
+  RAZORPAY_KEY_SECRET: optionalString,
+  RAZORPAY_WEBHOOK_SECRET: optionalString,
+  PREVIEW_ACCOUNT_ENABLED: booleanFromEnv.default(false),
   PREVIEW_ACCOUNT_ID: z.string().min(1).default('user-1'),
   PREVIEW_ACCOUNT_NAME: z.string().min(1).default('Arjun Mehta'),
   PREVIEW_ACCOUNT_EMAIL: z.string().email().default('arjun.m@example.com'),
@@ -123,9 +202,22 @@ const envSchema = z.object({
   MYSQL_SSL_CA: optionalString,
   MYSQL_SSL_MODE: mysqlSslMode.default('DISABLED'),
   MYSQL_USER: optionalString,
-  DOCUMENT_STORAGE_DRIVER: z.enum(['local', 'disabled']).default('local'),
+  OBJECT_STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
+  DOCUMENT_STORAGE_DRIVER: z.enum(['local', 's3', 'disabled']).default('local'),
   DOCUMENT_STORAGE_ROOT: z.string().min(1).default('../storage/glmg-uploads'),
   DOCUMENT_UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(25 * 1024 * 1024),
+  S3_ACCESS_KEY_ID: optionalString,
+  S3_BUCKET: optionalString,
+  S3_ENDPOINT: optionalString,
+  S3_REGION: z.string().min(1).default('auto'),
+  S3_SECRET_ACCESS_KEY: optionalString,
+  S3_SESSION_TOKEN: optionalString,
+  S3_VERIFY_UPLOAD_SHA256: booleanFromEnv.default(true),
+  FILE_SCAN_BLOCK_DOWNLOAD_UNTIL_CLEAN: booleanFromEnv.default(false),
+  FILE_SCAN_BLOCK_PREVIEW_UNTIL_CLEAN: booleanFromEnv.default(true),
+  FILE_SCAN_MODE: fileScanMode.default('disabled'),
+  CLAMAV_HOST: optionalString,
+  CLAMAV_PORT: z.coerce.number().int().positive().default(3310),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(15000),
 });
 
@@ -139,20 +231,53 @@ if (parsedEnv.EMAIL_PROVIDER_MODE === 'resend') {
   }
 }
 
-if (parsedEnv.SMS_PROVIDER_MODE === 'twilio-verify') {
+if (parsedEnv.FILE_SCAN_MODE === 'clamav' && !parsedEnv.CLAMAV_HOST) {
+  throw new Error('FILE_SCAN_MODE=clamav requires CLAMAV_HOST.');
+}
+
+if (parsedEnv.DOCUMENT_STORAGE_DRIVER === 's3') {
   if (
-    !parsedEnv.TWILIO_ACCOUNT_SID ||
-    !parsedEnv.TWILIO_AUTH_TOKEN ||
-    !parsedEnv.TWILIO_VERIFY_SERVICE_SID
+    !parsedEnv.S3_ENDPOINT ||
+    !parsedEnv.S3_BUCKET ||
+    !parsedEnv.S3_ACCESS_KEY_ID ||
+    !parsedEnv.S3_SECRET_ACCESS_KEY
   ) {
+    throw new Error(
+      'DOCUMENT_STORAGE_DRIVER=s3 requires S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY.'
+    );
+  }
+}
+
+if (parsedEnv.SMS_PROVIDER_MODE === 'twilio-verify') {
+  if (!parsedEnv.TWILIO_ACCOUNT_SID || !parsedEnv.TWILIO_AUTH_TOKEN || !parsedEnv.TWILIO_VERIFY_SERVICE_SID) {
     throw new Error(
       'SMS_PROVIDER_MODE=twilio-verify requires TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_VERIFY_SERVICE_SID.'
     );
   }
 }
 
+if (parsedEnv.SMS_PROVIDER_MODE === 'twilio') {
+  if (!parsedEnv.TWILIO_ACCOUNT_SID || !parsedEnv.TWILIO_AUTH_TOKEN) {
+    throw new Error('SMS_PROVIDER_MODE=twilio requires TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN.');
+  }
+
+  if (!parsedEnv.TWILIO_FROM_NUMBER && !parsedEnv.TWILIO_MESSAGING_SERVICE_SID) {
+    throw new Error('SMS_PROVIDER_MODE=twilio requires either TWILIO_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID.');
+  }
+}
+
 if (parsedEnv.GOOGLE_AUTH_MODE === 'google-jwt' && !parsedEnv.GOOGLE_CLIENT_ID) {
   throw new Error('GOOGLE_AUTH_MODE=google-jwt requires GOOGLE_CLIENT_ID.');
+}
+
+if (parsedEnv.PAYMENT_PROVIDER_MODE === 'razorpay') {
+  if (!parsedEnv.RAZORPAY_KEY_ID || !parsedEnv.RAZORPAY_KEY_SECRET) {
+    throw new Error('PAYMENT_PROVIDER_MODE=razorpay requires RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.');
+  }
+}
+
+if (parsedEnv.APP_ENV !== 'development' && parsedEnv.PREVIEW_ACCOUNT_ENABLED) {
+  throw new Error('PREVIEW_ACCOUNT_ENABLED is only allowed when APP_ENV=development.');
 }
 
 if (parsedEnv.APP_ENV === 'production') {

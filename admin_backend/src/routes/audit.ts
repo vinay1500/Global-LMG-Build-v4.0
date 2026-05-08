@@ -11,7 +11,8 @@ auditRouter.get(
     await requireReadPermission(request, 'matter.view');
     response.json(
       await listEntries({
-        limit: Number(request.query.limit || 100),
+        limit: Number(request.query.limit || 50),
+        offset: Number(request.query.offset || 0),
       })
     );
   })

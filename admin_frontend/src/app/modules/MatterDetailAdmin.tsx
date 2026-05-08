@@ -1,15 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft, Video, MessageSquare, FileText, Download,
   Edit2, Clock, Check, Eye,
-  Package, Save, Calendar, Upload
+  Package, Save, Calendar, Upload, Search, X
 } from 'lucide-react';
 import { StatusBadge, UrgencyDot } from '../components/dashboard/StatusBadge';
 import { LifecycleStepper } from '../components/dashboard/LifecycleStepper';
-import { 
-  formatCurrency, formatDate, getServiceName, SERVICES, LIFECYCLE_STAGES,
-  type Matter, type Invoice, type PlatformEvent, type PlatformDocument, type MessageThread 
-} from '../data/seedData';
+import { formatCurrency, formatDate } from '../data/formatters';
+import { getServiceName, LIFECYCLE_STAGES } from '../data/referenceData';
+import type { Matter, Invoice, PlatformEvent, PlatformDocument, MessageThread } from '../data/seedData';
 import type { MatterPackageProposalsResponse } from '../lib/api/contracts';
 import { PackageBuilder, type PackageTier } from './PackageBuilder';
 
@@ -24,15 +23,28 @@ const formatSize = (bytes: number) => {
 const SAFE_DOCUMENT_PREVIEW_TYPES = new Set(['CSV', 'GIF', 'JPG', 'JPEG', 'PDF', 'PNG', 'TXT', 'WEBP']);
 const ACCEPTED_UPLOAD_TYPES = '.csv,.doc,.docx,.gif,.jpg,.jpeg,.pdf,.png,.txt,.webp,.xls,.xlsx,.zip';
 
+type AssignmentOption = {
+  city?: string | null;
+  country?: string | null;
+  email?: string | null;
+  id: string;
+  name: string;
+  phone?: string | null;
+  specialization?: string | null;
+  state?: string | null;
+  type?: 'external_counsel' | 'field_partner';
+};
+
 interface MatterDetailAdminProps {
   assignmentOptions?: {
-    counsel: Array<{ id: string; name: string }>;
-    staff: Array<{ id: string; name: string }>;
+    counsel: AssignmentOption[];
+    staff: AssignmentOption[];
   };
   matter: Matter;
   isPackageLoading?: boolean;
   packageErrorMessage?: string | null;
   packageWorkspace?: MatterPackageProposalsResponse | null;
+  serviceOptions?: Array<{ code: string; domainName?: string; name: string }>;
   onAddMatterNote?: (payload: { bodyText: string; title: string; visibleToClient?: boolean }) => Promise<void>;
   onArchiveProposal?: (proposalVersion: number) => Promise<void>;
   onAssignMatter?: (payload: {
@@ -42,6 +54,11 @@ interface MatterDetailAdminProps {
     isPrimary?: boolean;
     notes?: string;
     visibleToClient?: boolean;
+  }) => Promise<void>;
+  onReplaceMatterAssignments?: (payload: {
+    externalCounsel: Array<{ id: string; visibleToClient: boolean }>;
+    fieldPartners: Array<{ id: string; visibleToClient: boolean }>;
+    staff: Array<{ id: string; visibleToClient: boolean }>;
   }) => Promise<void>;
   onBack: () => void;
   onChat: (threadId: string | null) => void;
@@ -92,6 +109,281 @@ interface MatterDetailAdminProps {
   }) => Promise<void>;
 }
 
+type AssignmentDraft = {
+  externalCounsel: Array<{ id: string; visibleToClient: boolean }>;
+  fieldPartners: Array<{ id: string; visibleToClient: boolean }>;
+  staff: Array<{ id: string; visibleToClient: boolean }>;
+};
+
+type AssignmentGroup = keyof AssignmentDraft;
+
+const normalizeAssignmentDraft = (draft: AssignmentDraft) => ({
+  externalCounsel: [...draft.externalCounsel].sort((a, b) => a.id.localeCompare(b.id)),
+  fieldPartners: [...draft.fieldPartners].sort((a, b) => a.id.localeCompare(b.id)),
+  staff: [...draft.staff].sort((a, b) => a.id.localeCompare(b.id)),
+});
+
+const getAssignmentSearchText = (option: AssignmentOption) =>
+  [
+    option.name,
+    option.email,
+    option.phone,
+    option.specialization,
+    option.city,
+    option.state,
+    option.country,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+
+const compactAssignmentMeta = (option?: AssignmentOption) =>
+  [option?.specialization, option?.city, option?.state].filter(Boolean).join(' · ');
+
+const AssignmentMultiSelect: React.FC<{
+  draft: Array<{ id: string; visibleToClient: boolean }>;
+  fallbackAssignments: NonNullable<Matter['assignments']>;
+  group: AssignmentGroup;
+  label: string;
+  onAdd: (group: AssignmentGroup, id: string) => void;
+  onRemove: (group: AssignmentGroup, id: string) => void;
+  onVisibilityChange: (group: AssignmentGroup, id: string, visibleToClient: boolean) => void;
+  options: AssignmentOption[];
+  placeholder: string;
+  roleLabel: string;
+}> = ({
+  draft,
+  fallbackAssignments,
+  group,
+  label,
+  onAdd,
+  onRemove,
+  onVisibilityChange,
+  options,
+  placeholder,
+  roleLabel,
+}) => {
+  const [query, setQuery] = useState('');
+  const [isOpen, setIsOpen] = useState(false);
+  const selectedIds = useMemo(() => new Set(draft.map((entry) => entry.id)), [draft]);
+  const optionById = useMemo(() => {
+    const lookup = new Map<string, AssignmentOption>();
+    options.forEach((option) => lookup.set(option.id, option));
+    fallbackAssignments.forEach((assignment) => {
+      if (!lookup.has(assignment.id)) {
+        lookup.set(assignment.id, {
+          id: assignment.id,
+          name: assignment.name,
+          type: assignment.type === 'internal_staff' ? undefined : assignment.type,
+        });
+      }
+    });
+    return lookup;
+  }, [fallbackAssignments, options]);
+
+  const filteredOptions = useMemo(() => {
+    const tokens = query
+      .trim()
+      .toLowerCase()
+      .split(/\s+/)
+      .filter(Boolean);
+
+    return options
+      .filter((option) => !selectedIds.has(option.id))
+      .filter((option) => {
+        if (tokens.length === 0) {
+          return true;
+        }
+        const searchText = getAssignmentSearchText(option);
+        return tokens.every((token) => searchText.includes(token));
+      })
+      .slice(0, 10);
+  }, [options, query, selectedIds]);
+
+  const selectedEntries = draft.map((entry) => ({
+    ...entry,
+    option: optionById.get(entry.id),
+  }));
+
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-3">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-medium uppercase tracking-wide text-gray-500">{label}</p>
+          <p className="mt-1 text-[11px] text-gray-400">
+            Search active registry entries; selected contacts appear below.
+          </p>
+        </div>
+        <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-500">
+          {draft.length} selected
+        </span>
+      </div>
+
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
+        <input
+          aria-label={`Search ${label}`}
+          className="w-full rounded-lg border border-gray-200 bg-gray-50 py-2 pl-9 pr-9 text-sm text-gray-700 outline-none transition focus:border-[#C19A5B] focus:bg-white"
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setIsOpen(true);
+          }}
+          onFocus={() => setIsOpen(true)}
+          placeholder={placeholder}
+          type="search"
+          value={query}
+        />
+        {query ? (
+          <button
+            aria-label={`Clear ${label} search`}
+            className="absolute right-2 top-2 rounded-md p-1 text-gray-400 transition hover:bg-white hover:text-gray-700"
+            onClick={() => {
+              setQuery('');
+              setIsOpen(true);
+            }}
+            type="button"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        ) : null}
+
+        {isOpen ? (
+          <div className="absolute z-20 mt-2 max-h-72 w-full overflow-y-auto rounded-xl border border-gray-200 bg-white p-2 shadow-xl">
+            {filteredOptions.length ? (
+              <div className="space-y-1">
+                {filteredOptions.map((option) => (
+                  <button
+                    className="w-full rounded-lg px-3 py-2 text-left transition hover:bg-gray-50 focus:bg-gray-50 focus:outline-none"
+                    key={option.id}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      onAdd(group, option.id);
+                      setQuery('');
+                      setIsOpen(false);
+                    }}
+                    type="button"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-gray-800">{option.name}</p>
+                        <p className="truncate text-xs text-gray-500">
+                          {compactAssignmentMeta(option) || roleLabel}
+                        </p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-gray-500">
+                        {roleLabel}
+                      </span>
+                    </div>
+                    {[option.email, option.phone].filter(Boolean).length ? (
+                      <p className="mt-1 truncate text-xs text-gray-400">
+                        {[option.email, option.phone].filter(Boolean).join(' · ')}
+                      </p>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p className="px-3 py-4 text-center text-xs text-gray-400">
+                {options.length ? 'No matching active entries.' : 'No active entries configured.'}
+              </p>
+            )}
+            <button
+              className="mt-2 w-full rounded-lg border border-gray-100 py-2 text-xs font-medium text-gray-500 transition hover:bg-gray-50"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => setIsOpen(false)}
+              type="button"
+            >
+              Close
+            </button>
+          </div>
+        ) : null}
+      </div>
+
+      {selectedEntries.length ? (
+        <div className="mt-3 flex flex-col gap-2">
+          {selectedEntries.map((entry) => (
+            <div
+              className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2"
+              key={entry.id}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-800 admin-wrap-anywhere">
+                    {entry.option?.name || entry.id}
+                  </p>
+                  <p className="text-xs text-gray-500 admin-wrap-anywhere">
+                    {compactAssignmentMeta(entry.option) || roleLabel}
+                  </p>
+                </div>
+                <button
+                  aria-label={`Remove ${entry.option?.name || entry.id}`}
+                  className="shrink-0 rounded-md p-1 text-gray-400 transition hover:bg-white hover:text-red-600"
+                  onClick={() => onRemove(group, entry.id)}
+                  type="button"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <label className="mt-2 flex items-center gap-2 text-xs text-gray-500">
+                <input
+                  checked={entry.visibleToClient}
+                  className="h-3.5 w-3.5 accent-[#C19A5B]"
+                  onChange={(event) => onVisibilityChange(group, entry.id, event.target.checked)}
+                  type="checkbox"
+                />
+                Visible to client
+              </label>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-3 rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-3 text-xs text-gray-400">
+          No {label.toLowerCase()} selected.
+        </div>
+      )}
+    </div>
+  );
+};
+
+const buildAssignmentDraft = (matter: Matter): AssignmentDraft => ({
+  externalCounsel: (matter.assignments || [])
+    .filter((assignment) => assignment.type === 'external_counsel')
+    .map((assignment) => ({ id: assignment.id, visibleToClient: assignment.visibleToClient })),
+  fieldPartners: (matter.assignments || [])
+    .filter((assignment) => assignment.type === 'field_partner')
+    .map((assignment) => ({ id: assignment.id, visibleToClient: assignment.visibleToClient })),
+  staff: (matter.assignments || [])
+    .filter((assignment) => assignment.type === 'internal_staff')
+    .map((assignment) => ({ id: assignment.id, visibleToClient: assignment.visibleToClient })),
+});
+
+const sanitizeAssignmentDraft = (
+  draft: AssignmentDraft,
+  assignmentOptions?: MatterDetailAdminProps['assignmentOptions']
+): AssignmentDraft => {
+  if (!assignmentOptions) {
+    return draft;
+  }
+
+  const staffIds = new Set(assignmentOptions.staff.map((entry) => entry.id));
+  const externalCounselIds = new Set(
+    assignmentOptions.counsel
+      .filter((entry) => entry.type !== 'field_partner')
+      .map((entry) => entry.id)
+  );
+  const fieldPartnerIds = new Set(
+    assignmentOptions.counsel
+      .filter((entry) => entry.type === 'field_partner')
+      .map((entry) => entry.id)
+  );
+
+  return {
+    externalCounsel: draft.externalCounsel.filter((entry) => externalCounselIds.has(entry.id)),
+    fieldPartners: draft.fieldPartners.filter((entry) => fieldPartnerIds.has(entry.id)),
+    staff: draft.staff.filter((entry) => staffIds.has(entry.id)),
+  };
+};
+
 export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({ 
   assignmentOptions,
   buildDocumentDownloadUrl,
@@ -106,6 +398,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
   onCreateEvent,
   onOverridePackageSelection,
   onPublishProposal,
+  onReplaceMatterAssignments,
   onSaveMatterDetails,
   onSavePackageDraft,
   onUpdateFee,
@@ -114,6 +407,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
   onUploadDocument,
   packageErrorMessage,
   packageWorkspace,
+  serviceOptions = [],
   myInvoices,
   myDocs,
   myEvents: initialEvents,
@@ -145,11 +439,10 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
   const [showStageDropdown, setShowStageDropdown] = useState(false);
   const [isEditingMatter, setIsEditingMatter] = useState(false);
   const [isSavingMatter, setIsSavingMatter] = useState(false);
-  const [assignmentDraft, setAssignmentDraft] = useState({
-    counselPartnerId: '',
-    internalUserId: '',
-    visibleToClient: true,
-  });
+  const [assignmentDraft, setAssignmentDraft] = useState<AssignmentDraft>(() => buildAssignmentDraft(initialMatter));
+  const [assignmentError, setAssignmentError] = useState<string | null>(null);
+  const [assignmentMessage, setAssignmentMessage] = useState<string | null>(null);
+  const [isSavingAssignments, setIsSavingAssignments] = useState(false);
   
   // Add Event state
   const [newEvent, setNewEvent] = useState({
@@ -162,7 +455,61 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
     setEditedFee(initialMatter.totalFee.toString());
     setEditedSummary(initialMatter.issueSummary);
     setEditedServices(initialMatter.selectedServices);
-  }, [initialEvents, initialMatter]);
+    setAssignmentDraft(sanitizeAssignmentDraft(buildAssignmentDraft(initialMatter), assignmentOptions));
+  }, [assignmentOptions, initialEvents, initialMatter]);
+
+  const savedAssignmentDraft = sanitizeAssignmentDraft(buildAssignmentDraft(matter), assignmentOptions);
+  const assignmentsChanged =
+    JSON.stringify(normalizeAssignmentDraft(assignmentDraft)) !==
+    JSON.stringify(normalizeAssignmentDraft(savedAssignmentDraft));
+
+  const addAssignment = (group: AssignmentGroup, id: string) => {
+    setAssignmentDraft((current) => {
+      const exists = current[group].some((entry) => entry.id === id);
+      if (exists) {
+        return current;
+      }
+
+      return {
+        ...current,
+        [group]: [...current[group], { id, visibleToClient: true }],
+      };
+    });
+  };
+
+  const removeAssignment = (group: AssignmentGroup, id: string) => {
+    setAssignmentDraft((current) => ({
+      ...current,
+      [group]: current[group].filter((entry) => entry.id !== id),
+    }));
+  };
+
+  const setAssignmentVisibility = (group: AssignmentGroup, id: string, visibleToClient: boolean) => {
+    setAssignmentDraft((current) => ({
+      ...current,
+      [group]: current[group].map((entry) =>
+        entry.id === id ? { ...entry, visibleToClient } : entry
+      ),
+    }));
+  };
+
+  const saveAssignmentDraft = async () => {
+    if (!onReplaceMatterAssignments || !assignmentsChanged) {
+      return;
+    }
+
+    setAssignmentError(null);
+    setAssignmentMessage(null);
+    setIsSavingAssignments(true);
+    try {
+      await onReplaceMatterAssignments(assignmentDraft);
+      setAssignmentMessage('Matter assignments saved.');
+    } catch (error) {
+      setAssignmentError(error instanceof Error ? error.message : 'Unable to save assignments.');
+    } finally {
+      setIsSavingAssignments(false);
+    }
+  };
 
   const handleSaveFee = async () => {
     const fee = parseInt(editedFee.replace(/,/g, '')) || 0;
@@ -712,7 +1059,18 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm text-gray-500 font-medium">Issue Summary</h3>
                   {isEditingSummary ? (
-                    <button onClick={() => { setMatter({...matter, issueSummary: editedSummary}); setIsEditingSummary(false); }} className="text-xs text-emerald-600 font-medium">Save Summary</button>
+                    <button
+                      onClick={() => {
+                        void (async () => {
+                          await onSaveMatterDetails?.({ issueSummary: editedSummary });
+                          setMatter({ ...matter, issueSummary: editedSummary });
+                          setIsEditingSummary(false);
+                        })();
+                      }}
+                      className="text-xs text-emerald-600 font-medium"
+                    >
+                      Save Summary
+                    </button>
                   ) : isEditingMatter && (
                     <button onClick={() => setIsEditingSummary(true)} className="text-xs text-blue-600 hover:underline">Edit Summary</button>
                   )}
@@ -732,26 +1090,43 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm text-gray-500 font-medium">Selected Services</h3>
                   {isEditingServices ? (
-                    <button onClick={() => { setMatter({...matter, selectedServices: editedServices}); setIsEditingServices(false); }} className="text-xs text-emerald-600 font-medium">Save Services</button>
+                    <button
+                      onClick={() => {
+                        void (async () => {
+                          await onSaveMatterDetails?.({ selectedServices: editedServices });
+                          setMatter({ ...matter, selectedServices: editedServices });
+                          setIsEditingServices(false);
+                        })();
+                      }}
+                      className="text-xs text-emerald-600 font-medium"
+                    >
+                      Save Services
+                    </button>
                   ) : isEditingMatter && (
                     <button onClick={() => setIsEditingServices(true)} className="text-xs text-blue-600 hover:underline">Edit Services</button>
                   )}
                 </div>
                 
-                {isEditingServices ? (
+                  {isEditingServices ? (
                   <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-2">
-                    {SERVICES.map(s => (
-                      <label key={s.id} className="flex items-center gap-2 cursor-pointer">
+                    {(serviceOptions.length
+                      ? serviceOptions
+                      : matter.selectedServices.map((code) => ({ code, domainName: undefined, name: getServiceName(code) }))
+                    ).map(s => (
+                      <label key={s.code} className="flex items-center gap-2 cursor-pointer">
                         <input 
                           type="checkbox" 
-                          checked={editedServices.includes(s.id)}
+                          checked={editedServices.includes(s.code)}
                           onChange={(e) => {
-                            if (e.target.checked) setEditedServices([...editedServices, s.id]);
-                            else setEditedServices(editedServices.filter(id => id !== s.id));
+                            if (e.target.checked) setEditedServices([...editedServices, s.code]);
+                            else setEditedServices(editedServices.filter(id => id !== s.code));
                           }}
                           className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                         />
-                        <span className="text-sm text-gray-700">{s.name}</span>
+                        <span className="text-sm text-gray-700">
+                          {s.name}
+                          {s.domainName ? <span className="ml-1 text-xs text-gray-400">({s.domainName})</span> : null}
+                        </span>
                       </label>
                     ))}
                   </div>
@@ -1023,7 +1398,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                           disabled={updatingDocumentId === doc.id || !onUpdateDocumentControls}
                           onChange={(event) =>
                             void handleUpdateDocumentControls(doc.id, {
-                              reviewState: doc.reviewState,
+                              reviewState: doc.reviewState === 'reviewed' ? 'reviewed' : 'unreviewed',
                               visibility: event.target.value as 'client' | 'internal',
                             })
                           }
@@ -1094,7 +1469,7 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                   <span className="text-gray-500 font-medium">Total Fee</span>
                   {isEditingFee ? (
                     <div className="flex items-center gap-1 bg-white border border-gray-300 rounded px-2 py-1 w-24">
-                      <span className="text-gray-500">₹</span>
+                      <span className="text-gray-500">$</span>
                       <input 
                         type="text" 
                         value={editedFee} 
@@ -1144,96 +1519,81 @@ export const MatterDetailAdmin: React.FC<MatterDetailAdminProps> = ({
                 <div className="flex flex-wrap justify-between gap-2"><span className="text-gray-400">Created:</span> <span>{formatDate(matter.createdAt)}</span></div>
                 <div className="flex flex-wrap justify-between gap-2"><span className="text-gray-400">Updated:</span> <span>{formatDate(matter.lastUpdated)}</span></div>
               </div>
+              {matter.assignments?.length ? (
+                <div className="space-y-2 rounded-lg border border-gray-100 bg-white p-3 text-xs text-gray-600">
+                  {[
+                    ['Coordination Staff', matter.assignments.filter((entry) => entry.type === 'internal_staff')],
+                    ['External Counsel', matter.assignments.filter((entry) => entry.type === 'external_counsel')],
+                    ['Field Partners', matter.assignments.filter((entry) => entry.type === 'field_partner')],
+                  ].map(([label, entries]) =>
+                    Array.isArray(entries) && entries.length ? (
+                      <div key={label as string}>
+                        <p className="font-medium text-gray-400">{label as string}</p>
+                        <p>{entries.map((entry) => `${entry.name}${entry.visibleToClient ? '' : ' (internal)'}`).join(', ')}</p>
+                      </div>
+                    ) : null
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-gray-200 bg-white px-3 py-2 text-xs text-gray-400">
+                  No coordination staff, external counsel, or field partners assigned.
+                </div>
+              )}
               {isEditingMatter && assignmentOptions ? (
                 <div className="pt-3 border-t border-gray-200 space-y-3">
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">Coordination Staff</label>
-                    <select
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
-                      onChange={(event) =>
-                        setAssignmentDraft((current) => ({
-                          ...current,
-                          internalUserId: event.target.value,
-                        }))
-                      }
-                      value={assignmentDraft.internalUserId}
-                    >
-                      <option value="">Keep current</option>
-                      {assignmentOptions.staff.map((staff) => (
-                        <option key={staff.id} value={staff.id}>
-                          {staff.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-gray-500 mb-1">External Counsel / Field Partner</label>
-                    <select
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
-                      onChange={(event) =>
-                        setAssignmentDraft((current) => ({
-                          ...current,
-                          counselPartnerId: event.target.value,
-                        }))
-                      }
-                      value={assignmentDraft.counselPartnerId}
-                    >
-                      <option value="">Keep current</option>
-                      {assignmentOptions.counsel.map((counsel) => (
-                        <option key={counsel.id} value={counsel.id}>
-                          {counsel.name}
-                          {counsel.type === 'field_partner' ? ' · Field partner' : ''}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <label className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-600">
-                    <input
-                      checked={assignmentDraft.visibleToClient}
-                      className="h-4 w-4 accent-[#C19A5B]"
-                      onChange={(event) =>
-                        setAssignmentDraft((current) => ({
-                          ...current,
-                          visibleToClient: event.target.checked,
-                        }))
-                      }
-                      type="checkbox"
-                    />
-                    Show selected assignment to client
-                  </label>
+                  <AssignmentMultiSelect
+                    draft={assignmentDraft.staff}
+                    fallbackAssignments={(matter.assignments || []).filter((entry) => entry.type === 'internal_staff')}
+                    group="staff"
+                    label="Coordination Staff"
+                    onAdd={addAssignment}
+                    onRemove={removeAssignment}
+                    onVisibilityChange={setAssignmentVisibility}
+                    options={assignmentOptions.staff}
+                    placeholder="Search staff by name, email, phone, role, or city"
+                    roleLabel="Staff"
+                  />
+                  <AssignmentMultiSelect
+                    draft={assignmentDraft.externalCounsel}
+                    fallbackAssignments={(matter.assignments || []).filter((entry) => entry.type === 'external_counsel')}
+                    group="externalCounsel"
+                    label="External Counsel Contacts"
+                    onAdd={addAssignment}
+                    onRemove={removeAssignment}
+                    onVisibilityChange={setAssignmentVisibility}
+                    options={assignmentOptions.counsel.filter((entry) => entry.type !== 'field_partner')}
+                    placeholder="Search counsel by name, email, phone, specialization, or city"
+                    roleLabel="External Counsel"
+                  />
+                  <AssignmentMultiSelect
+                    draft={assignmentDraft.fieldPartners}
+                    fallbackAssignments={(matter.assignments || []).filter((entry) => entry.type === 'field_partner')}
+                    group="fieldPartners"
+                    label="Field Support Contacts"
+                    onAdd={addAssignment}
+                    onRemove={removeAssignment}
+                    onVisibilityChange={setAssignmentVisibility}
+                    options={assignmentOptions.counsel.filter((entry) => entry.type === 'field_partner')}
+                    placeholder="Search field partners by name, email, phone, specialization, or city"
+                    roleLabel="Field Partner"
+                  />
+                  {assignmentError ? (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                      {assignmentError}
+                    </div>
+                  ) : null}
+                  {assignmentMessage ? (
+                    <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+                      {assignmentMessage}
+                    </div>
+                  ) : null}
                   <button
-                    className="w-full text-xs font-medium bg-white border border-gray-200 rounded-lg py-2 text-gray-700 disabled:opacity-50"
-                    disabled={!assignmentDraft.counselPartnerId && !assignmentDraft.internalUserId}
-                    onClick={() => {
-                      if (!onAssignMatter) {
-                        return;
-                      }
-
-                      if (assignmentDraft.internalUserId) {
-                        void onAssignMatter({
-                          assignmentRoleCode: 'internal_owner',
-                          internalUserId: assignmentDraft.internalUserId,
-                          isPrimary: true,
-                          visibleToClient: assignmentDraft.visibleToClient,
-                        }).then(() =>
-                          setAssignmentDraft((current) => ({ ...current, internalUserId: '' }))
-                        );
-                      }
-
-                      if (assignmentDraft.counselPartnerId) {
-                        void onAssignMatter({
-                          assignmentRoleCode: 'lead_counsel',
-                          counselPartnerId: assignmentDraft.counselPartnerId,
-                          isPrimary: true,
-                          visibleToClient: assignmentDraft.visibleToClient,
-                        }).then(() =>
-                          setAssignmentDraft((current) => ({ ...current, counselPartnerId: '' }))
-                        );
-                      }
-                    }}
+                    className="w-full text-xs font-medium bg-white border border-gray-200 rounded-lg py-2 text-gray-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={!assignmentsChanged || !onReplaceMatterAssignments || isSavingAssignments}
+                    onClick={() => void saveAssignmentDraft()}
                     type="button"
                   >
-                    Save Assignments
+                    {isSavingAssignments ? 'Saving...' : 'Save Assignments'}
                   </button>
                 </div>
               ) : null}

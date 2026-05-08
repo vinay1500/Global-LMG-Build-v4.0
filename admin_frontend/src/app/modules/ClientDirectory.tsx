@@ -4,7 +4,8 @@ import {
   Search, Filter, ChevronDown, Check, User, Mail, Phone, Clock, FileText, Briefcase, Plus, MoreVertical, 
   LayoutGrid, List as ListIcon, Shield, CreditCard, MessageSquare, ArrowRight, Star, AlertCircle, Building2, Loader2
 } from 'lucide-react';
-import { PLATFORM_USERS, MATTERS, INVOICES, MESSAGE_THREADS, formatCurrency, formatDate, type PlatformUser } from '../data/seedData';
+import { formatCurrency, formatDate } from '../data/formatters';
+import type { PlatformUser } from '../data/seedData';
 import { StatusBadge } from '../components/dashboard/StatusBadge';
 import { EmptyState } from './EmptyState';
 import type { ClientListItem, CreateClientPayload, CreateClientResponse } from '../lib/api/contracts';
@@ -12,7 +13,7 @@ import type { ClientListItem, CreateClientPayload, CreateClientResponse } from '
 type DirectoryClient = PlatformUser | ClientListItem;
 
 export const ClientDirectory = ({ 
-  clients = PLATFORM_USERS,
+  clients = [],
   createRequested,
   onCreateClient,
   onCreateRequestHandled,
@@ -133,13 +134,12 @@ export const ClientDirectory = ({
       };
     }
 
-    const clientId = client.id;
-    const clientMatters = MATTERS.filter(m => m.clientId === clientId);
-    const activeMatters = clientMatters.filter(m => m.operationalStatus !== 'completed' && m.operationalStatus !== 'archived').length;
-    const clientInvoices = INVOICES.filter(i => i.clientId === clientId);
-    const totalDue = clientInvoices.filter(i => i.status !== 'paid').reduce((acc, curr) => acc + curr.totalAmount, 0);
-    const hasUnread = MESSAGE_THREADS.some(t => t.clientId === clientId && t.unreadCount > 0);
-    return { activeMatters, totalDue, hasUnread, mattersCount: clientMatters.length };
+    return {
+      activeMatters: 0,
+      hasUnread: false,
+      mattersCount: 0,
+      totalDue: 0,
+    };
   };
 
   const filteredClients = useMemo(() => {
@@ -411,7 +411,7 @@ export const ClientDirectory = ({
                               </div>
                             </td>
                             <td className="px-5 py-4">
-                              <StatusBadge status={client.lifecycle} type={client.lifecycle === 'client' ? 'success' : 'warning'} size="sm" />
+                              <StatusBadge status={client.lifecycle} size="sm" />
                             </td>
                             <td className="px-5 py-4">
                               {stats.activeMatters > 0 ? (
@@ -495,7 +495,7 @@ export const ClientDirectory = ({
                         </div>
                         <div className="flex justify-between items-center text-xs">
                           <span className="text-[#8C8981]">Stage</span>
-                          <StatusBadge status={client.lifecycle} type={client.lifecycle === 'client' ? 'success' : 'warning'} size="sm" />
+                          <StatusBadge status={client.lifecycle} size="sm" />
                         </div>
                       </div>
 
@@ -651,7 +651,7 @@ export const ClientDirectory = ({
               ) : null}
 
               <div className="flex items-center justify-between border-t border-[#E6E4DD] bg-[#FCFBF8] p-5">
-                <p className="text-xs text-[#8C8981]">Invite delivery: manual/local mode until provider settings are configured.</p>
+                <p className="text-xs text-[#8C8981]">Invite delivery: manual review until outbound delivery is configured.</p>
                 <div className="flex items-center gap-2">
                   <button
                     className="rounded-lg border border-[#E6E4DD] px-4 py-2 text-sm font-medium text-[#5A7C96] transition hover:bg-white"

@@ -22,7 +22,12 @@ messagesRouter.get(
   '/messages/workspace',
   asyncHandler(async (request, response) => {
     const actor = await requireReadPermission(request, 'message.send');
-    response.json(await getWorkspace(actor));
+    response.json(
+      await getWorkspace(actor, {
+        limit: Number(request.query.limit || 50),
+        offset: Number(request.query.offset || 0),
+      })
+    );
   })
 );
 

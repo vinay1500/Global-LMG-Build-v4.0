@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import type { LegalDocument } from '../../data/legalContent';
+import type { LegalDocument } from '../../content/site/legal';
 
 interface LegalDocumentPageProps {
   document: LegalDocument;

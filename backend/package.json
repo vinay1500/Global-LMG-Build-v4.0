@@ -6,17 +6,23 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/server.ts",
+    "fx:refresh": "tsx src/scripts/refreshFxRates.ts",
     "migrate": "tsx src/scripts/runMigrations.ts",
     "migrate:prod": "node dist/scripts/runMigrations.js",
-    "start": "node dist/server.js"
+    "smoke:rate-limit": "tsx src/scripts/rateLimitSmoke.ts",
+    "smoke:sentry": "tsx src/scripts/sentrySmoke.ts",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@sentry/node": "^10.52.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^5.1.0",
     "google-auth-library": "^10.6.2",
     "helmet": "^8.1.0",
     "mysql2": "^3.15.2",
+    "pdf-lib": "^1.17.1",
     "pdfkit": "^0.18.0",
     "zod": "^4.1.12"
   },

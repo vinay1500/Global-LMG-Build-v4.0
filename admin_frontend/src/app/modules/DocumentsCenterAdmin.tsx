@@ -26,6 +26,7 @@ interface DocumentsCenterAdminProps {
   documents: PlatformDocument[];
   matters?: Matter[];
   onFetchDocumentDetail?: (documentId: string) => Promise<AdminDocumentDetailResponse>;
+  onRescanDocument?: (documentId: string) => Promise<void>;
   onUpdateDocument?: (
     documentId: string,
     payload: { reviewState: 'reviewed' | 'unreviewed'; visibility: 'client' | 'internal' }
@@ -135,6 +136,33 @@ const canPreviewDocument = (
   return SAFE_PREVIEW_TYPES.has(document.type.toUpperCase());
 };
 
+const getScanStatus = (document: PlatformDocument, detail: AdminDocumentDetailResponse | null) =>
+  detail?.latestVersion?.virusStatus || document.virusStatus || 'unscanned';
+
+const scanStatusMeta = (status: string) => {
+  switch (status) {
+    case 'clean':
+      return { label: 'Scan clean', tone: 'bg-emerald-100 text-emerald-700' };
+    case 'infected':
+    case 'blocked':
+    case 'quarantined':
+      return { label: 'Blocked: malware detected', tone: 'bg-red-100 text-red-700' };
+    case 'scan_failed':
+      return { label: 'Scan failed', tone: 'bg-red-50 text-red-700' };
+    case 'scan_skipped_manual_mode':
+      return { label: 'Not virus scanned', tone: 'bg-amber-100 text-amber-700' };
+    case 'pending_scan':
+      return { label: 'Scan pending', tone: 'bg-blue-100 text-blue-700' };
+    default:
+      return { label: 'Unscanned', tone: 'bg-amber-100 text-amber-700' };
+  }
+};
+
+const canDownloadByScanStatus = (status: string) =>
+  !['blocked', 'infected', 'quarantined'].includes(status);
+
+const canPreviewByScanStatus = (status: string) => status === 'clean';
+
 export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
   buildDownloadUrl,
   buildPreviewUrl,
@@ -142,6 +170,7 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
   documents,
   matters = [],
   onFetchDocumentDetail,
+  onRescanDocument,
   onUpdateDocument,
   onUploadDocument,
   onUploadVersion,
@@ -163,6 +192,7 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [isUploadingVersion, setIsUploadingVersion] = useState(false);
   const [isUpdatingControls, setIsUpdatingControls] = useState(false);
+  const [isRescanning, setIsRescanning] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [documentDetail, setDocumentDetail] = useState<AdminDocumentDetailResponse | null>(null);
@@ -225,11 +255,10 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
     }
 
     setUploadVisibility(selectedUploadDocumentType.clientVisibleDefault ? 'client' : 'internal');
-    setUploadReviewState(selectedUploadDocumentType.requiresReview ? 'unreviewed' : 'reviewed');
+    setUploadReviewState('unreviewed');
   }, [
     selectedUploadDocumentType?.clientVisibleDefault,
     selectedUploadDocumentType?.code,
-    selectedUploadDocumentType?.requiresReview,
   ]);
 
   useEffect(() => {
@@ -404,6 +433,32 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
     }
   };
 
+  const handleRescan = async () => {
+    if (!selectedDoc || !onRescanDocument) {
+      return;
+    }
+
+    setIsRescanning(true);
+    setActionError(null);
+    setActionMessage(null);
+
+    try {
+      await onRescanDocument(selectedDoc.id);
+      setActionMessage('Document scan completed.');
+      setDetailReloadKey((value) => value + 1);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Document scan could not be completed.');
+    } finally {
+      setIsRescanning(false);
+    }
+  };
+
+  const selectedScanStatus = selectedDoc ? getScanStatus(selectedDoc, documentDetail) : 'unscanned';
+  const selectedScanMeta = scanStatusMeta(selectedScanStatus);
+  const selectedCanPreview =
+    selectedDoc && canPreviewDocument(selectedDoc, documentDetail) && canPreviewByScanStatus(selectedScanStatus);
+  const selectedCanDownload = selectedDoc && canDownloadByScanStatus(selectedScanStatus);
+
   return (
     <div className="h-[calc(100vh-80px)] flex flex-col -m-6 p-6 space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 flex-shrink-0">
@@ -473,15 +528,17 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
               </select>
             </label>
             <label className="text-xs font-medium text-gray-500">
-              Review
+              Scan Status
               <select
-                className="mt-1 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-gray-400"
-                onChange={(event) => setUploadReviewState(event.target.value as 'reviewed' | 'unreviewed')}
+                className="mt-1 w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500 outline-none"
+                disabled
                 value={uploadReviewState}
               >
-                <option value="unreviewed">Needs Review</option>
-                <option value="reviewed">Reviewed</option>
+                <option value="unreviewed">Scanned automatically after upload</option>
               </select>
+              <span className="mt-1 block text-[11px] text-gray-400">
+                Review and preview availability are set by the malware scan result.
+              </span>
             </label>
             <label className="text-xs font-medium text-gray-500">
               File
@@ -639,6 +696,9 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
                               <Clock className="w-3 h-3" /> Needs Review
                             </span>
                           )}
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${scanStatusMeta(doc.virusStatus || 'unscanned').tone}`}>
+                            {scanStatusMeta(doc.virusStatus || 'unscanned').label}
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -684,21 +744,21 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
               <div className="flex items-center gap-2 shrink-0">
                 <button
                   className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={!buildDownloadUrl}
+                  disabled={!buildDownloadUrl || !selectedCanDownload}
                   onClick={() => openDocumentUrl(buildDownloadUrl?.(selectedDoc.id))}
-                  title="Download document"
+                  title={selectedCanDownload ? 'Download document' : 'Download blocked by malware scan policy'}
                   type="button"
                 >
                   <Download className="w-4 h-4" />
                 </button>
                 <button
                   className="p-2 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition disabled:cursor-not-allowed disabled:opacity-40"
-                  disabled={!buildPreviewUrl || !canPreviewDocument(selectedDoc, documentDetail)}
+                  disabled={!buildPreviewUrl || !selectedCanPreview}
                   onClick={() => openDocumentUrl(buildPreviewUrl?.(selectedDoc.id))}
                   title={
-                    canPreviewDocument(selectedDoc, documentDetail)
+                    selectedCanPreview
                       ? 'Preview document'
-                      : 'Preview unavailable for this file type'
+                      : 'Preview unavailable until this safe file type has a clean scan'
                   }
                   type="button"
                 >
@@ -728,6 +788,35 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
               </div>
 
               <div className="space-y-4 pt-4 border-t border-gray-100">
+                <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-gray-200 bg-gray-50/50">
+                  <div>
+                    <h4 className="text-sm font-medium text-gray-900">Malware Scan</h4>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {documentDetail?.latestVersion?.scanProvider
+                        ? `Provider: ${documentDetail.latestVersion.scanProvider}`
+                        : 'Provider: not configured'}
+                      {documentDetail?.latestVersion?.scanCheckedAt
+                        ? ` · Checked ${formatDate(documentDetail.latestVersion.scanCheckedAt)}`
+                        : ''}
+                    </p>
+                    {documentDetail?.latestVersion?.scanError ? (
+                      <p className="mt-1 text-xs text-red-600">{documentDetail.latestVersion.scanError}</p>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className={`rounded-full px-2 py-1 text-xs font-medium ${selectedScanMeta.tone}`}>
+                      {selectedScanMeta.label}
+                    </span>
+                    <button
+                      className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={!onRescanDocument || isRescanning}
+                      onClick={() => void handleRescan()}
+                      type="button"
+                    >
+                      {isRescanning ? 'Scanning...' : 'Rescan'}
+                    </button>
+                  </div>
+                </div>
                 <div className="flex items-center justify-between p-3 rounded-lg border border-gray-200 bg-gray-50/50">
                   <div>
                     <h4 className="text-sm font-medium text-gray-900">Client Visibility</h4>
@@ -758,17 +847,11 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
                 <div className="flex items-center justify-between p-3 rounded-lg border border-gray-200 bg-gray-50/50">
                   <div>
                     <h4 className="text-sm font-medium text-gray-900">Review Status</h4>
-                    <p className="text-xs text-gray-500 mt-0.5">Has this document been reviewed?</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Review follows scan status; only clean scans appear reviewed.</p>
                   </div>
                   <select
                     className="text-sm border border-gray-300 rounded-md px-2 py-1 outline-none font-medium bg-white disabled:cursor-not-allowed disabled:bg-gray-100"
-                    disabled={isUpdatingControls || !onUpdateDocument}
-                    onChange={(event) => {
-                      void handleControlsUpdate({
-                        reviewState: event.target.value as 'reviewed' | 'unreviewed',
-                        visibility: selectedDoc.visibility,
-                      });
-                    }}
+                    disabled
                     value={selectedDoc.reviewState}
                   >
                     <option value="unreviewed">Needs Review</option>
@@ -796,12 +879,11 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
                       type="file"
                     />
                     <select
-                      className="rounded-md border border-gray-200 bg-white px-2 py-1.5 text-xs text-gray-700"
-                      onChange={(event) => setVersionReviewState(event.target.value as 'reviewed' | 'unreviewed')}
+                      className="rounded-md border border-gray-200 bg-gray-50 px-2 py-1.5 text-xs text-gray-500"
+                      disabled
                       value={versionReviewState}
                     >
-                      <option value="unreviewed">Needs Review</option>
-                      <option value="reviewed">Reviewed</option>
+                      <option value="unreviewed">Scanned after upload</option>
                     </select>
                     <button
                       className="rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white disabled:cursor-not-allowed disabled:bg-gray-200"
@@ -829,7 +911,7 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
                         </p>
                         <p className="text-xs text-gray-500">
                           Uploaded {formatDate(version.uploadedAt)} by {version.uploadedBy} -{' '}
-                          {formatSize(version.fileSizeBytes)} - {version.reviewState === 'reviewed' ? 'Reviewed' : 'Needs review'}
+                          {formatSize(version.fileSizeBytes)} - {scanStatusMeta(version.virusStatus).label}
                         </p>
                       </div>
                     </div>
@@ -860,17 +942,17 @@ export const DocumentsCenterAdmin: React.FC<DocumentsCenterAdminProps> = ({
                 {getFileIcon(selectedDoc.type, 'w-6 h-6')}
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-gray-900">
-                    {canPreviewDocument(selectedDoc, documentDetail)
+                    {selectedCanPreview
                       ? 'Safe preview is available'
-                      : 'Preview unavailable for this file type'}
+                      : 'Preview unavailable'}
                   </p>
                   <p className="text-xs text-gray-500">
-                    Unsafe or active file formats are download-only and never rendered inline.
+                    Unsafe file types and files without a clean scan are never rendered inline.
                   </p>
                 </div>
                 <button
                   className="rounded-lg bg-white px-3 py-2 text-xs font-medium text-gray-700 shadow-sm ring-1 ring-gray-200 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-400"
-                  disabled={!buildPreviewUrl || !canPreviewDocument(selectedDoc, documentDetail)}
+                  disabled={!buildPreviewUrl || !selectedCanPreview}
                   onClick={() => openDocumentUrl(buildPreviewUrl?.(selectedDoc.id))}
                   type="button"
                 >

@@ -1,7 +1,13 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import type { AdminActor } from '../auth/service.js';
 import { executeStatement, queryRows, withTransaction } from '../../lib/mysql.js';
-import { fetchDocuments, fetchMatters } from '../shared.js';
+import {
+  buildPaginationMeta,
+  countDocuments,
+  fetchDocuments,
+  fetchMatters,
+  normalizePagination,
+} from '../shared.js';
 import { createAuditEvent, createClientNotifications, resolveDocumentByPublicId } from '../writeSupport.js';
 import { createPublicId } from '../../lib/authCrypto.js';
 import { allocateBusinessNumber } from '../../lib/businessSequences.js';
@@ -13,6 +19,7 @@ import {
   getFileExtension,
   isSafePreviewMimeType,
 } from './storage.js';
+import { isScanBlocked, scanDocumentContent, type DocumentScanResult } from './malwareScanner.js';
 
 type DocumentMetaRow = RowDataPacket & {
   clientAccountId: number;
@@ -50,6 +57,9 @@ type DocumentVersionRow = RowDataPacket & {
   mimeType: string;
   originalFileName: string;
   retentionHoldFlag: number;
+  scanCheckedAt: string | null;
+  scanError: string | null;
+  scanProvider: string | null;
   uploadedAt: string;
   uploadedBy: string | null;
   versionNo: number;
@@ -79,7 +89,8 @@ type ActiveDocumentTypeRow = RowDataPacket & {
 
 const storageDriver = getDocumentStorage();
 
-export const listDocuments = async () => {
+export const listDocuments = async (options: { limit?: number; offset?: number } = {}) => {
+  const pagination = normalizePagination(options);
   const documentTypeRows = await queryRows<
     RowDataPacket & {
       allowedExtensionsJson: unknown;
@@ -113,7 +124,7 @@ export const listDocuments = async () => {
   );
 
   return {
-    documents: await fetchDocuments({}),
+    documents: await fetchDocuments({ limit: pagination.limit, offset: pagination.offset }),
     documentTypes: documentTypeRows.map((row) => ({
       allowedExtensions: parseJsonStringArray(row.allowedExtensionsJson),
       category: row.category,
@@ -128,14 +139,12 @@ export const listDocuments = async () => {
       requiresReview: Boolean(row.requiresReview),
     })),
     matters: await fetchMatters({ limit: 250 }),
+    pagination: buildPaginationMeta(pagination, await countDocuments({})),
   };
 };
 
 const toVisibilityScope = (visibility: 'client' | 'internal') =>
   visibility === 'client' ? 'client-portal' : 'internal-only';
-
-const toVirusStatus = (reviewState: 'reviewed' | 'unreviewed') =>
-  reviewState === 'reviewed' ? 'clean' : 'pending';
 
 const toReviewState = (virusStatus: string) => (virusStatus === 'clean' ? 'reviewed' : 'unreviewed');
 
@@ -210,11 +219,51 @@ const mapDocumentVersion = (row: DocumentVersionRow) => ({
   originalFileName: row.originalFileName,
   retentionHold: Boolean(row.retentionHoldFlag),
   reviewState: toReviewState(row.virusStatus),
+  scanCheckedAt: row.scanCheckedAt,
+  scanError: row.scanError,
+  scanProvider: row.scanProvider,
   uploadedAt: row.uploadedAt,
   uploadedBy: row.uploadedBy || 'System',
   versionNo: Number(row.versionNo),
   virusStatus: row.virusStatus,
 });
+
+const scanActionCode = (status: string) => {
+  if (status === 'clean') return 'document.scan_clean';
+  if (status === 'infected') return 'document.scan_infected';
+  if (status === 'scan_failed') return 'document.scan_failed';
+  if (status === 'scan_skipped_manual_mode') return 'document.scan_skipped';
+  return 'document.scan_requested';
+};
+
+const auditScanResult = async (
+  actor: AdminActor,
+  documentDbId: number,
+  result: DocumentScanResult,
+  executor: Parameters<typeof queryRows>[2]
+) => {
+  await createAuditEvent(
+    {
+      actionCode: scanActionCode(result.status),
+      actionLabel: `Document scan ${result.status.replace(/_/g, ' ')}`,
+      actorRoleCode: actor.roleCodes[0] || 'case_manager',
+      actorUserId: actor.userId,
+      changes: [
+        { fieldName: 'virus_scan_status_code', newValue: result.status },
+        { fieldName: 'scan_provider_code', newValue: result.providerCode },
+        { fieldName: 'scan_error_text', newValue: result.errorText },
+      ],
+      entityPk: documentDbId,
+      entityTableName: 'documents',
+      sourceModule: 'documents_center',
+      summaryNewValue: {
+        provider: result.providerCode,
+        status: result.status,
+      },
+    },
+    executor
+  );
+};
 
 const getMatterUploadMeta = async (matterPublicId: string, executor?: Parameters<typeof queryRows>[2]) => {
   const rows = await queryRows<MatterUploadMetaRow>(
@@ -293,6 +342,7 @@ export const uploadAdminDocument = async (
       payload.fileName
     );
     await storageDriver.writeBuffer(storageKey, payload.content);
+    const scanResult = await scanDocumentContent(payload.content);
 
     const nowExpression = 'UTC_TIMESTAMP(6)';
     const documentInsert = await executeStatement(
@@ -333,21 +383,29 @@ export const uploadAdminDocument = async (
          file_size_bytes,
          checksum_sha256,
          virus_scan_status_code,
+         scan_provider_code,
+         scan_checked_at,
+         scan_error_text,
+         quarantine_flag,
          uploaded_by_user_id,
          uploaded_at,
          is_current,
          retention_hold_flag
-       ) VALUES (?, ?, 1, 'local', ?, ?, ?, ?, ?, ?, ?, ?, ${nowExpression}, 1, 0)`,
+       ) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${nowExpression}, ?, ?, ?, ${nowExpression}, 1, 0)`,
       [
         createPublicId(),
         documentInsert.insertId,
+        storageDriver.driverCode,
         storageKey,
         payload.fileName,
         normalizeMimeType(payload.mimeType),
         getFileExtension(payload.fileName),
         payload.content.length,
         checksumSha256,
-        toVirusStatus(payload.reviewState),
+        scanResult.status,
+        scanResult.providerCode,
+        scanResult.errorText,
+        scanResult.status === 'infected' ? 1 : 0,
         actor.userId,
       ],
       connection
@@ -374,7 +432,7 @@ export const uploadAdminDocument = async (
         changes: [
           { fieldName: 'matter_id', newValue: matter.matterPublicId },
           { fieldName: 'visibility_scope_code', newValue: toVisibilityScope(payload.visibility) },
-          { fieldName: 'virus_scan_status_code', newValue: toVirusStatus(payload.reviewState) },
+          { fieldName: 'virus_scan_status_code', newValue: scanResult.status },
         ],
         entityPk: documentInsert.insertId,
         entityTableName: 'documents',
@@ -383,6 +441,22 @@ export const uploadAdminDocument = async (
       },
       connection
     );
+
+    await createAuditEvent(
+      {
+        actionCode: 'document.scan_requested',
+        actionLabel: 'Document malware scan requested',
+        actorRoleCode: actor.roleCodes[0] || 'case_manager',
+        actorUserId: actor.userId,
+        entityPk: documentInsert.insertId,
+        entityTableName: 'documents',
+        sourceModule: 'documents_center',
+        summaryNewValue: payload.fileName,
+      },
+      connection
+    );
+
+    await auditScanResult(actor, documentInsert.insertId, scanResult, connection);
 
     if (payload.visibility === 'client') {
       await createClientNotifications(
@@ -474,6 +548,7 @@ export const uploadAdminDocumentVersion = async (
       payload.fileName
     );
     await storageDriver.writeBuffer(storageKey, payload.content);
+    const scanResult = await scanDocumentContent(payload.content);
 
     await executeStatement(
       `UPDATE document_versions
@@ -496,22 +571,30 @@ export const uploadAdminDocumentVersion = async (
          file_size_bytes,
          checksum_sha256,
          virus_scan_status_code,
+         scan_provider_code,
+         scan_checked_at,
+         scan_error_text,
+         quarantine_flag,
          uploaded_by_user_id,
          uploaded_at,
          is_current,
          retention_hold_flag
-       ) VALUES (?, ?, ?, 'local', ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), 1, 0)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), ?, ?, ?, UTC_TIMESTAMP(6), 1, 0)`,
       [
         versionPublicId,
         document.id,
         nextVersion,
+        storageDriver.driverCode,
         storageKey,
         payload.fileName,
         normalizeMimeType(payload.mimeType),
         getFileExtension(payload.fileName),
         payload.content.length,
         checksumSha256,
-        toVirusStatus(payload.reviewState),
+        scanResult.status,
+        scanResult.providerCode,
+        scanResult.errorText,
+        scanResult.status === 'infected' ? 1 : 0,
         actor.userId,
       ],
       connection
@@ -536,7 +619,7 @@ export const uploadAdminDocumentVersion = async (
         actorUserId: actor.userId,
         changes: [
           { fieldName: 'version_no', newValue: nextVersion },
-          { fieldName: 'virus_scan_status_code', newValue: toVirusStatus(payload.reviewState) },
+          { fieldName: 'virus_scan_status_code', newValue: scanResult.status },
         ],
         entityPk: document.id,
         entityTableName: 'documents',
@@ -545,6 +628,22 @@ export const uploadAdminDocumentVersion = async (
       },
       connection
     );
+
+    await createAuditEvent(
+      {
+        actionCode: 'document.scan_requested',
+        actionLabel: 'Document malware scan requested',
+        actorRoleCode: actor.roleCodes[0] || 'case_manager',
+        actorUserId: actor.userId,
+        entityPk: document.id,
+        entityTableName: 'documents',
+        sourceModule: 'documents_center',
+        summaryNewValue: payload.fileName,
+      },
+      connection
+    );
+
+    await auditScanResult(actor, document.id, scanResult, connection);
 
     if (visibilityToUi(detail.visibilityScope) === 'client') {
       await createClientNotifications(
@@ -603,6 +702,9 @@ export const getDocumentDetail = async (documentId: string) => {
        dv.file_size_bytes AS fileSizeBytes,
        dv.checksum_sha256 AS checksumSha256,
        dv.virus_scan_status_code AS virusStatus,
+       dv.scan_provider_code AS scanProvider,
+       dv.scan_checked_at AS scanCheckedAt,
+       dv.scan_error_text AS scanError,
        dv.uploaded_at AS uploadedAt,
        uploader.display_name AS uploadedBy,
        dv.is_current AS isCurrent,
@@ -656,8 +758,13 @@ export const getAdminDocumentFile = async (
       throw notFound('document_not_found', 'Document not found.');
     }
 
-    if (['blocked', 'infected', 'quarantined'].includes(document.virusStatus)) {
-      throw forbidden('document_not_available', 'This document is not available.');
+    if (isScanBlocked(document.virusStatus, mode)) {
+      throw forbidden(
+        'document_not_available',
+        mode === 'preview'
+          ? 'Preview is unavailable until malware scanning allows it.'
+          : 'Download is unavailable until malware scanning allows it.'
+      );
     }
 
     if (mode === 'preview' && !isSafePreviewMimeType(document.mimeType)) {
@@ -697,9 +804,89 @@ export const getAdminDocumentFile = async (
     );
 
     return {
-      absolutePath: storageDriver.getAbsolutePath(document.storagePath),
+      content: await storageDriver.readBuffer(document.storagePath),
       mimeType: document.mimeType,
       originalName: document.originalFileName,
+    };
+  });
+
+export const rescanAdminDocument = async (actor: AdminActor, documentId: string) =>
+  withTransaction(async (connection) => {
+    const rows = await queryRows<DocumentFileRow>(
+      `SELECT
+         d.id AS documentDbId,
+         dv.id AS documentVersionDbId,
+         dv.storage_path AS storagePath,
+         dv.mime_type AS mimeType,
+         dv.original_file_name AS originalFileName,
+         dv.virus_scan_status_code AS virusStatus
+       FROM documents d
+       INNER JOIN document_versions dv ON dv.document_id = d.id AND dv.is_current = 1
+       WHERE d.public_id = ?
+         AND d.archived_at IS NULL
+       LIMIT 1
+       FOR UPDATE`,
+      [documentId],
+      connection
+    );
+    const document = rows[0];
+
+    if (!document) {
+      throw notFound('document_not_found', 'Document not found.');
+    }
+
+    await createAuditEvent(
+      {
+        actionCode: 'document.scan_requested',
+        actionLabel: 'Document malware scan requested',
+        actorRoleCode: actor.roleCodes[0] || 'case_manager',
+        actorUserId: actor.userId,
+        changes: [{ fieldName: 'virus_scan_status_code', oldValue: document.virusStatus, newValue: 'pending_scan' }],
+        entityPk: document.documentDbId,
+        entityTableName: 'documents',
+        sourceModule: 'documents_center',
+        summaryNewValue: document.originalFileName,
+      },
+      connection
+    );
+
+    await executeStatement(
+      `UPDATE document_versions
+       SET virus_scan_status_code = 'pending_scan',
+           scan_error_text = NULL,
+           quarantine_flag = 0
+       WHERE id = ?`,
+      [document.documentVersionDbId],
+      connection
+    );
+
+    const content = await storageDriver.readBuffer(document.storagePath);
+    const scanResult = await scanDocumentContent(content);
+
+    await executeStatement(
+      `UPDATE document_versions
+       SET virus_scan_status_code = ?,
+           scan_provider_code = ?,
+           scan_checked_at = UTC_TIMESTAMP(6),
+           scan_error_text = ?,
+           quarantine_flag = ?
+       WHERE id = ?`,
+      [
+        scanResult.status,
+        scanResult.providerCode,
+        scanResult.errorText,
+        scanResult.status === 'infected' ? 1 : 0,
+        document.documentVersionDbId,
+      ],
+      connection
+    );
+
+    await auditScanResult(actor, document.documentDbId, scanResult, connection);
+
+    return {
+      provider: scanResult.providerCode,
+      scanStatus: scanResult.status,
+      status: 'rescanned' as const,
     };
   });
 
@@ -735,7 +922,6 @@ export const updateDocumentControls = async (
     }
 
     const nextVisibilityScope = toVisibilityScope(payload.visibility);
-    const nextVirusStatus = toVirusStatus(payload.reviewState);
 
     await executeStatement(
       `UPDATE documents
@@ -746,16 +932,6 @@ export const updateDocumentControls = async (
       [nextVisibilityScope, document.id],
       connection
     );
-
-    if (meta.currentVersionId) {
-      await executeStatement(
-        `UPDATE document_versions
-         SET virus_scan_status_code = ?
-         WHERE id = ?`,
-        [nextVirusStatus, meta.currentVersionId],
-        connection
-      );
-    }
 
     if (meta.visibilityScope !== nextVisibilityScope) {
       await createAuditEvent(
@@ -776,30 +952,6 @@ export const updateDocumentControls = async (
           sourceModule: 'documents_center',
           summaryOldValue: meta.visibilityScope,
           summaryNewValue: nextVisibilityScope,
-        },
-        connection
-      );
-    }
-
-    if ((meta.virusStatus || 'pending') !== nextVirusStatus) {
-      await createAuditEvent(
-        {
-          actionCode: 'document.review_status_changed',
-          actionLabel: 'Document review status changed',
-          actorRoleCode: actor.roleCodes[0] || 'case_manager',
-          actorUserId: actor.userId,
-          changes: [
-            {
-              fieldName: 'virus_scan_status_code',
-              oldValue: meta.virusStatus || 'pending',
-              newValue: nextVirusStatus,
-            },
-          ],
-          entityPk: document.id,
-          entityTableName: 'documents',
-          sourceModule: 'documents_center',
-          summaryOldValue: meta.virusStatus || 'pending',
-          summaryNewValue: nextVirusStatus,
         },
         connection
       );

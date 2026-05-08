@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Bell, FileStack, FileText, Layers, Loader2, Save, Shield, SlidersHorizontal, Users } from 'lucide-react';
-import { formatCurrency } from '../data/seedData';
+import { formatCurrency } from '../data/formatters';
 import type {
   CreateRbacRolePayload,
   CreateServiceCatalogPayload,
@@ -10,7 +10,12 @@ import type {
   NotificationDeliverySettingPayload,
   ReminderSettingPayload,
   PlatformSetting,
+  InvoicePdfTemplateUpdatePayload,
+  InvoicePdfTemplateUploadPayload,
+  PriceOverridePayload,
+  PricingSubjectType,
   PricingSlabPayload,
+  SettingsPriceOverride,
   SettingsWorkspaceResponse,
   TeamMemberPayload,
   TeamMemberType,
@@ -22,6 +27,7 @@ import type {
   UpdateInvoiceSettingsPayload,
   UpdateReminderSettingPayload,
   UpdatePlatformSettingPayload,
+  UpdatePriceOverridePayload,
   UpdateRbacRolePayload,
   UpdateRbacRolePermissionsPayload,
   UpdateServiceCatalogPayload,
@@ -44,18 +50,22 @@ type SettingsTab =
 
 type SettingsWorkspaceProps = {
   onArchiveDocumentType?: (documentTypeId: string) => Promise<void>;
+  onArchiveInvoicePdfTemplate?: (templateId: string) => Promise<void>;
   onArchivePricingSlab?: (slabId: string) => Promise<void>;
   onArchiveConsultationMode?: (modeCode: string) => Promise<void>;
   onArchiveCountryPricing?: (countryPricingId: string) => Promise<void>;
+  onArchivePriceOverride?: (overrideId: string) => Promise<void>;
   onArchiveReminderSetting?: (settingId: string) => Promise<void>;
   onArchiveService?: (serviceId: string) => Promise<void>;
   onArchiveTemplate?: (templateId: string) => Promise<void>;
   onArchiveTeamMember?: (memberId: string) => Promise<void>;
   onArchiveUrgencyRule?: (ruleId: string) => Promise<void>;
   onCreateDocumentType?: (payload: DocumentTypePayload) => Promise<void>;
+  onCreateInvoicePdfTemplate?: (payload: InvoicePdfTemplateUploadPayload) => Promise<void>;
   onCreatePricingSlab?: (payload: PricingSlabPayload) => Promise<void>;
   onCreateConsultationMode?: (payload: ConsultationModePayload) => Promise<void>;
   onCreateCountryPricing?: (payload: CountryPricingPayload) => Promise<void>;
+  onCreatePriceOverride?: (payload: PriceOverridePayload) => Promise<void>;
   onCreateRbacRole?: (payload: CreateRbacRolePayload) => Promise<void>;
   onCreateReminderSetting?: (payload: ReminderSettingPayload) => Promise<void>;
   onCreateService?: (payload: CreateServiceCatalogPayload) => Promise<void>;
@@ -67,6 +77,7 @@ type SettingsWorkspaceProps = {
   onAssignRbacUserRole?: (userId: string, roleCode: string) => Promise<void>;
   onRemoveRbacUserRole?: (userId: string, roleCode: string) => Promise<void>;
   onUpdateDocumentType?: (documentTypeId: string, payload: UpdateDocumentTypePayload) => Promise<void>;
+  onUpdateInvoicePdfTemplate?: (templateId: string, payload: InvoicePdfTemplateUpdatePayload) => Promise<void>;
   onUpdateNotificationTypeSetting?: (
     typeCode: string,
     payload: NotificationDeliverySettingPayload
@@ -74,6 +85,7 @@ type SettingsWorkspaceProps = {
   onUpdatePricingSlab?: (slabId: string, payload: Partial<PricingSlabPayload>) => Promise<void>;
   onUpdateConsultationMode?: (modeCode: string, payload: UpdateConsultationModePayload) => Promise<void>;
   onUpdateCountryPricing?: (countryPricingId: string, payload: UpdateCountryPricingPayload) => Promise<void>;
+  onUpdatePriceOverride?: (overrideId: string, payload: UpdatePriceOverridePayload) => Promise<void>;
   onUpdateReminderSetting?: (settingId: string, payload: UpdateReminderSettingPayload) => Promise<void>;
   onUpdateService?: (serviceId: string, payload: UpdateServiceCatalogPayload) => Promise<void>;
   onUpdateTeamMember?: (memberId: string, payload: UpdateTeamMemberPayload) => Promise<void>;
@@ -135,13 +147,19 @@ type PricingSlabFormState = {
 };
 
 type UrgencyRuleFormState = {
+  allowInPerson: boolean;
+  allowPhone: boolean;
+  allowVideo: boolean;
   code: string;
   isActive: boolean;
   label: string;
+  maxResponseHours: string;
+  minResponseHours: string;
   responseWindowHours: string;
   sortOrder: string;
   surchargeType: 'flat' | 'percent';
   surchargeValue: string;
+  timingLabel: string;
 };
 
 type ConsultationModeFormState = {
@@ -161,6 +179,21 @@ type CountryPricingFormState = {
   isActive: boolean;
   isDefault: boolean;
   multiplier: string;
+};
+
+type PriceOverrideFormState = {
+  countryCode: string;
+  countryName: string;
+  currencyCode: string;
+  isActive: boolean;
+  priceAmount: string;
+};
+
+type PricingEditorSubject = {
+  code: string;
+  defaultPrice: number;
+  label: string;
+  subjectType: PricingSubjectType;
 };
 
 type TemplateFormState = {
@@ -233,7 +266,7 @@ const buildGeneralPlatformForm = (settings: PlatformSetting[]): GeneralPlatformF
   const byKey = new Map(settings.map((setting) => [setting.key, setting]));
 
   return {
-    defaultCurrency: settingStringValue(byKey.get(GENERAL_PLATFORM_KEYS.defaultCurrency), 'INR'),
+    defaultCurrency: settingStringValue(byKey.get(GENERAL_PLATFORM_KEYS.defaultCurrency), 'USD'),
     defaultDateFormat: settingStringValue(byKey.get(GENERAL_PLATFORM_KEYS.defaultDateFormat), 'DD/MM/YYYY'),
     defaultTimezone: settingStringValue(byKey.get(GENERAL_PLATFORM_KEYS.defaultTimezone), 'Asia/Kolkata'),
     displayName: settingStringValue(byKey.get(GENERAL_PLATFORM_KEYS.displayName), 'Global LMG'),
@@ -253,7 +286,7 @@ const todayDate = () => new Date().toISOString().slice(0, 10);
 const TEMPLATE_SAMPLE_VALUES: Record<string, string> = {
   actionUrl: 'https://portal.globallmg.local',
   adminName: 'Global LMG Support',
-  amountDue: '₹10,000',
+  amountDue: '$10,000',
   clientName: 'Aarav Sharma',
   deadline: '15 May 2026',
   documentType: 'Matter Background',
@@ -264,7 +297,7 @@ const TEMPLATE_SAMPLE_VALUES: Record<string, string> = {
   platformName: 'Global LMG',
   supportEmail: 'support@globallmg.local',
   supportPhone: '+91 00000 00000',
-  totalAmount: '₹11,800',
+  totalAmount: '$11,800',
 };
 
 const TEMPLATE_TYPE_OPTIONS: Array<{ label: string; value: TemplateType }> = [
@@ -310,16 +343,46 @@ const TEAM_MEMBER_TYPE_OPTIONS: Array<{ label: string; value: TeamMemberType }> 
 const formatTeamMemberType = (type: TeamMemberType) =>
   TEAM_MEMBER_TYPE_OPTIONS.find((option) => option.value === type)?.label || type;
 
+const formatPricingAmount = (amount: number, currencyCode = 'USD') => {
+  return formatCurrency(amount, currencyCode);
+};
+
+const formatUrgencyTiming = (rule: {
+  maxResponseHours?: number | null;
+  minResponseHours?: number | null;
+  responseWindowHours?: number | null;
+  timingLabel?: string;
+}) => {
+  if (rule.timingLabel) {
+    return rule.timingLabel;
+  }
+  if (rule.minResponseHours !== null && rule.minResponseHours !== undefined && rule.maxResponseHours) {
+    return `${rule.minResponseHours}-${rule.maxResponseHours}h`;
+  }
+  if (rule.maxResponseHours || rule.responseWindowHours) {
+    return `Within ${rule.maxResponseHours || rule.responseWindowHours}h`;
+  }
+  return 'Configurable';
+};
+
 export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   onArchiveDocumentType,
+  onArchiveInvoicePdfTemplate,
   onArchivePricingSlab,
+  onArchiveConsultationMode,
+  onArchiveCountryPricing,
+  onArchivePriceOverride,
   onArchiveReminderSetting,
   onArchiveService,
   onArchiveTeamMember,
   onArchiveTemplate,
   onArchiveUrgencyRule,
   onCreateDocumentType,
+  onCreateInvoicePdfTemplate,
   onCreatePricingSlab,
+  onCreateConsultationMode,
+  onCreateCountryPricing,
+  onCreatePriceOverride,
   onCreateRbacRole,
   onCreateReminderSetting,
   onCreateService,
@@ -331,8 +394,12 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   onAssignRbacUserRole,
   onRemoveRbacUserRole,
   onUpdateDocumentType,
+  onUpdateInvoicePdfTemplate,
   onUpdateNotificationTypeSetting,
   onUpdatePricingSlab,
+  onUpdateConsultationMode,
+  onUpdateCountryPricing,
+  onUpdatePriceOverride,
   onUpdateReminderSetting,
   onUpdateService,
   onUpdateTeamMember,
@@ -369,10 +436,20 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   const [teamRegistryMessage, setTeamRegistryMessage] = useState('');
   const [teamRegistryError, setTeamRegistryError] = useState('');
   const [isSavingTeamMember, setIsSavingTeamMember] = useState(false);
+  const [teamFilterActive, setTeamFilterActive] = useState<'active' | 'all' | 'inactive'>('all');
+  const [teamFilterLocation, setTeamFilterLocation] = useState('');
+  const [teamFilterSpecialization, setTeamFilterSpecialization] = useState('');
+  const [teamFilterType, setTeamFilterType] = useState<'all' | TeamMemberType>('all');
+  const [teamSearchQuery, setTeamSearchQuery] = useState('');
   const [invoiceForm, setInvoiceForm] = useState({
     billingDisplayName: invoiceSettings.billingDisplayName,
+    businessAddress: invoiceSettings.businessAddress || '',
+    businessEmail: invoiceSettings.businessEmail || '',
     businessLegalName: invoiceSettings.businessLegalName,
+    businessPhone: invoiceSettings.businessPhone || '',
     businessState: invoiceSettings.businessState,
+    businessWebsite: invoiceSettings.businessWebsite || '',
+    defaultInvoiceTemplateId: invoiceSettings.defaultInvoiceTemplateId || '',
     defaultGstRatePercent: String(invoiceSettings.defaultGstRatePercent),
     defaultSacCode: invoiceSettings.defaultSacCode || '',
     fallbackTaxType: invoiceSettings.fallbackTaxType,
@@ -380,6 +457,8 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     gstin: invoiceSettings.gstin || '',
     invoiceFooter: invoiceSettings.invoiceFooter || '',
     invoicePrefix: invoiceSettings.invoicePrefix,
+    invoiceTerms: invoiceSettings.invoiceTerms || '',
+    paymentInstructions: invoiceSettings.paymentInstructions || '',
     paymentTermsDays: String(invoiceSettings.paymentTermsDays),
     pricesIncludeTax: invoiceSettings.pricesIncludeTax,
     reverseChargeNote: invoiceSettings.reverseChargeNote || '',
@@ -388,6 +467,76 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   const [invoiceSaveError, setInvoiceSaveError] = useState('');
   const [invoiceSaveMessage, setInvoiceSaveMessage] = useState('');
   const [isSavingInvoiceSettings, setIsSavingInvoiceSettings] = useState(false);
+  const [invoicePdfForm, setInvoicePdfForm] = useState({
+    contentBase64: '',
+    contentBottomMargin: '72',
+    contentLeftMargin: '54',
+    contentRightMargin: '54',
+    contentTopMargin: '120',
+    fileName: '',
+    name: '',
+    setActive: true,
+  });
+  const [invoicePdfMessage, setInvoicePdfMessage] = useState('');
+  const [invoicePdfError, setInvoicePdfError] = useState('');
+  const [isSavingInvoicePdfTemplate, setIsSavingInvoicePdfTemplate] = useState(false);
+  const filteredTeamMembers = useMemo(() => {
+    const search = teamSearchQuery.trim().toLowerCase();
+    const specialization = teamFilterSpecialization.trim().toLowerCase();
+    const location = teamFilterLocation.trim().toLowerCase();
+
+    return workspace.teamRegistry.members.filter((member) => {
+      if (teamFilterType !== 'all' && member.type !== teamFilterType) {
+        return false;
+      }
+
+      if (teamFilterActive === 'active' && !member.active) {
+        return false;
+      }
+
+      if (teamFilterActive === 'inactive' && member.active) {
+        return false;
+      }
+
+      if (
+        search &&
+        ![member.name, member.email, member.phone]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(search))
+      ) {
+        return false;
+      }
+
+      if (specialization && !String(member.specialization || '').toLowerCase().includes(specialization)) {
+        return false;
+      }
+
+      if (
+        location &&
+        ![member.city, member.state, member.country]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(location))
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [
+    teamFilterActive,
+    teamFilterLocation,
+    teamFilterSpecialization,
+    teamFilterType,
+    teamSearchQuery,
+    workspace.teamRegistry.members,
+  ]);
+  const pricingRules = {
+    consultationModes: workspace.pricingRules?.consultationModes || [],
+    countryPricing: workspace.pricingRules?.countryPricing || [],
+    exchangeRates: workspace.pricingRules?.exchangeRates || [],
+    priceOverrides: workspace.pricingRules?.priceOverrides || [],
+    urgencyRules: workspace.pricingRules?.urgencyRules || [],
+  };
   const firstDomainCode = workspace.serviceDomains.find((domain) => domain.isActive)?.code || workspace.serviceDomains[0]?.code || '';
   const [editingServiceId, setEditingServiceId] = useState<string | null>(null);
   const [serviceForm, setServiceForm] = useState<ServiceFormState>({
@@ -415,13 +564,19 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   });
   const [editingUrgencyId, setEditingUrgencyId] = useState<string | null>(null);
   const [urgencyForm, setUrgencyForm] = useState<UrgencyRuleFormState>({
+    allowInPerson: false,
+    allowPhone: true,
+    allowVideo: true,
     code: '',
     isActive: true,
     label: '',
+    maxResponseHours: '',
+    minResponseHours: '',
     responseWindowHours: '',
     sortOrder: '0',
     surchargeType: 'flat',
     surchargeValue: '0',
+    timingLabel: '',
   });
   const [editingConsultationModeCode, setEditingConsultationModeCode] = useState<string | null>(null);
   const [consultationModeForm, setConsultationModeForm] = useState<ConsultationModeFormState>({
@@ -437,10 +592,20 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   const [countryPricingForm, setCountryPricingForm] = useState<CountryPricingFormState>({
     countryCode: '',
     countryName: '',
-    currencyCode: 'INR',
+    currencyCode: 'USD',
     isActive: true,
     isDefault: false,
     multiplier: '1',
+  });
+  const [pricingEditorSubject, setPricingEditorSubject] = useState<PricingEditorSubject | null>(null);
+  const [pricingDefaultPrice, setPricingDefaultPrice] = useState('0');
+  const [editingPriceOverrideId, setEditingPriceOverrideId] = useState<string | null>(null);
+  const [priceOverrideForm, setPriceOverrideForm] = useState<PriceOverrideFormState>({
+    countryCode: '',
+    countryName: '',
+    currencyCode: 'USD',
+    isActive: true,
+    priceAmount: '0',
   });
   const [pricingMessage, setPricingMessage] = useState('');
   const [pricingError, setPricingError] = useState('');
@@ -502,17 +667,13 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   const [rbacError, setRbacError] = useState('');
   const [isSavingRbac, setIsSavingRbac] = useState(false);
 
-  const servicesByDomain = useMemo(() => {
-    const groups = new Map<string, SettingsWorkspaceResponse['services']>();
-
-    workspace.services.forEach((service) => {
-      const next = groups.get(service.domainName) || [];
-      next.push(service);
-      groups.set(service.domainName, next);
-    });
-
-    return Array.from(groups.entries());
-  }, [workspace.services]);
+  const sortedServices = useMemo(
+    () =>
+      [...workspace.services].sort(
+        (left, right) => left.sortOrder - right.sortOrder || left.name.localeCompare(right.name)
+      ),
+    [workspace.services]
+  );
 
   const selectedRole = useMemo(
     () => workspace.rbac.roles.find((role) => role.code === selectedRoleCode) || workspace.rbac.roles[0],
@@ -578,8 +739,13 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   useEffect(() => {
     setInvoiceForm({
       billingDisplayName: invoiceSettings.billingDisplayName,
+      businessAddress: invoiceSettings.businessAddress || '',
+      businessEmail: invoiceSettings.businessEmail || '',
       businessLegalName: invoiceSettings.businessLegalName,
+      businessPhone: invoiceSettings.businessPhone || '',
       businessState: invoiceSettings.businessState,
+      businessWebsite: invoiceSettings.businessWebsite || '',
+      defaultInvoiceTemplateId: invoiceSettings.defaultInvoiceTemplateId || '',
       defaultGstRatePercent: String(invoiceSettings.defaultGstRatePercent),
       defaultSacCode: invoiceSettings.defaultSacCode || '',
       fallbackTaxType: invoiceSettings.fallbackTaxType,
@@ -587,6 +753,8 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       gstin: invoiceSettings.gstin || '',
       invoiceFooter: invoiceSettings.invoiceFooter || '',
       invoicePrefix: invoiceSettings.invoicePrefix,
+      invoiceTerms: invoiceSettings.invoiceTerms || '',
+      paymentInstructions: invoiceSettings.paymentInstructions || '',
       paymentTermsDays: String(invoiceSettings.paymentTermsDays),
       pricesIncludeTax: invoiceSettings.pricesIncludeTax,
       reverseChargeNote: invoiceSettings.reverseChargeNote || '',
@@ -806,8 +974,8 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
 
     const sortOrder = Number(serviceForm.sortOrder || 0);
     const baseFee = Number(serviceForm.baseFee || 0);
-    if (!serviceForm.name.trim() || !serviceForm.domainCode) {
-      setServiceError('Service name and domain are required.');
+    if (!serviceForm.name.trim()) {
+      setServiceError('Service name is required.');
       return;
     }
     if (!Number.isInteger(sortOrder) || sortOrder < 0 || Number.isNaN(baseFee) || baseFee < 0) {
@@ -823,7 +991,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       const payload = {
         baseFee,
         description: serviceForm.description.trim() || null,
-        domainCode: serviceForm.domainCode,
+        domainCode: serviceForm.domainCode.trim() || null,
         icon: serviceForm.icon.trim() || null,
         isActive: serviceForm.isActive,
         name: serviceForm.name.trim(),
@@ -857,7 +1025,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       baseFee: String(service.baseFee || 0),
       code: service.code,
       description: service.description,
-      domainCode: service.domainCode,
+      domainCode: service.domainCode || '',
       icon: service.icon || 'Briefcase',
       isActive: service.isActive,
       name: service.name,
@@ -904,13 +1072,19 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
   const resetUrgencyForm = () => {
     setEditingUrgencyId(null);
     setUrgencyForm({
+      allowInPerson: false,
+      allowPhone: true,
+      allowVideo: true,
       code: '',
       isActive: true,
       label: '',
+      maxResponseHours: '',
+      minResponseHours: '',
       responseWindowHours: '',
       sortOrder: '0',
       surchargeType: 'flat',
       surchargeValue: '0',
+      timingLabel: '',
     });
   };
 
@@ -931,6 +1105,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       minServiceCount: Number(slabForm.minServiceCount),
       perExtraServiceAmount: slabForm.perExtraServiceAmount ? Number(slabForm.perExtraServiceAmount) : null,
     };
+    const maxServiceCount = payload.maxServiceCount ?? null;
 
     if (!payload.effectiveFrom || !Number.isInteger(payload.minServiceCount) || payload.minServiceCount <= 0) {
       setPricingError('Pricing slab needs an effective date and positive service count.');
@@ -941,7 +1116,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       Number.isNaN(payload.baseAmount) ||
       payload.baseAmount < 0 ||
       Number.isNaN(payload.minServiceCount) ||
-      (payload.maxServiceCount !== null && (Number.isNaN(payload.maxServiceCount) || payload.maxServiceCount < payload.minServiceCount))
+      (maxServiceCount !== null && (Number.isNaN(maxServiceCount) || maxServiceCount < payload.minServiceCount))
     ) {
       setPricingError('Pricing slab values are invalid.');
       return;
@@ -976,25 +1151,47 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     }
 
     const payload: UrgencyRulePayload = {
+      allowInPerson: urgencyForm.allowInPerson,
+      allowPhone: urgencyForm.allowPhone,
+      allowVideo: urgencyForm.allowVideo,
       code: urgencyForm.code.trim() || undefined,
       isActive: urgencyForm.isActive,
       label: urgencyForm.label.trim(),
+      maxResponseHours: urgencyForm.maxResponseHours
+        ? Number(urgencyForm.maxResponseHours)
+        : null,
+      minResponseHours: urgencyForm.minResponseHours
+        ? Number(urgencyForm.minResponseHours)
+        : null,
       responseWindowHours: urgencyForm.responseWindowHours
         ? Number(urgencyForm.responseWindowHours)
         : null,
       sortOrder: Number(urgencyForm.sortOrder || 0),
       surchargeType: urgencyForm.surchargeType,
       surchargeValue: Number(urgencyForm.surchargeValue),
+      timingLabel: urgencyForm.timingLabel.trim() || null,
     };
+    const minResponseHours = payload.minResponseHours ?? null;
+    const maxResponseHours = payload.maxResponseHours ?? null;
 
     if (
       !payload.label ||
       Number.isNaN(payload.surchargeValue) ||
       payload.surchargeValue < 0 ||
-      (payload.responseWindowHours !== null &&
-        (!Number.isInteger(payload.responseWindowHours) || payload.responseWindowHours <= 0))
+      (maxResponseHours !== null &&
+        (!Number.isInteger(maxResponseHours) || maxResponseHours <= 0)) ||
+      (minResponseHours !== null &&
+        (!Number.isInteger(minResponseHours) || minResponseHours < 0)) ||
+      (minResponseHours !== null &&
+        maxResponseHours !== null &&
+        maxResponseHours < minResponseHours)
     ) {
-      setPricingError('Urgency rule needs a label and non-negative surcharge.');
+      setPricingError('Urgency rule needs a label, non-negative surcharge, and valid timing range.');
+      return;
+    }
+
+    if (!payload.allowPhone && !payload.allowVideo && !payload.allowInPerson) {
+      setPricingError('Urgency rule must be allowed for at least one consultation mode.');
       return;
     }
 
@@ -1142,7 +1339,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     setCountryPricingForm({
       countryCode: '',
       countryName: '',
-      currencyCode: 'INR',
+      currencyCode: 'USD',
       isActive: true,
       isDefault: false,
       multiplier: '1',
@@ -1159,14 +1356,14 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     const payload: CountryPricingPayload = {
       countryCode: countryPricingForm.countryCode.trim() || undefined,
       countryName: countryPricingForm.countryName.trim(),
-      currencyCode: countryPricingForm.currencyCode.trim().toUpperCase(),
+      currencyCode: 'USD',
       isActive: countryPricingForm.isActive,
       isDefault: countryPricingForm.isDefault,
       multiplier: Number(countryPricingForm.multiplier || 0),
     };
 
-    if (!payload.countryName || !/^[A-Z]{3}$/.test(payload.currencyCode) || Number.isNaN(payload.multiplier) || payload.multiplier < 0) {
-      setPricingError('Country pricing needs country name, ISO currency, and non-negative multiplier.');
+    if (!payload.countryName || Number.isNaN(payload.multiplier) || payload.multiplier < 0) {
+      setPricingError('Country pricing needs country name and non-negative multiplier.');
       return;
     }
 
@@ -1206,6 +1403,138 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       }
     } catch (error) {
       setPricingError(error instanceof Error ? error.message : 'Unable to archive country pricing.');
+    } finally {
+      setIsSavingPricing(false);
+    }
+  };
+
+  const getOverridesForSubject = (subject: PricingEditorSubject | null) =>
+    subject
+      ? pricingRules.priceOverrides.filter(
+          (override) =>
+            override.subjectType === subject.subjectType && override.subjectCode === subject.code
+        )
+      : [];
+
+  const resetPriceOverrideForm = (subject: PricingEditorSubject | null = pricingEditorSubject) => {
+    setEditingPriceOverrideId(null);
+    setPriceOverrideForm({
+      countryCode: '',
+      countryName: '',
+      currencyCode: 'USD',
+      isActive: true,
+      priceAmount: subject ? String(subject.defaultPrice) : '0',
+    });
+  };
+
+  const openPricingEditor = (subject: PricingEditorSubject) => {
+    setPricingEditorSubject(subject);
+    setPricingDefaultPrice(String(subject.defaultPrice));
+    setPricingError('');
+    setPricingMessage('');
+    resetPriceOverrideForm(subject);
+  };
+
+  const savePricingDefaultPrice = async () => {
+    if (!pricingEditorSubject) {
+      return;
+    }
+    const nextPrice = Number(pricingDefaultPrice || 0);
+    if (Number.isNaN(nextPrice) || nextPrice < 0) {
+      setPricingError('Default price must be a non-negative amount.');
+      return;
+    }
+
+    setPricingError('');
+    setPricingMessage('');
+    setIsSavingPricing(true);
+    try {
+      if (pricingEditorSubject.subjectType === 'service') {
+        const service = workspace.services.find((entry) => entry.code === pricingEditorSubject.code);
+        if (!service || !onUpdateService) {
+          throw new Error('Service default price editing is not available.');
+        }
+        await onUpdateService(service.id, { baseFee: nextPrice });
+      } else if (pricingEditorSubject.subjectType === 'consultation_mode') {
+        if (!onUpdateConsultationMode) {
+          throw new Error('Consultation mode default price editing is not available.');
+        }
+        await onUpdateConsultationMode(pricingEditorSubject.code, { surchargeValue: nextPrice });
+      } else {
+        const rule = pricingRules.urgencyRules.find((entry) => entry.code === pricingEditorSubject.code);
+        if (!rule || !onUpdateUrgencyRule) {
+          throw new Error('Urgency default fee editing is not available.');
+        }
+        await onUpdateUrgencyRule(rule.id, { surchargeValue: nextPrice });
+      }
+      setPricingMessage('Default price updated.');
+    } catch (error) {
+      setPricingError(error instanceof Error ? error.message : 'Unable to update default price.');
+    } finally {
+      setIsSavingPricing(false);
+    }
+  };
+
+  const submitPriceOverride = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!pricingEditorSubject || !onCreatePriceOverride || !onUpdatePriceOverride) {
+      setPricingError('Country price override editing is not available for this admin session.');
+      return;
+    }
+
+    const countryCode = priceOverrideForm.countryCode.trim().toUpperCase();
+    const priceAmount = Number(priceOverrideForm.priceAmount || 0);
+    const payload: PriceOverridePayload = {
+      countryCode,
+      countryName: priceOverrideForm.countryName.trim() || countryCode,
+      currencyCode: 'USD',
+      isActive: priceOverrideForm.isActive,
+      priceAmount,
+      subjectCode: pricingEditorSubject.code,
+      subjectType: pricingEditorSubject.subjectType,
+    };
+
+    if (!payload.countryCode || Number.isNaN(priceAmount) || priceAmount < 0) {
+      setPricingError('Country override needs country code and non-negative price.');
+      return;
+    }
+
+    setPricingError('');
+    setPricingMessage('');
+    setIsSavingPricing(true);
+    try {
+      if (editingPriceOverrideId) {
+        const { subjectCode: _subjectCode, subjectType: _subjectType, ...updatePayload } = payload;
+        await onUpdatePriceOverride(editingPriceOverrideId, updatePayload);
+        setPricingMessage('Country price override updated.');
+      } else {
+        await onCreatePriceOverride(payload);
+        setPricingMessage('Country price override created.');
+      }
+      resetPriceOverrideForm(pricingEditorSubject);
+    } catch (error) {
+      setPricingError(error instanceof Error ? error.message : 'Unable to save country price override.');
+    } finally {
+      setIsSavingPricing(false);
+    }
+  };
+
+  const archivePriceOverride = async (overrideId: string) => {
+    if (!onArchivePriceOverride) {
+      setPricingError('Country price override archive is not available for this admin session.');
+      return;
+    }
+    setPricingError('');
+    setPricingMessage('');
+    setIsSavingPricing(true);
+    try {
+      await onArchivePriceOverride(overrideId);
+      setPricingMessage('Country price override archived for future quotes.');
+      if (editingPriceOverrideId === overrideId) {
+        resetPriceOverrideForm(pricingEditorSubject);
+      }
+    } catch (error) {
+      setPricingError(error instanceof Error ? error.message : 'Unable to archive country price override.');
     } finally {
       setIsSavingPricing(false);
     }
@@ -1753,8 +2082,13 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
     try {
       await onUpdateInvoiceSettings({
         billingDisplayName: invoiceForm.billingDisplayName,
+        businessAddress: invoiceForm.businessAddress.trim() || null,
+        businessEmail: invoiceForm.businessEmail.trim() || null,
         businessLegalName: invoiceForm.businessLegalName,
+        businessPhone: invoiceForm.businessPhone.trim() || null,
         businessState: invoiceForm.businessState,
+        businessWebsite: invoiceForm.businessWebsite.trim() || null,
+        defaultInvoiceTemplateId: invoiceForm.defaultInvoiceTemplateId || null,
         defaultGstRatePercent,
         defaultSacCode: invoiceForm.defaultSacCode.trim() || null,
         fallbackTaxType: invoiceForm.fallbackTaxType,
@@ -1762,6 +2096,8 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
         gstin: invoiceForm.gstin.trim() || null,
         invoiceFooter: invoiceForm.invoiceFooter.trim() || null,
         invoicePrefix: invoiceForm.invoicePrefix,
+        invoiceTerms: invoiceForm.invoiceTerms.trim() || null,
+        paymentInstructions: invoiceForm.paymentInstructions.trim() || null,
         paymentTermsDays,
         pricesIncludeTax: invoiceForm.pricesIncludeTax,
         reverseChargeNote: invoiceForm.reverseChargeNote.trim() || null,
@@ -1772,6 +2108,125 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
       setInvoiceSaveError(error instanceof Error ? error.message : 'Unable to save invoice settings.');
     } finally {
       setIsSavingInvoiceSettings(false);
+    }
+  };
+
+  const handleInvoicePdfFile = async (file: File | null) => {
+    setInvoicePdfError('');
+    setInvoicePdfMessage('');
+
+    if (!file) {
+      setInvoicePdfForm((current) => ({ ...current, contentBase64: '', fileName: '' }));
+      return;
+    }
+
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      setInvoicePdfError('Invoice letterhead must be a PDF file.');
+      return;
+    }
+
+    const content = await file.arrayBuffer();
+    const bytes = new Uint8Array(content);
+    let binary = '';
+    for (const byte of bytes) {
+      binary += String.fromCharCode(byte);
+    }
+    const contentBase64 = btoa(binary);
+    setInvoicePdfForm((current) => ({
+      ...current,
+      contentBase64,
+      fileName: file.name,
+      name: current.name || file.name.replace(/\.pdf$/i, ''),
+    }));
+  };
+
+  const uploadInvoicePdfTemplate = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!onCreateInvoicePdfTemplate) {
+      setInvoicePdfError('Invoice PDF template upload is not available for this admin session.');
+      return;
+    }
+
+    if (!invoicePdfForm.contentBase64 || !invoicePdfForm.fileName) {
+      setInvoicePdfError('Choose a PDF letterhead before uploading.');
+      return;
+    }
+
+    setInvoicePdfError('');
+    setInvoicePdfMessage('');
+    setIsSavingInvoicePdfTemplate(true);
+
+    try {
+      await onCreateInvoicePdfTemplate({
+        contentBase64: invoicePdfForm.contentBase64,
+        contentBottomMargin: Number(invoicePdfForm.contentBottomMargin),
+        contentLeftMargin: Number(invoicePdfForm.contentLeftMargin),
+        contentRightMargin: Number(invoicePdfForm.contentRightMargin),
+        contentTopMargin: Number(invoicePdfForm.contentTopMargin),
+        name: invoicePdfForm.name,
+        originalFileName: invoicePdfForm.fileName,
+        setActive: invoicePdfForm.setActive,
+      });
+      setInvoicePdfMessage('Invoice PDF letterhead uploaded.');
+      setInvoicePdfForm({
+        contentBase64: '',
+        contentBottomMargin: '72',
+        contentLeftMargin: '54',
+        contentRightMargin: '54',
+        contentTopMargin: '120',
+        fileName: '',
+        name: '',
+        setActive: true,
+      });
+    } catch (error) {
+      setInvoicePdfError(error instanceof Error ? error.message : 'Unable to upload invoice PDF letterhead.');
+    } finally {
+      setIsSavingInvoicePdfTemplate(false);
+    }
+  };
+
+  const updateInvoicePdfTemplate = async (
+    templateId: string,
+    payload: InvoicePdfTemplateUpdatePayload,
+    message: string
+  ) => {
+    if (!onUpdateInvoicePdfTemplate) {
+      setInvoicePdfError('Invoice PDF template editing is not available for this admin session.');
+      return;
+    }
+
+    setInvoicePdfError('');
+    setInvoicePdfMessage('');
+    setIsSavingInvoicePdfTemplate(true);
+
+    try {
+      await onUpdateInvoicePdfTemplate(templateId, payload);
+      setInvoicePdfMessage(message);
+    } catch (error) {
+      setInvoicePdfError(error instanceof Error ? error.message : 'Unable to update invoice PDF letterhead.');
+    } finally {
+      setIsSavingInvoicePdfTemplate(false);
+    }
+  };
+
+  const archiveInvoicePdfTemplate = async (templateId: string) => {
+    if (!onArchiveInvoicePdfTemplate) {
+      setInvoicePdfError('Invoice PDF template archive is not available for this admin session.');
+      return;
+    }
+
+    setInvoicePdfError('');
+    setInvoicePdfMessage('');
+    setIsSavingInvoicePdfTemplate(true);
+
+    try {
+      await onArchiveInvoicePdfTemplate(templateId);
+      setInvoicePdfMessage('Invoice PDF letterhead archived.');
+    } catch (error) {
+      setInvoicePdfError(error instanceof Error ? error.message : 'Unable to archive invoice PDF letterhead.');
+    } finally {
+      setIsSavingInvoicePdfTemplate(false);
     }
   };
 
@@ -1881,16 +2336,9 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                   />
                   <SettingsSelect
                     label="Default Currency"
-                    onChange={(value) => setGeneralForm((current) => ({ ...current, defaultCurrency: value }))}
-                    options={[
-                      { label: 'INR', value: 'INR' },
-                      { label: 'USD', value: 'USD' },
-                      { label: 'GBP', value: 'GBP' },
-                      { label: 'EUR', value: 'EUR' },
-                      { label: 'SGD', value: 'SGD' },
-                      { label: 'AED', value: 'AED' },
-                    ]}
-                    value={generalForm.defaultCurrency}
+                    onChange={() => setGeneralForm((current) => ({ ...current, defaultCurrency: 'USD' }))}
+                    options={[{ label: 'USD', value: 'USD' }]}
+                    value="USD"
                   />
                   <SettingsSelect
                     label="Default Date Format"
@@ -2077,13 +2525,52 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                 ) : null}
               </form>
 
+              <div className="rounded-xl border border-[#E6E4DD] bg-white p-4">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
+                  <SettingsInput
+                    label="Search"
+                    onChange={setTeamSearchQuery}
+                    placeholder="Name, email, phone"
+                    value={teamSearchQuery}
+                  />
+                  <SettingsSelect
+                    label="Type"
+                    onChange={(value) => setTeamFilterType(value as 'all' | TeamMemberType)}
+                    options={[{ label: 'All types', value: 'all' }, ...TEAM_MEMBER_TYPE_OPTIONS]}
+                    value={teamFilterType}
+                  />
+                  <SettingsSelect
+                    label="Status"
+                    onChange={(value) => setTeamFilterActive(value as 'active' | 'all' | 'inactive')}
+                    options={[
+                      { label: 'All statuses', value: 'all' },
+                      { label: 'Active', value: 'active' },
+                      { label: 'Inactive', value: 'inactive' },
+                    ]}
+                    value={teamFilterActive}
+                  />
+                  <SettingsInput
+                    label="Specialization"
+                    onChange={setTeamFilterSpecialization}
+                    placeholder="Domain or role"
+                    value={teamFilterSpecialization}
+                  />
+                  <SettingsInput
+                    label="Location"
+                    onChange={setTeamFilterLocation}
+                    placeholder="City, state, country"
+                    value={teamFilterLocation}
+                  />
+                </div>
+              </div>
+
               <div className="space-y-3">
-                {workspace.teamRegistry.members.length === 0 ? (
+                {filteredTeamMembers.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-[#E6E4DD] bg-[#FCFBF8] p-6 text-sm text-[#8C8981]">
-                    No team or counsel registry entries have been configured yet.
+                    No team or counsel registry entries match the current filters.
                   </div>
                 ) : (
-                  workspace.teamRegistry.members.map((member) => (
+                  filteredTeamMembers.map((member) => (
                     <div
                       className="flex flex-col gap-4 rounded-xl border border-[#E6E4DD] bg-white p-4 md:flex-row md:items-center md:justify-between"
                       key={member.id}
@@ -2144,7 +2631,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
           {activeTab === 'services' ? (
             <div className="space-y-6">
               <SectionHeader
-                description="Grouped from the shared service catalog and legal-domain mapping."
+                description="Independent primary offerings used in request, matter, package, and quote flows. Legal domains are selected separately."
                 icon={Layers}
                 title="Service Catalog"
               />
@@ -2212,11 +2699,12 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                     value={serviceForm.icon}
                   />
                   <SettingsSelect
-                    label="Domain"
+                    label="Optional Internal Category"
                     onChange={(value) => setServiceForm((current) => ({ ...current, domainCode: value }))}
                     options={workspace.serviceDomains
                       .filter((domain) => domain.isActive)
-                      .map((domain) => ({ label: domain.name, value: domain.code }))}
+                      .map((domain) => ({ label: domain.name, value: domain.code }))
+                      .concat([{ label: 'Unclassified / independent', value: '' }])}
                     value={serviceForm.domainCode}
                   />
                   <SettingsInput
@@ -2253,14 +2741,13 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                   </div>
                 ) : null}
               </form>
-              {servicesByDomain.map(([domainName, services]) => (
-                <div key={domainName}>
-                  <div className="flex items-center justify-between mb-3">
-                    <h3 className="text-sm font-medium text-[#2C2B29]">{domainName}</h3>
-                    <span className="text-xs text-[#8C8981]">{services.length} services</span>
-                  </div>
-                  <div className="space-y-3">
-                    {services.map((service) => (
+              <div>
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-sm font-medium text-[#2C2B29]">Primary services</h3>
+                  <span className="text-xs text-[#8C8981]">{sortedServices.length} services</span>
+                </div>
+                <div className="space-y-3">
+                    {sortedServices.map((service) => (
                       <div
                         className="rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4"
                         key={service.code}
@@ -2272,6 +2759,11 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                             <p className="mt-2 text-xs font-medium text-[#5A7C96]">
                               Base fee: {formatCurrency(service.baseFee)}
                             </p>
+                            {service.domainName ? (
+                              <p className="mt-1 text-[11px] text-[#A8A69F]">
+                                Internal category: {service.domainName}
+                              </p>
+                            ) : null}
                           </div>
                           <MetaPill label={service.isActive ? 'Active' : 'Inactive'} tone={service.isActive ? 'green' : 'neutral'} />
                         </div>
@@ -2297,20 +2789,33 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                         </div>
                       </div>
                     ))}
-                  </div>
                 </div>
-              ))}
+              </div>
             </div>
           ) : null}
 
           {activeTab === 'pricing' ? (
             <div className="space-y-6">
               <SectionHeader
-                description="Live slab pricing and urgency surcharge rules used by the quote engine."
+                description="Current request quotes use service base prices, consultation mode fees, urgency fees, and exact USD country overrides."
                 icon={SlidersHorizontal}
                 title="Pricing Rules"
               />
-              <ReadOnlyNotice text="Service-count slabs and urgency rules affect future quotes only. Historical package selections and invoices keep stored amounts." />
+              <ReadOnlyNotice text="Previous requests, package selections, and invoices keep the prices saved when they were created. New requests use the pricing matrix below." />
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <div className="rounded-xl border border-[#E6E4DD] bg-white p-4">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-[#8C8981]">Core matrix</p>
+                  <p className="mt-1 text-sm font-medium text-[#2C2B29]">Services and consultation fees</p>
+                </div>
+                <div className="rounded-xl border border-[#E6E4DD] bg-white p-4">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-[#8C8981]">Request options</p>
+                  <p className="mt-1 text-sm font-medium text-[#2C2B29]">Urgency labels, timing, and eligibility</p>
+                </div>
+                <div className="rounded-xl border border-[#E6E4DD] bg-white p-4">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-[#8C8981]">Country rules</p>
+                  <p className="mt-1 text-sm font-medium text-[#2C2B29]">Country availability and exact USD overrides</p>
+                </div>
+              </div>
               {pricingError ? (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                   {pricingError}
@@ -2321,144 +2826,153 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                   {pricingMessage}
                 </div>
               ) : null}
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 gap-6">
                 <div>
-                  <h3 className="text-sm font-medium text-[#2C2B29] mb-3">Service Slabs</h3>
-                  <form className="mb-4 rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4" onSubmit={submitPricingSlab}>
-                    <div className="mb-4 flex items-center justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-medium text-[#2C2B29]">
-                          {editingSlabId ? 'Edit Service Slab' : 'Create Service Slab'}
-                        </p>
-                        <p className="text-xs text-[#8C8981] mt-1">Applies by number of selected services.</p>
-                      </div>
-                      {editingSlabId ? (
-                        <button
-                          className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#5A7C96]"
-                          onClick={resetSlabForm}
-                          type="button"
-                        >
-                          New
-                        </button>
-                      ) : null}
+                  <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-[#8C8981]">
+                    1. Core Pricing Matrix
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-[#E6E4DD] bg-white p-5 shadow-sm">
+                  <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h3 className="text-sm font-medium text-[#2C2B29]">Service Prices</h3>
+                      <p className="mt-1 text-xs text-[#8C8981]">
+                        Primary service defaults plus exact country USD overrides for new requests.
+                      </p>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <SettingsInput
-                        label="Effective From"
-                        onChange={(value) => setSlabForm((current) => ({ ...current, effectiveFrom: value }))}
-                        type="date"
-                        value={slabForm.effectiveFrom}
-                      />
-                      <SettingsInput
-                        label="Effective To"
-                        onChange={(value) => setSlabForm((current) => ({ ...current, effectiveTo: value }))}
-                        type="date"
-                        value={slabForm.effectiveTo}
-                      />
-                      <SettingsInput
-                        label="Min Services"
-                        onChange={(value) => setSlabForm((current) => ({ ...current, minServiceCount: value }))}
-                        type="number"
-                        value={slabForm.minServiceCount}
-                      />
-                      <SettingsInput
-                        label="Max Services"
-                        onChange={(value) => setSlabForm((current) => ({ ...current, maxServiceCount: value }))}
-                        placeholder="Blank for no cap"
-                        type="number"
-                        value={slabForm.maxServiceCount}
-                      />
-                      <SettingsInput
-                        label="Base Fee"
-                        onChange={(value) => setSlabForm((current) => ({ ...current, baseAmount: value }))}
-                        type="number"
-                        value={slabForm.baseAmount}
-                      />
-                      <SettingsInput
-                        label="Per Extra Service"
-                        onChange={(value) => setSlabForm((current) => ({ ...current, perExtraServiceAmount: value }))}
-                        placeholder="Optional"
-                        type="number"
-                        value={slabForm.perExtraServiceAmount}
-                      />
-                      <label className="flex items-center gap-3 rounded-lg border border-[#E6E4DD] bg-white px-3 py-2">
-                        <input
-                          checked={slabForm.isActive}
-                          className="h-4 w-4 accent-[#C19A5B]"
-                          onChange={(event) =>
-                            setSlabForm((current) => ({ ...current, isActive: event.target.checked }))
-                          }
-                          type="checkbox"
-                        />
-                        <span className="text-sm text-[#2C2B29]">Active</span>
-                      </label>
-                    </div>
-                    <button
-                      className="mt-4 inline-flex items-center justify-center gap-2 rounded-lg bg-[#2C2B29] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#4A4946] disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={!onCreatePricingSlab || !onUpdatePricingSlab || isSavingPricing}
-                      type="submit"
-                    >
-                      {isSavingPricing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                      {editingSlabId ? 'Save Slab' : 'Create Slab'}
-                    </button>
-                  </form>
-                  <div className="space-y-3">
-                    {workspace.pricingRules.serviceSlabs.map((slab) => (
-                      <div className="rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4" key={slab.id}>
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-medium text-[#2C2B29]">
-                              {slab.minServiceCount} to {slab.maxServiceCount ?? '∞'} services
-                            </p>
-                            <p className="text-xs text-[#8C8981] mt-1">
-                              Effective {slab.effectiveFrom}
-                              {slab.effectiveTo ? ` to ${slab.effectiveTo}` : ' onwards'}
-                            </p>
-                          </div>
-                          <MetaPill label={slab.isActive ? 'Active' : 'Inactive'} tone={slab.isActive ? 'green' : 'neutral'} />
-                        </div>
-                        <div className="grid grid-cols-2 gap-3 mt-4">
-                          <InfoBlock label="Base Amount" value={formatCurrency(slab.baseAmount)} />
-                          <InfoBlock
-                            label="Per Extra Service"
-                            value={slab.perExtraServiceAmount === null ? '—' : formatCurrency(slab.perExtraServiceAmount)}
-                          />
-                        </div>
-                        <div className="mt-4 flex flex-wrap gap-2">
-                          <button
-                            className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#5A7C96] transition hover:bg-[#F4F1EA]"
-                            onClick={() => {
-                              setEditingSlabId(slab.id);
-                              setSlabForm({
-                                baseAmount: String(slab.baseAmount),
-                                effectiveFrom: slab.effectiveFrom,
-                                effectiveTo: slab.effectiveTo || '',
-                                isActive: slab.isActive,
-                                maxServiceCount: slab.maxServiceCount === null ? '' : String(slab.maxServiceCount),
-                                minServiceCount: String(slab.minServiceCount),
-                                perExtraServiceAmount:
-                                  slab.perExtraServiceAmount === null ? '' : String(slab.perExtraServiceAmount),
-                              });
-                            }}
-                            type="button"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#8C8981] transition hover:bg-[#F4F1EA] disabled:cursor-not-allowed disabled:opacity-50"
-                            disabled={!slab.isActive || isSavingPricing}
-                            onClick={() => void archiveSlab(slab.id)}
-                            type="button"
-                          >
-                            Archive
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                    <MetaPill label={`${workspace.services.filter((service) => service.isActive).length} active`} tone="blue" />
+                  </div>
+                  <div className="admin-table-scroll">
+                    <table className="w-full min-w-[680px] text-sm">
+                      <thead>
+                        <tr className="border-b border-[#E6E4DD] text-left text-[11px] uppercase tracking-[0.18em] text-[#8C8981]">
+                          <th className="py-3 pr-3">Service</th>
+                          <th className="py-3 pr-3">Default</th>
+                          <th className="py-3 pr-3">Overrides</th>
+                          <th className="py-3 pr-3">Status</th>
+                          <th className="py-3 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#F0EEE7]">
+                        {workspace.services.map((service) => {
+                          const overrides = pricingRules.priceOverrides.filter(
+                            (override) => override.subjectType === 'service' && override.subjectCode === service.code
+                          );
+                          return (
+                            <tr key={service.id}>
+                              <td className="py-3 pr-3">
+                                <p className="font-medium text-[#2C2B29]">{service.name}</p>
+                                <p className="text-xs uppercase tracking-[0.16em] text-[#A8A69F]">{service.code}</p>
+                              </td>
+                              <td className="py-3 pr-3">{formatPricingAmount(service.baseFee)}</td>
+                              <td className="py-3 pr-3">{overrides.length}</td>
+                              <td className="py-3 pr-3">
+                                <MetaPill label={service.isActive ? 'Active' : 'Inactive'} tone={service.isActive ? 'green' : 'neutral'} />
+                              </td>
+                              <td className="py-3 text-right">
+                                <button
+                                  className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#5A7C96] transition hover:bg-[#F4F1EA]"
+                                  onClick={() =>
+                                    openPricingEditor({
+                                      code: service.code,
+                                      defaultPrice: service.baseFee,
+                                      label: service.name,
+                                      subjectType: 'service',
+                                    })
+                                  }
+                                  type="button"
+                                >
+                                  Edit prices
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
+
+                <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+                  <div className="rounded-2xl border border-[#E6E4DD] bg-white p-5 shadow-sm">
+                    <h3 className="text-sm font-medium text-[#2C2B29]">Consultation Mode Prices</h3>
+                    <p className="mt-1 text-xs text-[#8C8981]">
+                      Mode fees can use the default amount or exact country overrides.
+                    </p>
+                    <div className="mt-4 space-y-3">
+                      {pricingRules.consultationModes.map((mode) => {
+                        const overrides = pricingRules.priceOverrides.filter(
+                          (override) =>
+                            override.subjectType === 'consultation_mode' && override.subjectCode === mode.code
+                        );
+                        return (
+                          <div className="rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4" key={mode.code}>
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="text-sm font-medium text-[#2C2B29]">{mode.label}</p>
+                                <p className="mt-1 text-xs uppercase tracking-[0.18em] text-[#8C8981]">{mode.code}</p>
+                              </div>
+                              <MetaPill label={mode.isActive ? 'Active' : 'Inactive'} tone={mode.isActive ? 'green' : 'neutral'} />
+                            </div>
+                            <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                              <p className="text-sm text-[#5F5C55]">
+                                Default {formatPricingAmount(mode.surchargeValue)} · {overrides.length} overrides
+                              </p>
+                              <button
+                                className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#5A7C96] transition hover:bg-[#F4F1EA]"
+                                onClick={() =>
+                                  openPricingEditor({
+                                    code: mode.code,
+                                    defaultPrice: mode.surchargeValue,
+                                    label: mode.label,
+                                    subjectType: 'consultation_mode',
+                                  })
+                                }
+                                type="button"
+                              >
+                                Edit prices
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-[#E6E4DD] bg-white p-5 shadow-sm">
+                    <h3 className="text-sm font-medium text-[#2C2B29]">Country Defaults</h3>
+                    <p className="mt-1 text-xs text-[#8C8981]">
+                      Countries available for pricing. New quotes and invoices use USD amounts.
+                    </p>
+                    <div className="mt-4 space-y-3">
+                      {pricingRules.countryPricing.map((rule) => (
+                        <div className="rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4" key={rule.id}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-medium text-[#2C2B29]">{rule.countryName}</p>
+                              <p className="mt-1 text-xs uppercase tracking-[0.18em] text-[#8C8981]">
+                                {rule.countryCode} · {rule.currencyCode}
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {rule.isDefault ? <MetaPill label="Default" tone="blue" /> : null}
+                              <MetaPill label={rule.isActive ? 'Active' : 'Inactive'} tone={rule.isActive ? 'green' : 'neutral'} />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-6">
                 <div>
-                  <h3 className="text-sm font-medium text-[#2C2B29] mb-3">Urgency Surcharge</h3>
+                  <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-[#8C8981]">
+                    2. Request Options and Eligibility
+                  </p>
+                </div>
+              <div>
+                  <h3 className="text-sm font-medium text-[#2C2B29] mb-3">Urgency Options</h3>
                   <form className="mb-4 rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4" onSubmit={submitUrgencyRule}>
                     <div className="mb-4 flex items-center justify-between gap-3">
                       <div>
@@ -2482,6 +2996,12 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                         label="Label"
                         onChange={(value) => setUrgencyForm((current) => ({ ...current, label: value }))}
                         value={urgencyForm.label}
+                      />
+                      <SettingsInput
+                        label="Timing Label"
+                        onChange={(value) => setUrgencyForm((current) => ({ ...current, timingLabel: value }))}
+                        placeholder="Standard 24-48h"
+                        value={urgencyForm.timingLabel}
                       />
                       <SettingsInput
                         label="Code"
@@ -2511,11 +3031,24 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                         value={urgencyForm.surchargeValue}
                       />
                       <SettingsInput
-                        label="Response Window Hours"
-                        onChange={(value) => setUrgencyForm((current) => ({ ...current, responseWindowHours: value }))}
-                        placeholder="48 for standard"
+                        label="Min Hours"
+                        onChange={(value) => setUrgencyForm((current) => ({ ...current, minResponseHours: value }))}
+                        placeholder="24"
                         type="number"
-                        value={urgencyForm.responseWindowHours}
+                        value={urgencyForm.minResponseHours}
+                      />
+                      <SettingsInput
+                        label="Max Hours"
+                        onChange={(value) =>
+                          setUrgencyForm((current) => ({
+                            ...current,
+                            maxResponseHours: value,
+                            responseWindowHours: value,
+                          }))
+                        }
+                        placeholder="48"
+                        type="number"
+                        value={urgencyForm.maxResponseHours}
                       />
                       <SettingsInput
                         label="Display Order"
@@ -2534,6 +3067,23 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                         />
                         <span className="text-sm text-[#2C2B29]">Active</span>
                       </label>
+                      {[
+                        ['Phone', 'allowPhone'],
+                        ['Video', 'allowVideo'],
+                        ['In-person', 'allowInPerson'],
+                      ].map(([label, key]) => (
+                        <label className="flex items-center gap-3 rounded-lg border border-[#E6E4DD] bg-white px-3 py-2" key={key}>
+                          <input
+                            checked={Boolean(urgencyForm[key as 'allowInPerson' | 'allowPhone' | 'allowVideo'])}
+                            className="h-4 w-4 accent-[#C19A5B]"
+                            onChange={(event) =>
+                              setUrgencyForm((current) => ({ ...current, [key]: event.target.checked }))
+                            }
+                            type="checkbox"
+                          />
+                          <span className="text-sm text-[#2C2B29]">Allow {label}</span>
+                        </label>
+                      ))}
                     </div>
                     <button
                       className="mt-4 inline-flex items-center justify-center gap-2 rounded-lg bg-[#2C2B29] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#4A4946] disabled:cursor-not-allowed disabled:opacity-60"
@@ -2545,7 +3095,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                     </button>
                   </form>
                   <div className="space-y-3">
-                    {workspace.pricingRules.urgencyRules.map((rule) => (
+                    {pricingRules.urgencyRules.map((rule) => (
                       <div className="rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4" key={rule.id}>
                         <div className="flex items-center justify-between gap-3">
                           <div>
@@ -2558,8 +3108,16 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                           <InfoBlock label="Surcharge Type" value={rule.surchargeType} />
                           <InfoBlock label="Surcharge Value" value={String(rule.surchargeValue)} />
                           <InfoBlock
-                            label="Response Hours"
-                            value={rule.responseWindowHours === null ? '—' : `${rule.responseWindowHours}h`}
+                            label="Timing"
+                            value={formatUrgencyTiming(rule)}
+                          />
+                          <InfoBlock
+                            label="Allowed Modes"
+                            value={[
+                              rule.allowPhone ? 'Phone' : null,
+                              rule.allowVideo ? 'Video' : null,
+                              rule.allowInPerson ? 'In-person' : null,
+                            ].filter(Boolean).join(', ') || '—'}
                           />
                         </div>
                         <div className="mt-4 flex flex-wrap gap-2">
@@ -2568,14 +3126,22 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                             onClick={() => {
                               setEditingUrgencyId(rule.id);
                               setUrgencyForm({
+                                allowInPerson: rule.allowInPerson,
+                                allowPhone: rule.allowPhone,
+                                allowVideo: rule.allowVideo,
                                 code: rule.code,
                                 isActive: rule.isActive,
                                 label: rule.label,
+                                maxResponseHours:
+                                  rule.maxResponseHours === null ? '' : String(rule.maxResponseHours),
+                                minResponseHours:
+                                  rule.minResponseHours === null ? '' : String(rule.minResponseHours),
                                 responseWindowHours:
                                   rule.responseWindowHours === null ? '' : String(rule.responseWindowHours),
                                 sortOrder: String(rule.sortOrder),
                                 surchargeType: rule.surchargeType === 'percent' ? 'percent' : 'flat',
                                 surchargeValue: String(rule.surchargeValue),
+                                timingLabel: rule.timingLabel || '',
                               });
                             }}
                             type="button"
@@ -2595,6 +3161,10 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                     ))}
                   </div>
                 </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-[#8C8981]">
+                  3. Configuration Controls
+                </p>
               </div>
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <div>
@@ -2678,7 +3248,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                     </button>
                   </form>
                   <div className="space-y-3">
-                    {workspace.pricingRules.consultationModes.map((mode) => (
+                    {pricingRules.consultationModes.map((mode) => (
                       <div className="rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4" key={mode.code}>
                         <div className="flex items-start justify-between gap-3">
                           <div>
@@ -2728,7 +3298,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                 </div>
 
                 <div>
-                  <h3 className="text-sm font-medium text-[#2C2B29] mb-3">Country Pricing</h3>
+                  <h3 className="text-sm font-medium text-[#2C2B29] mb-3">Country Availability</h3>
                   <form className="mb-4 rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4" onSubmit={submitCountryPricing}>
                     <div className="mb-4 flex items-center justify-between gap-3">
                       <div>
@@ -2736,7 +3306,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                           {editingCountryPricingId ? 'Edit Country Pricing' : 'Create Country Pricing'}
                         </p>
                         <p className="mt-1 text-xs text-[#8C8981]">
-                          Multiplier converts base service/mode/urgency pricing into the selected currency for new requests.
+                          Set country availability for new quotes. Prices and invoices stay in USD.
                         </p>
                       </div>
                       {editingCountryPricingId ? (
@@ -2764,13 +3334,12 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                       />
                       <SettingsInput
                         label="Currency"
-                        onChange={(value) =>
-                          setCountryPricingForm((current) => ({ ...current, currencyCode: value.toUpperCase() }))
-                        }
-                        value={countryPricingForm.currencyCode}
+                        disabled
+                        onChange={() => setCountryPricingForm((current) => ({ ...current, currencyCode: 'USD' }))}
+                        value="USD"
                       />
                       <SettingsInput
-                        label="Multiplier"
+                        label="Legacy multiplier"
                         onChange={(value) => setCountryPricingForm((current) => ({ ...current, multiplier: value }))}
                         type="number"
                         value={countryPricingForm.multiplier}
@@ -2808,7 +3377,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                     </button>
                   </form>
                   <div className="space-y-3">
-                    {workspace.pricingRules.countryPricing.map((rule) => (
+                    {pricingRules.countryPricing.map((rule) => (
                       <div className="rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4" key={rule.id}>
                         <div className="flex items-start justify-between gap-3">
                           <div>
@@ -2823,7 +3392,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                           </div>
                         </div>
                         <div className="mt-4 grid grid-cols-2 gap-3">
-                          <InfoBlock label="Multiplier" value={String(rule.multiplier)} />
+                          <InfoBlock label="Legacy multiplier" value={String(rule.multiplier)} />
                           <InfoBlock label="Currency" value={rule.currencyCode} />
                         </div>
                         <div className="mt-4 flex flex-wrap gap-2">
@@ -2834,7 +3403,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                               setCountryPricingForm({
                                 countryCode: rule.countryCode,
                                 countryName: rule.countryName,
-                                currencyCode: rule.currencyCode,
+                                currencyCode: 'USD',
                                 isActive: rule.isActive,
                                 isDefault: rule.isDefault,
                                 multiplier: String(rule.multiplier),
@@ -2858,6 +3427,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                   </div>
                 </div>
               </div>
+              </div>
             </div>
           ) : null}
 
@@ -2879,6 +3449,17 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                   label="Tax Rates"
                   value={String(workspace.invoiceConfiguration.taxRates.length)}
                 />
+              </div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                <h3 className="text-sm font-medium text-amber-950">
+                  CA/legal invoice readiness checklist
+                </h3>
+                <p className="mt-1 text-xs leading-relaxed text-amber-800">
+                  CA/legal review required before production invoice issuance.
+                  GSTIN, default SAC code, business state, business address, business phone,
+                  business email, payment instructions, tax mode, reverse charge/exempt notes,
+                  and invoice footer wording must be approved and configured.
+                </p>
               </div>
               <form
                 className="rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-5"
@@ -2922,6 +3503,24 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                     label="Business State"
                     onChange={(value) => setInvoiceForm((current) => ({ ...current, businessState: value }))}
                     value={invoiceForm.businessState}
+                  />
+                  <SettingsInput
+                    label="Business Phone"
+                    onChange={(value) => setInvoiceForm((current) => ({ ...current, businessPhone: value }))}
+                    placeholder="Optional"
+                    value={invoiceForm.businessPhone}
+                  />
+                  <SettingsInput
+                    label="Business Email"
+                    onChange={(value) => setInvoiceForm((current) => ({ ...current, businessEmail: value }))}
+                    placeholder="billing@example.com"
+                    value={invoiceForm.businessEmail}
+                  />
+                  <SettingsInput
+                    label="Business Website"
+                    onChange={(value) => setInvoiceForm((current) => ({ ...current, businessWebsite: value }))}
+                    placeholder="https://example.com"
+                    value={invoiceForm.businessWebsite}
                   />
                   <SettingsInput
                     label="Invoice Prefix"
@@ -2999,6 +3598,21 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                     <span className="text-sm text-[#2C2B29]">Prices include tax</span>
                   </label>
                   <SettingsTextArea
+                    label="Business Address"
+                    onChange={(value) => setInvoiceForm((current) => ({ ...current, businessAddress: value }))}
+                    value={invoiceForm.businessAddress}
+                  />
+                  <SettingsTextArea
+                    label="Payment Instructions"
+                    onChange={(value) => setInvoiceForm((current) => ({ ...current, paymentInstructions: value }))}
+                    value={invoiceForm.paymentInstructions}
+                  />
+                  <SettingsTextArea
+                    label="Invoice Terms"
+                    onChange={(value) => setInvoiceForm((current) => ({ ...current, invoiceTerms: value }))}
+                    value={invoiceForm.invoiceTerms}
+                  />
+                  <SettingsTextArea
                     label="Invoice Footer"
                     onChange={(value) => setInvoiceForm((current) => ({ ...current, invoiceFooter: value }))}
                     value={invoiceForm.invoiceFooter}
@@ -3021,6 +3635,152 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                   </div>
                 ) : null}
               </form>
+              <div className="rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-5">
+                <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <h3 className="text-sm font-medium text-[#2C2B29]">Invoice PDF Letterhead</h3>
+                    <p className="mt-1 text-xs text-[#8C8981]">
+                      Upload a PDF letterhead/background. New invoices snapshot the active PDF and draw invoice data inside the configured content area.
+                    </p>
+                  </div>
+                  <MetaPill
+                    label={`${workspace.invoiceConfiguration.pdfTemplates.filter((template) => template.isActive && !template.archivedAt).length} active`}
+                    tone="blue"
+                  />
+                </div>
+                <form className="rounded-xl border border-[#E6E4DD] bg-white p-4" onSubmit={uploadInvoicePdfTemplate}>
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+                    <SettingsInput
+                      label="Template Name"
+                      onChange={(value) => setInvoicePdfForm((current) => ({ ...current, name: value }))}
+                      value={invoicePdfForm.name}
+                    />
+                    <label className="space-y-1 text-sm text-[#5A7C96] md:col-span-2">
+                      <span className="block text-xs uppercase tracking-[0.18em] text-[#8C8981]">PDF Letterhead</span>
+                      <input
+                        accept="application/pdf,.pdf"
+                        className="w-full rounded-lg border border-[#E6E4DD] bg-white px-3 py-2 text-sm text-[#2C2B29]"
+                        onChange={(event) => void handleInvoicePdfFile(event.target.files?.[0] || null)}
+                        type="file"
+                      />
+                      {invoicePdfForm.fileName ? (
+                        <span className="block text-xs text-[#8C8981]">{invoicePdfForm.fileName}</span>
+                      ) : null}
+                    </label>
+                    <SettingsInput
+                      label="Top Margin"
+                      onChange={(value) => setInvoicePdfForm((current) => ({ ...current, contentTopMargin: value }))}
+                      type="number"
+                      value={invoicePdfForm.contentTopMargin}
+                    />
+                    <SettingsInput
+                      label="Left Margin"
+                      onChange={(value) => setInvoicePdfForm((current) => ({ ...current, contentLeftMargin: value }))}
+                      type="number"
+                      value={invoicePdfForm.contentLeftMargin}
+                    />
+                    <SettingsInput
+                      label="Right Margin"
+                      onChange={(value) => setInvoicePdfForm((current) => ({ ...current, contentRightMargin: value }))}
+                      type="number"
+                      value={invoicePdfForm.contentRightMargin}
+                    />
+                    <SettingsInput
+                      label="Bottom Margin"
+                      onChange={(value) => setInvoicePdfForm((current) => ({ ...current, contentBottomMargin: value }))}
+                      type="number"
+                      value={invoicePdfForm.contentBottomMargin}
+                    />
+                    <label className="flex items-center gap-3 rounded-lg border border-[#E6E4DD] bg-white px-3 py-2">
+                      <input
+                        checked={invoicePdfForm.setActive}
+                        className="h-4 w-4 accent-[#C19A5B]"
+                        onChange={(event) =>
+                          setInvoicePdfForm((current) => ({ ...current, setActive: event.target.checked }))
+                        }
+                        type="checkbox"
+                      />
+                      <span className="text-sm text-[#2C2B29]">Set active</span>
+                    </label>
+                  </div>
+                  <button
+                    className="mt-4 inline-flex items-center justify-center gap-2 rounded-lg bg-[#2C2B29] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#4A4946] disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={!onCreateInvoicePdfTemplate || isSavingInvoicePdfTemplate}
+                    type="submit"
+                  >
+                    {isSavingInvoicePdfTemplate ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                    Upload PDF Letterhead
+                  </button>
+                </form>
+                {invoicePdfError ? (
+                  <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {invoicePdfError}
+                  </div>
+                ) : null}
+                {invoicePdfMessage ? (
+                  <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                    {invoicePdfMessage}
+                  </div>
+                ) : null}
+                <div className="mt-5 grid grid-cols-1 gap-3 xl:grid-cols-2">
+                  {workspace.invoiceConfiguration.pdfTemplates.length ? (
+                    workspace.invoiceConfiguration.pdfTemplates.map((template) => (
+                      <div
+                        className={`rounded-xl border p-4 ${
+                          template.archivedAt
+                            ? 'border-[#E6E4DD] bg-[#F4F1EA]'
+                            : 'border-[#E6E4DD] bg-white'
+                        }`}
+                        key={template.id}
+                      >
+                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                          <div className="min-w-0">
+                            <p className="break-words text-sm font-medium text-[#2C2B29]">{template.name}</p>
+                            <p className="mt-1 break-words text-xs text-[#8C8981]">{template.originalFileName}</p>
+                            <p className="mt-2 text-xs uppercase tracking-[0.16em] text-[#8C8981]">
+                              {Math.round(template.fileSizeBytes / 1024)} KB · T{template.contentTopMargin} L{template.contentLeftMargin} R{template.contentRightMargin} B{template.contentBottomMargin}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {template.isActive && !template.archivedAt ? <MetaPill label="Active" tone="green" /> : null}
+                            {template.archivedAt ? <MetaPill label="Archived" tone="neutral" /> : null}
+                          </div>
+                        </div>
+                        {!template.archivedAt ? (
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <button
+                              className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#5A7C96] transition hover:bg-[#F4F1EA] disabled:cursor-not-allowed disabled:opacity-50"
+                              disabled={template.isActive || isSavingInvoicePdfTemplate}
+                              onClick={() =>
+                                void updateInvoicePdfTemplate(
+                                  template.id,
+                                  { isActive: true },
+                                  'Invoice PDF letterhead activated.'
+                                )
+                              }
+                              type="button"
+                            >
+                              Set Active
+                            </button>
+                            <button
+                              className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#8C8981] transition hover:bg-[#F4F1EA] disabled:cursor-not-allowed disabled:opacity-50"
+                              disabled={isSavingInvoicePdfTemplate}
+                              onClick={() => void archiveInvoicePdfTemplate(template.id)}
+                              type="button"
+                            >
+                              Archive
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-[#D8D3C7] bg-white p-5 text-sm text-[#8C8981] xl:col-span-2">
+                      No PDF letterhead has been uploaded yet. New invoices will use the clean fallback PDF layout until one is active.
+                    </div>
+                  )}
+                </div>
+              </div>
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <div>
                   <h3 className="text-sm font-medium text-[#2C2B29] mb-3">Invoice Statuses</h3>
@@ -3062,11 +3822,11 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
           {activeTab === 'notifications' ? (
             <div className="space-y-6">
               <SectionHeader
-                description="Configure in-app notification behavior, provider availability, templates, and event reminder offsets."
+                description="Configure portal notification behavior, delivery availability, templates, and event reminder offsets."
                 icon={Bell}
                 title="Notification Settings"
               />
-              <ReadOnlyNotice text="Provider status is honest: email and SMS cannot be enabled unless the corresponding provider mode is configured outside disabled mode. In-app/local delivery remains available." />
+              <ReadOnlyNotice text="Delivery status is read-only here: email and SMS availability depends on server configuration. Portal notifications remain available." />
               {notificationError ? (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                   {notificationError}
@@ -3078,10 +3838,19 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                 </div>
               ) : null}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <InfoBlock label="In-App" value={workspace.notificationSettings.providerMode.inApp} />
-                <InfoBlock label="Email Provider" value={workspace.notificationSettings.providerMode.email} />
-                <InfoBlock label="SMS Provider" value={workspace.notificationSettings.providerMode.sms} />
-                <InfoBlock label="Push Provider" value={workspace.notificationSettings.providerMode.push} />
+                <InfoBlock label="Portal Delivery" value="Available" />
+                <InfoBlock
+                  label="Email Delivery"
+                  value={workspace.notificationSettings.providerMode.email === 'disabled' ? 'Unavailable' : 'Available'}
+                />
+                <InfoBlock
+                  label="SMS Delivery"
+                  value={workspace.notificationSettings.providerMode.sms === 'disabled' ? 'Unavailable' : 'Available'}
+                />
+                <InfoBlock
+                  label="Push Delivery"
+                  value={workspace.notificationSettings.providerMode.push === 'disabled' ? 'Unavailable' : 'Available'}
+                />
               </div>
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                 <div>
@@ -3111,7 +3880,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                               }
                               type="checkbox"
                             />
-                            <span className="text-sm text-[#2C2B29]">In-app</span>
+                            <span className="text-sm text-[#2C2B29]">Portal</span>
                           </label>
                           <label className="flex items-center gap-3 rounded-lg border border-[#E6E4DD] bg-white px-3 py-2">
                             <input
@@ -3130,7 +3899,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                             />
                             <span className="text-sm text-[#2C2B29]">
                               Email
-                              {workspace.notificationSettings.providerMode.email === 'disabled' ? ' (provider off)' : ''}
+                              {workspace.notificationSettings.providerMode.email === 'disabled' ? ' (unavailable)' : ''}
                             </span>
                           </label>
                           <label className="flex items-center gap-3 rounded-lg border border-[#E6E4DD] bg-white px-3 py-2">
@@ -3150,7 +3919,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                             />
                             <span className="text-sm text-[#2C2B29]">
                               SMS
-                              {workspace.notificationSettings.providerMode.sms === 'disabled' ? ' (provider off)' : ''}
+                              {workspace.notificationSettings.providerMode.sms === 'disabled' ? ' (unavailable)' : ''}
                             </span>
                           </label>
                           <label className="flex items-center gap-3 rounded-lg border border-[#E6E4DD] bg-white px-3 py-2">
@@ -3228,18 +3997,18 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                           }))
                         }
                         options={[
-                          { label: 'In-app / Local', value: 'in_app' },
+                          { label: 'Portal', value: 'in_app' },
                           {
                             label:
                               workspace.notificationSettings.providerMode.email === 'disabled'
-                                ? 'Email (provider off)'
+                                ? 'Email (unavailable)'
                                 : 'Email',
                             value: 'email',
                           },
                           {
                             label:
                               workspace.notificationSettings.providerMode.sms === 'disabled'
-                                ? 'SMS (provider off)'
+                                ? 'SMS (unavailable)'
                                 : 'SMS',
                             value: 'sms',
                           },
@@ -3290,7 +4059,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                               {formatReminderOffset(setting.offsetMinutes)}
                             </p>
                             <p className="text-xs text-[#8C8981] mt-1">
-                              {setting.eventTypeLabel} · {setting.channelCode === 'in_app' ? 'in-app/local' : setting.channelCode}
+                              {setting.eventTypeLabel} · {setting.channelCode === 'in_app' ? 'portal' : setting.channelCode}
                             </p>
                           </div>
                           <MetaPill label={setting.isActive ? 'Active' : 'Inactive'} tone={setting.isActive ? 'green' : 'neutral'} />
@@ -3328,7 +4097,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
           {activeTab === 'roles' ? (
             <div className="space-y-6">
               <SectionHeader
-                description="Manage custom admin roles, permission grants, and staff role assignments with server-side lockout protections."
+                description="Manage custom admin roles, permission grants, and staff role assignments with built-in lockout protections."
                 icon={Shield}
                 title="Roles & Permissions"
               />
@@ -3628,7 +4397,7 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
                 icon={Layers}
                 title="Templates"
               />
-              <ReadOnlyNotice text="Templates are DB-backed and editable. Message templates can be inserted into the admin message composer; invoice templates remain reusable copy until the invoice layout/PDF pipeline consumes them." />
+              <ReadOnlyNotice text="Templates are DB-backed and editable. Message templates can be inserted into the admin message composer; invoice templates are applied to newly created invoice rendering snapshots." />
               <form className="rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-5" onSubmit={submitTemplate}>
                 <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div>
@@ -3979,6 +4748,165 @@ export const SettingsWorkspace: React.FC<SettingsWorkspaceProps> = ({
           ) : null}
         </div>
       </div>
+      {pricingEditorSubject ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#2C2B29]/50 p-4">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-[#E6E4DD] bg-white p-5 shadow-2xl">
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-medium text-[#2C2B29]">Edit prices</h3>
+                <p className="mt-1 text-sm text-[#8C8981]">{pricingEditorSubject.label}</p>
+              </div>
+              <button
+                className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#8C8981] transition hover:bg-[#F4F1EA]"
+                onClick={() => setPricingEditorSubject(null)}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4">
+              <p className="text-sm font-medium text-[#2C2B29]">Default price</p>
+              <p className="mt-1 text-xs text-[#8C8981]">
+                Used for all countries without an exact override. Country defaults may still apply currency/fallback rules.
+              </p>
+              <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
+                <SettingsInput
+                  label="Default Amount"
+                  onChange={setPricingDefaultPrice}
+                  type="number"
+                  value={pricingDefaultPrice}
+                />
+                <button
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#2C2B29] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#4A4946] disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isSavingPricing}
+                  onClick={() => void savePricingDefaultPrice()}
+                  type="button"
+                >
+                  {isSavingPricing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  Save default
+                </button>
+              </div>
+            </div>
+
+            <form className="mt-4 rounded-xl border border-[#E6E4DD] bg-[#FCFBF8] p-4" onSubmit={submitPriceOverride}>
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-[#2C2B29]">
+                    {editingPriceOverrideId ? 'Edit country override' : 'Add country override'}
+                  </p>
+                  <p className="mt-1 text-xs text-[#8C8981]">Exact country prices override the default amount for new requests.</p>
+                </div>
+                {editingPriceOverrideId ? (
+                  <button
+                    className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#5A7C96]"
+                    onClick={() => resetPriceOverrideForm(pricingEditorSubject)}
+                    type="button"
+                  >
+                    New override
+                  </button>
+                ) : null}
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <SettingsInput
+                  label="Country Code"
+                  onChange={(value) =>
+                    setPriceOverrideForm((current) => ({ ...current, countryCode: value.toUpperCase() }))
+                  }
+                  placeholder="IN, US, AU"
+                  value={priceOverrideForm.countryCode}
+                />
+                <SettingsInput
+                  label="Country Name"
+                  onChange={(value) => setPriceOverrideForm((current) => ({ ...current, countryName: value }))}
+                  placeholder="Optional"
+                  value={priceOverrideForm.countryName}
+                />
+                <SettingsInput
+                  label="Currency"
+                  disabled
+                  onChange={() => setPriceOverrideForm((current) => ({ ...current, currencyCode: 'USD' }))}
+                  value="USD"
+                />
+                <SettingsInput
+                  label="Price"
+                  onChange={(value) => setPriceOverrideForm((current) => ({ ...current, priceAmount: value }))}
+                  type="number"
+                  value={priceOverrideForm.priceAmount}
+                />
+                <label className="flex items-center gap-3 rounded-lg border border-[#E6E4DD] bg-white px-3 py-2">
+                  <input
+                    checked={priceOverrideForm.isActive}
+                    className="h-4 w-4 accent-[#C19A5B]"
+                    onChange={(event) =>
+                      setPriceOverrideForm((current) => ({ ...current, isActive: event.target.checked }))
+                    }
+                    type="checkbox"
+                  />
+                  <span className="text-sm text-[#2C2B29]">Active</span>
+                </label>
+              </div>
+              <button
+                className="mt-4 inline-flex items-center justify-center gap-2 rounded-lg bg-[#2C2B29] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#4A4946] disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSavingPricing}
+                type="submit"
+              >
+                {isSavingPricing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {editingPriceOverrideId ? 'Save override' : 'Add override'}
+              </button>
+            </form>
+
+            <div className="mt-4 space-y-2">
+              {getOverridesForSubject(pricingEditorSubject).map((override) => (
+                <div className="rounded-xl border border-[#E6E4DD] bg-white p-3" key={override.id}>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-[#2C2B29]">
+                        {override.countryName} ({override.countryCode})
+                      </p>
+                      <p className="mt-1 text-xs text-[#8C8981]">
+                        {formatPricingAmount(override.priceAmount, override.currencyCode)}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <MetaPill label={override.isActive ? 'Active' : 'Inactive'} tone={override.isActive ? 'green' : 'neutral'} />
+                      <button
+                        className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#5A7C96] transition hover:bg-[#F4F1EA]"
+                        onClick={() => {
+                          setEditingPriceOverrideId(override.id);
+                          setPriceOverrideForm({
+                            countryCode: override.countryCode,
+                            countryName: override.countryName,
+                            currencyCode: override.currencyCode,
+                            isActive: override.isActive,
+                            priceAmount: String(override.priceAmount),
+                          });
+                        }}
+                        type="button"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="rounded-lg border border-[#E6E4DD] bg-white px-3 py-1.5 text-xs text-[#8C8981] transition hover:bg-[#F4F1EA] disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={!override.isActive || isSavingPricing}
+                        onClick={() => void archivePriceOverride(override.id)}
+                        type="button"
+                      >
+                        Archive
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {getOverridesForSubject(pricingEditorSubject).length === 0 ? (
+                <div className="rounded-xl border border-dashed border-[#E6E4DD] bg-[#FCFBF8] p-4 text-sm text-[#8C8981]">
+                  No country overrides configured for this item yet.
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };

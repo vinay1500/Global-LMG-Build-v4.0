@@ -11,6 +11,42 @@ import {
   toUiTime,
 } from '../lib/viewModels.js';
 
+const DEFAULT_LIST_LIMIT = 50;
+const MAX_LIST_LIMIT = 200;
+
+export type PaginationOptions = {
+  limit?: number;
+  offset?: number;
+};
+
+export type PaginationMeta = {
+  hasMore: boolean;
+  limit: number;
+  offset: number;
+  total: number;
+};
+
+export const normalizePagination = (options: PaginationOptions = {}) => {
+  const parsedLimit = Number(options.limit);
+  const parsedOffset = Number(options.offset);
+  const limit = Number.isFinite(parsedLimit)
+    ? Math.max(1, Math.min(Math.trunc(parsedLimit), MAX_LIST_LIMIT))
+    : DEFAULT_LIST_LIMIT;
+  const offset = Number.isFinite(parsedOffset) ? Math.max(0, Math.trunc(parsedOffset)) : 0;
+
+  return { limit, offset };
+};
+
+export const buildPaginationMeta = (
+  pagination: ReturnType<typeof normalizePagination>,
+  total: number
+): PaginationMeta => ({
+  hasMore: pagination.offset + pagination.limit < total,
+  limit: pagination.limit,
+  offset: pagination.offset,
+  total,
+});
+
 type MatterRow = RowDataPacket & {
   assignedCounsel: string | null;
   assignedStaff: string | null;
@@ -36,10 +72,36 @@ type MatterRow = RowDataPacket & {
 
 type ServiceRow = RowDataPacket & { dbId: number; serviceCode: string };
 type UpdateRow = RowDataPacket & { bodyText: string; dbId: number; visibleToClient: number };
+type MatterAssignmentSummaryRow = RowDataPacket & {
+  dbId: number;
+  id: string;
+  name: string;
+  type: 'external_counsel' | 'field_partner' | 'internal_staff';
+  visibleToClient: number;
+};
 
 type InvoiceRow = RowDataPacket & {
+  billingAddressLine1: string | null;
+  billingAddressLine2: string | null;
+  billingCity: string | null;
+  billingCountryCode: string | null;
+  billingEmail: string | null;
+  billingGstin: string | null;
+  billingName: string | null;
+  billingPhone: string | null;
+  billingPostalCode: string | null;
+  billingState: string | null;
+  businessAddress: string | null;
+  businessEmail: string | null;
+  businessGstin: string | null;
+  businessName: string | null;
+  businessPaymentInstructions: string | null;
+  businessPhone: string | null;
+  businessState: string | null;
+  businessWebsite: string | null;
   clientId: string;
   clientName: string;
+  currencyCode: string;
   dbId: number;
   discount: number;
   dueDate: string;
@@ -49,9 +111,15 @@ type InvoiceRow = RowDataPacket & {
   matterRef: string | null;
   matterTitle: string | null;
   paidDate: string | null;
+  renderedBody: string | null;
+  renderedFooter: string | null;
+  renderedSubject: string | null;
+  renderedTerms: string | null;
   status: string;
   subtotal: number;
   tax: number;
+  templateId: string | null;
+  templateVersion: number | null;
   totalAmount: number;
 };
 
@@ -88,12 +156,17 @@ type DocumentRow = RowDataPacket & {
   uploadedAt: string;
   uploadedBy: string;
   visibilityScope: string;
+  virusStatus: string;
 };
 
 type EventRow = RowDataPacket & {
-  calendarSyncStatus: 'disabled' | 'failed' | 'local' | 'synced';
+  calendarSyncError: string | null;
+  calendarSyncStatus: 'cancelled' | 'disabled' | 'failed' | 'local' | 'pending' | 'synced';
+  calendarSyncedAt: string | null;
+  calendarOwnerEmail: string | null;
   clientId: string;
   clientName: string;
+  googleAttendeeStatus: string;
   dateSource: string;
   duration: number;
   id: string;
@@ -101,6 +174,7 @@ type EventRow = RowDataPacket & {
   location: string | null;
   matterId: string | null;
   matterTitle: string | null;
+  meetConferenceId: string | null;
   mode: string;
   notes: string | null;
   reminderCount: number;
@@ -184,6 +258,7 @@ export const fetchMatters = async (filters: {
   clientAccountIds?: string[];
   limit?: number;
   matterIds?: string[];
+  offset?: number;
   search?: string;
 }) => {
   const where: string[] = ['m.archived_at IS NULL'];
@@ -224,8 +299,9 @@ export const fetchMatters = async (filters: {
       m.due_total_amount AS dueAmount,
       m.opened_at AS createdAt,
       m.last_activity_at AS lastUpdated,
-      MAX(CASE WHEN ma.is_primary = 1 AND cp.id IS NOT NULL THEN cp.full_name END) AS assignedCounsel,
-      MAX(CASE WHEN ma.is_primary = 1 AND iu.id IS NOT NULL THEN iu.display_name END) AS assignedStaff,
+      GROUP_CONCAT(DISTINCT CASE WHEN cp.id IS NOT NULL AND COALESCE(cp.partner_type_code, 'external_counsel') = 'external_counsel' THEN cp.full_name END ORDER BY cp.full_name SEPARATOR ', ') AS assignedCounsel,
+      GROUP_CONCAT(DISTINCT CASE WHEN cp.id IS NOT NULL AND COALESCE(cp.partner_type_code, 'external_counsel') = 'field_partner' THEN cp.full_name END ORDER BY cp.full_name SEPARATOR ', ') AS assignedFieldPartners,
+      GROUP_CONCAT(DISTINCT CASE WHEN iu.id IS NOT NULL THEN iu.display_name END ORDER BY iu.display_name SEPARATOR ', ') AS assignedStaff,
       MAX(CASE WHEN e.join_url IS NOT NULL AND e.status_code = 'upcoming' THEN e.join_url END) AS meetingLink
     FROM matters m
     JOIN client_accounts ca ON ca.id = m.client_account_id
@@ -244,8 +320,8 @@ export const fetchMatters = async (filters: {
     ORDER BY m.last_activity_at DESC`;
 
   if (filters.limit) {
-    sql += ' LIMIT ?';
-    params.push(filters.limit);
+    sql += ' LIMIT ? OFFSET ?';
+    params.push(filters.limit, filters.offset ?? 0);
   }
 
   const matterRows = await queryRows<MatterRow>(sql, params);
@@ -269,6 +345,26 @@ export const fetchMatters = async (filters: {
      ORDER BY created_at DESC`,
     dbIds
   );
+  const assignmentRows = await queryRows<MatterAssignmentSummaryRow>(
+    `SELECT
+       ma.matter_id AS dbId,
+       COALESCE(u.public_id, cp.public_id) AS id,
+       COALESCE(u.display_name, cp.full_name) AS name,
+       CASE
+         WHEN u.id IS NOT NULL THEN 'internal_staff'
+         WHEN COALESCE(cp.partner_type_code, 'external_counsel') = 'field_partner' THEN 'field_partner'
+         ELSE 'external_counsel'
+       END AS type,
+       COALESCE(ma.visible_to_client, 1) AS visibleToClient
+     FROM matter_assignments ma
+     LEFT JOIN users u ON u.id = ma.internal_user_id
+     LEFT JOIN counsel_partners cp ON cp.id = ma.counsel_partner_id
+     WHERE ma.matter_id IN (${buildInClause(dbIds)})
+       AND ma.assignment_status_code = 'active'
+       AND ma.removed_at IS NULL
+     ORDER BY ma.assigned_at ASC, ma.id ASC`,
+    dbIds
+  );
 
   const servicesByMatterId = serviceRows.reduce<Record<number, string[]>>((accumulator, row) => {
     accumulator[row.dbId] = accumulator[row.dbId] || [];
@@ -290,10 +386,27 @@ export const fetchMatters = async (filters: {
 
     return accumulator;
   }, {});
+  const assignmentsByMatterId = assignmentRows.reduce<Record<number, MatterAssignmentSummaryRow[]>>(
+    (accumulator, row) => {
+      if (!row.id || !row.name) {
+        return accumulator;
+      }
+      accumulator[row.dbId] = accumulator[row.dbId] || [];
+      accumulator[row.dbId]!.push(row);
+      return accumulator;
+    },
+    {}
+  );
 
   return matterRows.map((row) => ({
     assignedCounsel: row.assignedCounsel || undefined,
     assignedStaff: row.assignedStaff || undefined,
+    assignments: (assignmentsByMatterId[row.dbId] || []).map((assignment) => ({
+      id: assignment.id,
+      name: assignment.name,
+      type: assignment.type,
+      visibleToClient: Boolean(assignment.visibleToClient),
+    })),
     clientId: row.clientId,
     clientName: row.clientName,
     clientVisibleNotes: updatesByMatterId[row.dbId]?.clientVisibleNotes || [],
@@ -319,7 +432,47 @@ export const fetchMatters = async (filters: {
   }));
 };
 
-export const fetchInvoices = async (filters: { clientAccountIds?: string[]; matterIds?: string[] }) => {
+export const countMatters = async (filters: {
+  clientAccountIds?: string[];
+  matterIds?: string[];
+  search?: string;
+}) => {
+  const where: string[] = ['m.archived_at IS NULL'];
+  const params: unknown[] = [];
+
+  if (filters.clientAccountIds?.length) {
+    where.push(`ca.public_id IN (${buildInClause(filters.clientAccountIds)})`);
+    params.push(...filters.clientAccountIds);
+  }
+
+  if (filters.matterIds?.length) {
+    where.push(`m.public_id IN (${buildInClause(filters.matterIds)})`);
+    params.push(...filters.matterIds);
+  }
+
+  if (filters.search) {
+    where.push('(m.title LIKE ? OR m.matter_number LIKE ? OR ca.display_name LIKE ?)');
+    const searchValue = `%${filters.search}%`;
+    params.push(searchValue, searchValue, searchValue);
+  }
+
+  const rows = await queryRows<RowDataPacket & { total: number }>(
+    `SELECT COUNT(DISTINCT m.id) AS total
+     FROM matters m
+     JOIN client_accounts ca ON ca.id = m.client_account_id
+     WHERE ${where.join(' AND ')}`,
+    params
+  );
+
+  return Number(rows[0]?.total || 0);
+};
+
+export const fetchInvoices = async (filters: {
+  clientAccountIds?: string[];
+  limit?: number;
+  matterIds?: string[];
+  offset?: number;
+}) => {
   const where: string[] = ['inv.archived_at IS NULL'];
   const params: unknown[] = [];
 
@@ -343,25 +496,54 @@ export const fetchInvoices = async (filters: { clientAccountIds?: string[]; matt
        m.matter_number AS matterRef,
        m.title AS matterTitle,
        inv.subtotal_amount AS subtotal,
+       inv.currency_code AS currencyCode,
        inv.tax_amount AS tax,
        inv.discount_amount AS discount,
        inv.total_amount AS totalAmount,
        inv.status_code AS status,
        inv.issue_date AS issueDate,
        inv.due_date AS dueDate,
-       MAX(pt.captured_at) AS paidDate
+       inv.template_public_id_snapshot AS templateId,
+       inv.template_version_snapshot AS templateVersion,
+       inv.rendered_subject_snapshot AS renderedSubject,
+       inv.rendered_body_snapshot AS renderedBody,
+       inv.rendered_terms_snapshot AS renderedTerms,
+       inv.rendered_footer_snapshot AS renderedFooter,
+       COALESCE(inv.business_name_snapshot, settings.business_legal_name, settings.billing_display_name) AS businessName,
+       COALESCE(inv.business_address_snapshot, settings.business_address) AS businessAddress,
+       COALESCE(inv.business_phone_snapshot, settings.business_phone) AS businessPhone,
+       COALESCE(inv.business_email_snapshot, settings.business_email) AS businessEmail,
+       COALESCE(inv.business_website_snapshot, settings.business_website) AS businessWebsite,
+       COALESCE(inv.business_gstin_snapshot, settings.gstin) AS businessGstin,
+       COALESCE(inv.business_state_snapshot, settings.business_state) AS businessState,
+       COALESCE(inv.payment_instructions_snapshot, settings.payment_instructions) AS businessPaymentInstructions,
+       bs.billing_name AS billingName,
+       bs.billing_email AS billingEmail,
+       bs.billing_phone AS billingPhone,
+       bs.address_line1 AS billingAddressLine1,
+       bs.address_line2 AS billingAddressLine2,
+       bs.city AS billingCity,
+       bs.state AS billingState,
+       bs.postal_code AS billingPostalCode,
+       bs.country_code AS billingCountryCode,
+       bs.gstin AS billingGstin,
+       (
+         SELECT MAX(pt.captured_at)
+         FROM payment_allocations pa
+         INNER JOIN payment_transactions pt
+           ON pt.id = pa.payment_transaction_id
+          AND pt.status_code = 'captured'
+         WHERE pa.invoice_id = inv.id
+       ) AS paidDate
      FROM invoices inv
      JOIN client_accounts ca ON ca.id = inv.client_account_id
      LEFT JOIN matters m ON m.id = inv.matter_id
-     LEFT JOIN payment_allocations pa ON pa.invoice_id = inv.id
-     LEFT JOIN payment_transactions pt ON pt.id = pa.payment_transaction_id AND pt.status_code = 'captured'
+     LEFT JOIN invoice_billing_snapshots bs ON bs.invoice_id = inv.id
+     CROSS JOIN invoice_settings settings
      WHERE ${where.join(' AND ')}
-     GROUP BY
-       inv.id, inv.public_id, ca.public_id, ca.display_name, m.public_id, m.matter_number, m.title,
-       inv.subtotal_amount, inv.tax_amount, inv.discount_amount, inv.total_amount,
-       inv.status_code, inv.issue_date, inv.due_date
-     ORDER BY inv.issue_date DESC, inv.created_at DESC`,
-    params
+     ORDER BY inv.issue_date DESC, inv.created_at DESC
+     ${filters.limit ? 'LIMIT ? OFFSET ?' : ''}`,
+    filters.limit ? [...params, filters.limit, filters.offset ?? 0] : params
   );
 
   if (invoiceRows.length === 0) {
@@ -414,7 +596,32 @@ export const fetchInvoices = async (filters: { clientAccountIds?: string[]; matt
     amount: row.subtotal,
     clientId: row.clientId,
     clientName: row.clientName,
+    currencyCode: row.currencyCode || 'USD',
     discount: row.discount,
+    business: {
+      address: row.businessAddress,
+      email: row.businessEmail,
+      gstin: row.businessGstin,
+      name: row.businessName,
+      paymentInstructions: row.businessPaymentInstructions,
+      phone: row.businessPhone,
+      state: row.businessState,
+      website: row.businessWebsite,
+    },
+    billingSnapshot: row.billingName
+      ? {
+          addressLine1: row.billingAddressLine1,
+          addressLine2: row.billingAddressLine2,
+          billingEmail: row.billingEmail,
+          billingName: row.billingName,
+          billingPhone: row.billingPhone,
+          city: row.billingCity,
+          countryCode: row.billingCountryCode,
+          gstin: row.billingGstin,
+          postalCode: row.billingPostalCode,
+          state: row.billingState,
+        }
+      : null,
     dueDate: toUiDate(row.dueDate),
     id: row.id,
     internalNote: undefined,
@@ -439,11 +646,50 @@ export const fetchInvoices = async (filters: { clientAccountIds?: string[]; matt
     paidDate: row.paidDate ? toUiDate(row.paidDate) : undefined,
     status: row.status,
     tax: row.tax,
+    template: {
+      body: row.renderedBody,
+      footer: row.renderedFooter,
+      id: row.templateId,
+      subject: row.renderedSubject,
+      terms: row.renderedTerms,
+      version: row.templateVersion,
+    },
     totalAmount: row.totalAmount,
   }));
 };
 
-export const fetchDocuments = async (filters: { clientAccountIds?: string[]; matterIds?: string[] }) => {
+export const countInvoices = async (filters: { clientAccountIds?: string[]; matterIds?: string[] }) => {
+  const where: string[] = ['inv.archived_at IS NULL'];
+  const params: unknown[] = [];
+
+  if (filters.clientAccountIds?.length) {
+    where.push(`ca.public_id IN (${buildInClause(filters.clientAccountIds)})`);
+    params.push(...filters.clientAccountIds);
+  }
+
+  if (filters.matterIds?.length) {
+    where.push(`m.public_id IN (${buildInClause(filters.matterIds)})`);
+    params.push(...filters.matterIds);
+  }
+
+  const rows = await queryRows<RowDataPacket & { total: number }>(
+    `SELECT COUNT(DISTINCT inv.id) AS total
+     FROM invoices inv
+     JOIN client_accounts ca ON ca.id = inv.client_account_id
+     LEFT JOIN matters m ON m.id = inv.matter_id
+     WHERE ${where.join(' AND ')}`,
+    params
+  );
+
+  return Number(rows[0]?.total || 0);
+};
+
+export const fetchDocuments = async (filters: {
+  clientAccountIds?: string[];
+  limit?: number;
+  matterIds?: string[];
+  offset?: number;
+}) => {
   const where: string[] = ['d.archived_at IS NULL'];
   const params: unknown[] = [];
 
@@ -471,6 +717,7 @@ export const fetchDocuments = async (filters: { clientAccountIds?: string[]; mat
        COALESCE(dv.uploaded_at, d.created_at) AS uploadedAt,
        d.visibility_scope_code AS visibilityScope,
        COALESCE(dv.virus_scan_status_code, 'pending') AS reviewStateSource,
+       COALESCE(dv.virus_scan_status_code, 'unscanned') AS virusStatus,
        d.category_code AS docCategory,
        NULL AS note
      FROM documents d
@@ -484,9 +731,10 @@ export const fetchDocuments = async (filters: { clientAccountIds?: string[]; mat
        d.id, d.public_id, COALESCE(dv.original_file_name, d.title), UPPER(COALESCE(dv.file_extension, 'FILE')),
        COALESCE(dv.file_size_bytes, 0), m.public_id, m.title, ca.public_id, ca.display_name,
        uploader.display_name, COALESCE(dv.uploaded_at, d.created_at), d.visibility_scope_code,
-       COALESCE(dv.virus_scan_status_code, 'pending'), d.category_code
-     ORDER BY COALESCE(dv.uploaded_at, d.created_at) DESC`,
-    params
+       COALESCE(dv.virus_scan_status_code, 'pending'), COALESCE(dv.virus_scan_status_code, 'unscanned'), d.category_code
+     ORDER BY COALESCE(dv.uploaded_at, d.created_at) DESC
+     ${filters.limit ? 'LIMIT ? OFFSET ?' : ''}`,
+    filters.limit ? [...params, filters.limit, filters.offset ?? 0] : params
   );
 
   return rows.map((row) => ({
@@ -504,13 +752,43 @@ export const fetchDocuments = async (filters: { clientAccountIds?: string[]; mat
     uploadedAt: toUiDateTime(row.uploadedAt),
     uploadedBy: row.uploadedBy,
     visibility: mapVisibility(row.visibilityScope),
+    virusStatus: row.virusStatus,
   }));
+};
+
+export const countDocuments = async (filters: { clientAccountIds?: string[]; matterIds?: string[] }) => {
+  const where: string[] = ['d.archived_at IS NULL'];
+  const params: unknown[] = [];
+
+  if (filters.clientAccountIds?.length) {
+    where.push(`ca.public_id IN (${buildInClause(filters.clientAccountIds)})`);
+    params.push(...filters.clientAccountIds);
+  }
+
+  if (filters.matterIds?.length) {
+    where.push(`m.public_id IN (${buildInClause(filters.matterIds)})`);
+    params.push(...filters.matterIds);
+  }
+
+  const rows = await queryRows<RowDataPacket & { total: number }>(
+    `SELECT COUNT(DISTINCT d.id) AS total
+     FROM documents d
+     JOIN client_accounts ca ON ca.id = d.owner_client_account_id
+     LEFT JOIN matter_documents md ON md.document_id = d.id
+     LEFT JOIN matters m ON m.id = md.matter_id
+     WHERE ${where.join(' AND ')}`,
+    params
+  );
+
+  return Number(rows[0]?.total || 0);
 };
 
 export const fetchEvents = async (filters: {
   clientAccountIds?: string[];
   includeCancelled?: boolean;
+  limit?: number;
   matterIds?: string[];
+  offset?: number;
 }) => {
   const where: string[] = filters.includeCancelled ? ['1 = 1'] : ['e.cancelled_at IS NULL'];
   const params: unknown[] = [];
@@ -539,10 +817,17 @@ export const fetchEvents = async (filters: {
        e.mode_code AS mode,
        e.location_text AS location,
        e.join_url AS joinUrl,
+       e.calendar_sync_error_text AS calendarSyncError,
+       e.calendar_synced_at AS calendarSyncedAt,
+       e.meet_conference_id AS meetConferenceId,
+       e.calendar_owner_email AS calendarOwnerEmail,
+       COALESCE(e.google_attendee_status_code, 'not_applicable') AS googleAttendeeStatus,
        e.client_visible_flag AS visibleToClient,
        e.notes,
        e.status_code AS status,
        CASE
+         WHEN e.calendar_sync_status_code IN ('cancelled', 'pending', 'synced', 'failed', 'local', 'disabled')
+           THEN e.calendar_sync_status_code
          WHEN e.external_meeting_id IS NOT NULL THEN 'synced'
          WHEN e.meeting_provider_code = 'google-calendar-failed' THEN 'failed'
          WHEN e.meeting_provider_code IN ('manual', 'none') THEN 'local'
@@ -568,22 +853,28 @@ export const fetchEvents = async (filters: {
      JOIN client_accounts ca ON ca.id = e.client_account_id
      LEFT JOIN matters m ON m.id = e.matter_id
      WHERE ${where.join(' AND ')}
-     ORDER BY e.scheduled_start_at ASC`,
-    params
+     ORDER BY e.scheduled_start_at ASC
+     ${filters.limit ? 'LIMIT ? OFFSET ?' : ''}`,
+    filters.limit ? [...params, filters.limit, filters.offset ?? 0] : params
   );
 
   return rows.map((row) => ({
     actionCTA: row.joinUrl ? 'Join Call' : 'View Details',
+    calendarSyncError: row.calendarSyncError || undefined,
     calendarSyncStatus: row.calendarSyncStatus,
+    calendarSyncedAt: row.calendarSyncedAt || undefined,
+    calendarOwnerEmail: row.calendarOwnerEmail || undefined,
     clientId: row.clientId,
     clientName: row.clientName,
     date: toUiDate(row.dateSource),
     duration: row.duration,
+    googleAttendeeStatus: row.googleAttendeeStatus,
     id: row.id,
     joinUrl: row.joinUrl || undefined,
     location: row.location || undefined,
     matterId: row.matterId || '',
     matterTitle: row.matterTitle || '',
+    meetConferenceId: row.meetConferenceId || undefined,
     meetLink: row.joinUrl || undefined,
     mode: row.mode,
     notes: row.notes || '',
@@ -597,9 +888,41 @@ export const fetchEvents = async (filters: {
   }));
 };
 
+export const countEvents = async (filters: {
+  clientAccountIds?: string[];
+  includeCancelled?: boolean;
+  matterIds?: string[];
+}) => {
+  const where: string[] = filters.includeCancelled ? ['1 = 1'] : ['e.cancelled_at IS NULL'];
+  const params: unknown[] = [];
+
+  if (filters.clientAccountIds?.length) {
+    where.push(`ca.public_id IN (${buildInClause(filters.clientAccountIds)})`);
+    params.push(...filters.clientAccountIds);
+  }
+
+  if (filters.matterIds?.length) {
+    where.push(`m.public_id IN (${buildInClause(filters.matterIds)})`);
+    params.push(...filters.matterIds);
+  }
+
+  const rows = await queryRows<RowDataPacket & { total: number }>(
+    `SELECT COUNT(DISTINCT e.id) AS total
+     FROM events e
+     JOIN client_accounts ca ON ca.id = e.client_account_id
+     LEFT JOIN matters m ON m.id = e.matter_id
+     WHERE ${where.join(' AND ')}`,
+    params
+  );
+
+  return Number(rows[0]?.total || 0);
+};
+
 export const fetchThreads = async (filters: {
   clientAccountIds?: string[];
+  limit?: number;
   matterIds?: string[];
+  offset?: number;
   viewerUserId?: number;
 }) => {
   const where: string[] = ['ct.archived_at IS NULL'];
@@ -666,8 +989,11 @@ export const fetchThreads = async (filters: {
        LIMIT 1
      )
      WHERE ${where.join(' AND ')}
-     ORDER BY COALESCE(lm.sent_at, ct.updated_at) DESC`,
-    [...unreadSelectParams, ...params]
+     ORDER BY COALESCE(lm.sent_at, ct.updated_at) DESC
+     ${filters.limit ? 'LIMIT ? OFFSET ?' : ''}`,
+    filters.limit
+      ? [...unreadSelectParams, ...params, filters.limit, filters.offset ?? 0]
+      : [...unreadSelectParams, ...params]
   );
 
   return rows.map((row) => ({
@@ -685,6 +1011,32 @@ export const fetchThreads = async (filters: {
     unreadCount: Number(row.unreadCount || 0),
     urgency: row.urgency || 'standard',
   }));
+};
+
+export const countThreads = async (filters: { clientAccountIds?: string[]; matterIds?: string[] }) => {
+  const where: string[] = ['ct.archived_at IS NULL'];
+  const params: unknown[] = [];
+
+  if (filters.clientAccountIds?.length) {
+    where.push(`ca.public_id IN (${buildInClause(filters.clientAccountIds)})`);
+    params.push(...filters.clientAccountIds);
+  }
+
+  if (filters.matterIds?.length) {
+    where.push(`m.public_id IN (${buildInClause(filters.matterIds)})`);
+    params.push(...filters.matterIds);
+  }
+
+  const rows = await queryRows<RowDataPacket & { total: number }>(
+    `SELECT COUNT(DISTINCT ct.id) AS total
+     FROM conversation_threads ct
+     JOIN client_accounts ca ON ca.id = ct.client_account_id
+     LEFT JOIN matters m ON m.id = ct.matter_id
+     WHERE ${where.join(' AND ')}`,
+    params
+  );
+
+  return Number(rows[0]?.total || 0);
 };
 
 export const fetchMessagesByThreadIds = async (threadIds: string[]) => {
@@ -971,6 +1323,28 @@ export const fetchClientsForList = async (options: { limit: number; offset: numb
     region: row.region || '',
     totalDue: row.totalDue,
   }));
+};
+
+export const countClientsForList = async (options: { search?: string } = {}) => {
+  const params: unknown[] = [];
+  const searchClause = options.search
+    ? `AND (ca.display_name LIKE ? OR ca.primary_email LIKE ? OR ca.primary_phone LIKE ?)`
+    : '';
+
+  if (options.search) {
+    const searchValue = `%${options.search}%`;
+    params.push(searchValue, searchValue, searchValue);
+  }
+
+  const rows = await queryRows<RowDataPacket & { total: number }>(
+    `SELECT COUNT(*) AS total
+     FROM client_accounts ca
+     WHERE ca.archived_at IS NULL
+       ${searchClause}`,
+    params
+  );
+
+  return Number(rows[0]?.total || 0);
 };
 
 export const fetchClientsByIds = async (clientPublicIds: string[]) => {

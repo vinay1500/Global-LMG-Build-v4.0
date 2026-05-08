@@ -13,7 +13,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { StatusBadge, UrgencyDot } from '../components/dashboard/StatusBadge';
-import { formatCurrency, formatDate, formatDateTime } from '../data/seedData';
+import { formatCurrency, formatDate, formatDateTime } from '../data/formatters';
 import type {
   AdminRequestDecisionResponse,
   AdminRequestRecord,

@@ -3,14 +3,15 @@ import { motion } from 'motion/react';
 import { Calendar, Tag, Search, ArrowRight } from 'lucide-react';
 import { ImageWithFallback } from '../components/shared/ImageWithFallback';
 import { Seo } from '../components/seo/Seo';
-import { BRAND_NAME, PRESS_EMAIL, CONTACT_PHONE } from '../config/brand';
+import { PRESS_EMAIL, CONTACT_PHONE } from '../config/brand';
 import {
   NEWSROOM_ITEMS,
+  NEWSROOM_PAGE_CONTENT,
   NEWSROOM_TYPE_COLORS,
   NEWSROOM_TYPES,
   type NewsroomFilterType,
   type NewsroomItemType,
-} from '../data/newsroom';
+} from '../content/site/newsroom';
 import { buildWebPageJsonLd } from '../seo/jsonLd';
 
 
@@ -36,18 +37,18 @@ export const Newsroom = () => {
   return (
     <div className="pt-32 pb-24 bg-white">
       <Seo
-        title="Newsroom"
-        description={`Stay up to date with announcements, awards, events, and media updates from ${BRAND_NAME}.`}
+        title={NEWSROOM_PAGE_CONTENT.title}
+        description={NEWSROOM_PAGE_CONTENT.description}
         path="/newsroom"
         image={NEWSROOM_ITEMS[0]?.image}
         breadcrumbs={[
           { name: 'Home', path: '/' },
-          { name: 'Newsroom', path: '/newsroom' },
+          { name: NEWSROOM_PAGE_CONTENT.title, path: '/newsroom' },
         ]}
-        keywords={['newsroom', 'press releases', 'firm news', BRAND_NAME]}
+        keywords={['newsroom', 'press releases', 'platform news', 'Global LMG']}
         structuredData={buildWebPageJsonLd({
-          title: 'Newsroom',
-          description: `Stay up to date with announcements, awards, events, and media updates from ${BRAND_NAME}.`,
+          title: NEWSROOM_PAGE_CONTENT.title,
+          description: NEWSROOM_PAGE_CONTENT.description,
           path: '/newsroom',
           type: 'CollectionPage',
         })}
@@ -60,16 +61,16 @@ export const Newsroom = () => {
           className="mb-16"
         >
           <span className="text-[10px] font-bold uppercase tracking-[0.3em] text-blue-600 mb-6 block">
-            LATEST UPDATES
+            {NEWSROOM_PAGE_CONTENT.heroEyebrow}
           </span>
           <h1
             className="text-6xl md:text-8xl mb-8"
             style={{ fontFamily: "'Playfair Display', serif" }}
           >
-            Newsroom
+            {NEWSROOM_PAGE_CONTENT.title}
           </h1>
           <p className="text-xl text-gray-500 font-light leading-relaxed max-w-3xl">
-            Stay up to date with the latest news, announcements, and achievements from {BRAND_NAME}.
+            {NEWSROOM_PAGE_CONTENT.intro}
           </p>
         </motion.div>
 
@@ -79,7 +80,7 @@ export const Newsroom = () => {
             <Search size={20} className="absolute left-6 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
               type="text"
-              placeholder="Search news..."
+              placeholder={NEWSROOM_PAGE_CONTENT.searchPlaceholder}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-14 pr-6 py-5 rounded-full border border-gray-200 focus:border-blue-600 focus:outline-none transition-colors"
@@ -109,7 +110,7 @@ export const Newsroom = () => {
               className="text-2xl font-bold mb-8"
               style={{ fontFamily: "'Playfair Display', serif" }}
             >
-              Featured
+              {NEWSROOM_PAGE_CONTENT.featuredTitle}
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
               {featuredNews.map((item, i) => (
@@ -153,7 +154,7 @@ export const Newsroom = () => {
                       {item.excerpt}
                     </p>
                     <button className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-blue-600 hover:text-blue-800 transition-colors pt-2">
-                      Read More
+                      {NEWSROOM_PAGE_CONTENT.readMoreLabel}
                       <ArrowRight size={14} />
                     </button>
                   </div>
@@ -170,7 +171,7 @@ export const Newsroom = () => {
               className="text-2xl font-bold mb-8"
               style={{ fontFamily: "'Playfair Display', serif" }}
             >
-              All News
+              {NEWSROOM_PAGE_CONTENT.allNewsTitle}
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
               {regularNews.map((item, i) => (
@@ -219,7 +220,7 @@ export const Newsroom = () => {
         {filteredNews.length === 0 && (
           <div className="text-center py-24">
             <p className="text-xl text-gray-400 font-light">
-              No news items found matching your criteria.
+              {NEWSROOM_PAGE_CONTENT.emptyMessage}
             </p>
           </div>
         )}
@@ -231,10 +232,10 @@ export const Newsroom = () => {
               className="text-3xl md:text-4xl mb-6"
               style={{ fontFamily: "'Playfair Display', serif" }}
             >
-              Media Inquiries
+              {NEWSROOM_PAGE_CONTENT.mediaContactTitle}
             </h2>
             <p className="text-lg text-gray-600 font-light mb-8">
-              For press inquiries and media relations, please contact our communications team.
+              {NEWSROOM_PAGE_CONTENT.mediaContactBody}
             </p>
             <div className="space-y-2 text-gray-600">
               <p className="font-semibold">{PRESS_EMAIL}</p>

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { ArrowRight, ChevronRight, Download } from 'lucide-react';
+import { HOME_DETAILED_EXPERTISE_CONTENT } from '../content/site/home';
 import { EXPERTISE_CATALOG } from '../data/expertiseCatalog';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router';
@@ -43,19 +44,21 @@ export const DetailedExpertise = () => {
             <div className="sticky top-32">
               <div className="mb-12">
                 <span className="text-[10px] font-bold uppercase tracking-[0.3em] text-blue-600 mb-4 block">
-                  PRACTICE AREAS
+                  {HOME_DETAILED_EXPERTISE_CONTENT.eyebrow}
                 </span>
                 <h2
                   className="text-5xl md:text-6xl mb-6 leading-tight"
                   style={{ fontFamily: "'Playfair Display', serif" }}
                 >
-                  World-class
-                  <br />
-                  Legal Expertise
+                  {HOME_DETAILED_EXPERTISE_CONTENT.titleLines.map((line, index) => (
+                    <React.Fragment key={line}>
+                      {line}
+                      {index < HOME_DETAILED_EXPERTISE_CONTENT.titleLines.length - 1 ? <br /> : null}
+                    </React.Fragment>
+                  ))}
                 </h2>
                 <p className="text-gray-500 font-light leading-relaxed max-w-sm">
-                  Strategic advice across every major industry, navigating the complexities of
-                  modern global markets.
+                  {HOME_DETAILED_EXPERTISE_CONTENT.summary}
                 </p>
               </div>
 
@@ -89,7 +92,7 @@ export const DetailedExpertise = () => {
 
               <div className="mt-12 p-8 border border-gray-100 rounded-3xl bg-gray-50/50">
                 <p className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4">
-                  Practice Resources
+                  {HOME_DETAILED_EXPERTISE_CONTENT.resourceHeading}
                 </p>
                 <button
                   type="button"
@@ -100,7 +103,9 @@ export const DetailedExpertise = () => {
                   className="flex items-center gap-3 text-sm font-bold hover:text-blue-600 transition-colors group disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   <Download size={18} className="text-gray-400 group-hover:text-blue-600" />
-                  {isGeneratingBrochure ? 'PREPARING BROCHURE...' : 'DOWNLOAD FIRM BROCHURE'}
+                  {isGeneratingBrochure
+                    ? HOME_DETAILED_EXPERTISE_CONTENT.brochureLoadingLabel
+                    : HOME_DETAILED_EXPERTISE_CONTENT.brochureIdleLabel}
                 </button>
               </div>
             </div>
@@ -197,7 +202,7 @@ export const DetailedExpertise = () => {
                     referrerPolicy="no-referrer"
                     className="inline-flex items-center gap-3 px-10 py-5 bg-black text-white text-xs font-bold uppercase tracking-[0.2em] hover:bg-gray-800 transition-colors"
                   >
-                    CONSULT A SPECIALIST
+                    {HOME_DETAILED_EXPERTISE_CONTENT.ctaLabel}
                     <ArrowRight size={16} />
                   </a>
                 </div>

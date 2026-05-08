@@ -3,7 +3,16 @@ import { createPublicId } from '../../lib/authCrypto.js';
 import { allocateBusinessNumber } from '../../lib/businessSequences.js';
 import { badRequest, notFound } from '../../lib/httpErrors.js';
 import { executeStatement, queryRows, withTransaction } from '../../lib/mysql.js';
-import { fetchDocuments, fetchEvents, fetchInvoices, fetchMatters, fetchThreads } from '../shared.js';
+import {
+  buildPaginationMeta,
+  countMatters,
+  fetchDocuments,
+  fetchEvents,
+  fetchInvoices,
+  fetchMatters,
+  fetchThreads,
+  normalizePagination,
+} from '../shared.js';
 import type { AdminActor } from '../auth/service.js';
 import {
   createAuditEvent,
@@ -15,24 +24,54 @@ import {
   touchMatterActivity,
 } from '../writeSupport.js';
 
-export const listMatters = async (options: { limit: number; search?: string }) => {
-  return {
-    createOptions: await getMatterCreateOptions(),
-    matters: await fetchMatters({
-      limit: options.limit,
+export const listMatters = async (options: { limit: number; offset?: number; search?: string }) => {
+  const pagination = normalizePagination(options);
+  const [createOptions, matters, total] = await Promise.all([
+    getMatterCreateOptions(),
+    fetchMatters({
+      limit: pagination.limit,
+      offset: pagination.offset,
       search: options.search,
     }),
+    countMatters({
+      search: options.search,
+    }),
+  ]);
+
+  return {
+    createOptions,
+    matters,
+    pagination: buildPaginationMeta(pagination, total),
   };
 };
 
-type InternalUserRow = RowDataPacket & { id: string; name: string };
-type CounselRow = RowDataPacket & { id: string; name: string; type: string };
+type InternalUserRow = RowDataPacket & {
+  city: string | null;
+  country: string;
+  email: string | null;
+  id: string;
+  name: string;
+  phone: string | null;
+  specialization: string | null;
+  state: string | null;
+};
+type CounselRow = RowDataPacket & {
+  city: string | null;
+  country: string | null;
+  email: string | null;
+  id: string;
+  name: string;
+  phone: string | null;
+  specialization: string | null;
+  state: string | null;
+  type: 'external_counsel' | 'field_partner';
+};
 type ClientOptionRow = RowDataPacket & { email: string; id: string; name: string };
 type DomainOptionRow = RowDataPacket & { code: string; name: string };
 type ServiceOptionRow = RowDataPacket & {
   code: string;
-  domainCode: string;
-  domainName: string;
+  domainCode: string | null;
+  domainName: string | null;
   name: string;
 };
 type StageOptionRow = RowDataPacket & { code: string; label: string };
@@ -45,7 +84,7 @@ type MatterClientMetaRow = RowDataPacket & {
   clientName: string;
 };
 type LegalDomainRow = RowDataPacket & { id: number; name: string };
-type ServiceIdRow = RowDataPacket & { domainCode: string; id: number; serviceCode: string };
+type ServiceIdRow = RowDataPacket & { domainCode: string | null; id: number; serviceCode: string };
 type UrgencyRuleRow = RowDataPacket & { id: number };
 type MatterUpdateRow = RowDataPacket & {
   clientAccountId: number;
@@ -155,10 +194,9 @@ const getMatterCreateOptions = async () => {
            ld.domain_code AS domainCode,
            ld.domain_name AS domainName
          FROM services s
-         INNER JOIN legal_domains ld ON ld.id = s.legal_domain_id
+         LEFT JOIN legal_domains ld ON ld.id = s.legal_domain_id
          WHERE s.is_active = 1
-           AND ld.is_active = 1
-         ORDER BY ld.sort_order ASC, s.sort_order ASC, s.service_name ASC`
+         ORDER BY s.sort_order ASC, s.service_name ASC`
       ),
       queryRows<StageOptionRow>(
         `SELECT code, label
@@ -207,7 +245,15 @@ const getMatterCreateOptions = async () => {
 const getAssignmentOptions = async () => {
   const [staffRows, counselRows] = await Promise.all([
     queryRows<InternalUserRow>(
-      `SELECT u.public_id AS id, u.display_name AS name
+      `SELECT
+         u.public_id AS id,
+         u.display_name AS name,
+         CASE WHEN u.email LIKE '%@staff.local.globallmg' THEN NULL ELSE u.email END AS email,
+         u.phone,
+         sp.job_title AS specialization,
+         sp.city,
+         sp.state,
+         'IN' AS country
        FROM users u
        INNER JOIN staff_profiles sp ON sp.user_id = u.id
        WHERE u.archived_at IS NULL
@@ -219,6 +265,12 @@ const getAssignmentOptions = async () => {
       `SELECT
          public_id AS id,
          full_name AS name,
+         email,
+         phone,
+         COALESCE(specialization_text, primary_jurisdiction) AS specialization,
+         city,
+         state,
+         country_code AS country,
          COALESCE(partner_type_code, 'external_counsel') AS type
        FROM counsel_partners
        WHERE archived_at IS NULL
@@ -243,6 +295,7 @@ export const getMatterWorkspace = async (matterId: string) => {
 
   return {
     assignmentOptions: await getAssignmentOptions(),
+    createOptions: await getMatterCreateOptions(),
     documents: await fetchDocuments({ matterIds: [matterId] }),
     events: await fetchEvents({ matterIds: [matterId] }),
     invoices: await fetchInvoices({ matterIds: [matterId] }),
@@ -308,14 +361,13 @@ export const createMatter = async (
     const serviceRows = selectedServiceCodes.length
       ? await queryRows<ServiceIdRow>(
           `SELECT
-             s.id,
-             s.service_code AS serviceCode,
-             ld.domain_code AS domainCode
+           s.id,
+           s.service_code AS serviceCode,
+           ld.domain_code AS domainCode
            FROM services s
-           INNER JOIN legal_domains ld ON ld.id = s.legal_domain_id
+           LEFT JOIN legal_domains ld ON ld.id = s.legal_domain_id
            WHERE s.service_code IN (${buildInClause(selectedServiceCodes)})
-             AND s.is_active = 1
-             AND ld.is_active = 1`,
+             AND s.is_active = 1`,
           selectedServiceCodes,
           connection
         )
@@ -325,8 +377,7 @@ export const createMatter = async (
       throw badRequest('invalid_service_codes', 'One or more selected services are invalid.');
     }
 
-    const serviceDomainCode = serviceRows[0]?.domainCode;
-    const legalDomainCode = payload.legalDomainCode || serviceDomainCode;
+    const legalDomainCode = payload.legalDomainCode || serviceRows[0]?.domainCode || undefined;
     const legalDomain = legalDomainCode
       ? firstRow(
           await queryRows<LegalDomainRow>(
@@ -353,13 +404,6 @@ export const createMatter = async (
 
     if (!legalDomain) {
       throw badRequest('invalid_legal_domain', 'Select a configured legal domain for this matter.');
-    }
-
-    if (serviceRows.some((service) => service.domainCode !== legalDomainCode)) {
-      throw badRequest(
-        'service_domain_mismatch',
-        'Selected services must belong to the selected matter domain.'
-      );
     }
 
     const stageCode = payload.stageCode || DEFAULT_MATTER_STAGE;
@@ -961,6 +1005,170 @@ export const createMatterAssignment = async (
     return { status: 'created' as const };
   });
 };
+
+export const replaceMatterAssignments = async (
+  actor: AdminActor,
+  matterId: string,
+  payload: {
+    externalCounsel?: Array<{ id: string; visibleToClient?: boolean }>;
+    fieldPartners?: Array<{ id: string; visibleToClient?: boolean }>;
+    staff?: Array<{ id: string; visibleToClient?: boolean }>;
+  }
+) =>
+  withTransaction(async (connection) => {
+    const matter = await resolveMatterByPublicId(matterId, connection);
+    const meta = firstRow(
+      await queryRows<MatterUpdateRow>(
+        `SELECT operational_status_code AS operationalStatusCode
+         FROM matters
+         WHERE id = ?
+         LIMIT 1`,
+        [matter.id],
+        connection
+      )
+    );
+
+    if (!meta) {
+      throw notFound('matter_not_found', 'Matter not found.');
+    }
+
+    assertMatterCanMutate(meta);
+
+    const staff = payload.staff || [];
+    const externalCounsel = payload.externalCounsel || [];
+    const fieldPartners = payload.fieldPartners || [];
+    const uniqueKeys = new Set<string>();
+
+    const ensureUnique = (key: string) => {
+      if (uniqueKeys.has(key)) {
+        throw badRequest('duplicate_assignment', 'Each person can only be assigned once per matter.');
+      }
+      uniqueKeys.add(key);
+    };
+
+    const staffRows = [] as Array<{ id: number; publicId: string; visibleToClient: boolean }>;
+    for (const entry of staff) {
+      ensureUnique(`staff:${entry.id}`);
+      const internalUser = await resolveInternalUserByPublicId(entry.id, connection);
+      const activeStaff = firstRow(
+        await queryRows<RowDataPacket & { id: number }>(
+          `SELECT sp.user_id AS id
+           FROM staff_profiles sp
+           INNER JOIN users u ON u.id = sp.user_id
+           WHERE sp.user_id = ?
+             AND sp.employment_status_code = 'active'
+             AND u.archived_at IS NULL
+           LIMIT 1`,
+          [internalUser.id],
+          connection
+        )
+      );
+
+      if (!activeStaff) {
+        throw badRequest('invalid_assignment_staff', 'Select active internal coordination staff entries.');
+      }
+
+      staffRows.push({ id: internalUser.id, publicId: entry.id, visibleToClient: entry.visibleToClient ?? true });
+    }
+
+    const counselRows = [] as Array<{
+      id: number;
+      publicId: string;
+      roleCode: 'external_counsel' | 'field_partner';
+      visibleToClient: boolean;
+    }>;
+
+    for (const [roleCode, entries] of [
+      ['external_counsel', externalCounsel],
+      ['field_partner', fieldPartners],
+    ] as const) {
+      for (const entry of entries) {
+        ensureUnique(`${roleCode}:${entry.id}`);
+        const counsel = await resolveCounselByPublicId(entry.id, connection);
+        const activeCounsel = firstRow(
+          await queryRows<RowDataPacket & { id: number; partnerType: string }>(
+            `SELECT id, COALESCE(partner_type_code, 'external_counsel') AS partnerType
+             FROM counsel_partners
+             WHERE id = ?
+               AND archived_at IS NULL
+               AND partner_status_code = 'active'
+             LIMIT 1`,
+            [counsel.id],
+            connection
+          )
+        );
+
+        if (!activeCounsel || activeCounsel.partnerType !== roleCode) {
+          throw badRequest(
+            'invalid_assignment_counsel',
+            roleCode === 'field_partner'
+              ? 'Select active field partner entries.'
+              : 'Select active external counsel entries.'
+          );
+        }
+
+        counselRows.push({ id: counsel.id, publicId: entry.id, roleCode, visibleToClient: entry.visibleToClient ?? true });
+      }
+    }
+
+    await executeStatement(
+      `UPDATE matter_assignments
+       SET removed_at = UTC_TIMESTAMP(6),
+           assignment_status_code = 'inactive'
+       WHERE matter_id = ?
+         AND removed_at IS NULL
+         AND assignment_status_code = 'active'`,
+      [matter.id],
+      connection
+    );
+
+    for (const entry of staffRows) {
+      await executeStatement(
+        `INSERT INTO matter_assignments (
+           matter_id, assignment_role_code, internal_user_id, counsel_partner_id, is_primary,
+           visible_to_client, assigned_by_user_id, assigned_at, removed_at, assignment_status_code, notes
+         ) VALUES (?, 'internal_staff', ?, NULL, 0, ?, ?, UTC_TIMESTAMP(6), NULL, 'active', NULL)`,
+        [matter.id, entry.id, entry.visibleToClient ? 1 : 0, actor.userId],
+        connection
+      );
+    }
+
+    for (const entry of counselRows) {
+      await executeStatement(
+        `INSERT INTO matter_assignments (
+           matter_id, assignment_role_code, internal_user_id, counsel_partner_id, is_primary,
+           visible_to_client, assigned_by_user_id, assigned_at, removed_at, assignment_status_code, notes
+         ) VALUES (?, ?, NULL, ?, 0, ?, ?, UTC_TIMESTAMP(6), NULL, 'active', NULL)`,
+        [matter.id, entry.roleCode, entry.id, entry.visibleToClient ? 1 : 0, actor.userId],
+        connection
+      );
+    }
+
+    await touchMatterActivity(matter.id, connection);
+
+    await createAuditEvent(
+      {
+        actionCode: 'matter.assignment_updated',
+        actionLabel: 'Matter assignment set replaced',
+        actorRoleCode: actor.roleCodes[0] || 'case_manager',
+        actorUserId: actor.userId,
+        changes: [
+          { fieldName: 'internal_staff', newValue: staffRows.map((entry) => entry.publicId) },
+          { fieldName: 'external_counsel', newValue: counselRows.filter((entry) => entry.roleCode === 'external_counsel').map((entry) => entry.publicId) },
+          { fieldName: 'field_partners', newValue: counselRows.filter((entry) => entry.roleCode === 'field_partner').map((entry) => entry.publicId) },
+        ],
+        entityPk: matter.id,
+        entityTableName: 'matters',
+        sourceModule: 'matter_detail',
+        summaryNewValue: `${staffRows.length} staff, ${
+          counselRows.filter((entry) => entry.roleCode === 'external_counsel').length
+        } counsel, ${counselRows.filter((entry) => entry.roleCode === 'field_partner').length} field partners`,
+      },
+      connection
+    );
+
+    return { status: 'updated' as const };
+  });
 
 export const updateMatterDetails = async (
   actor: AdminActor,

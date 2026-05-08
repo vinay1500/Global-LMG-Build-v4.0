@@ -10,6 +10,17 @@ export interface SignInPayload {
 }
 
 export interface SignUpPayload {
+  address: {
+    city: string;
+    country: string;
+    line1: string;
+    line2?: string;
+    postalCode: string;
+    sourceCode?: 'google' | 'ip_prefill' | 'manual';
+    state: string;
+    googlePlaceId?: string | null;
+    validationStatusCode?: 'manual' | 'unverified' | 'verified';
+  };
   fullName: string;
   email: string;
   phone: string;

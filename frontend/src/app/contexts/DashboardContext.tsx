@@ -17,6 +17,7 @@ type DashboardState = DashboardSnapshotResponse;
 
 const EMPTY_CLIENT: PlatformUser = {
   avatar: '',
+  countryCode: '',
   email: '',
   id: '',
   joinedAt: '',
@@ -35,7 +36,6 @@ const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferencesResponse = {
   invoiceReminders: true,
   productAnnouncements: false,
   smsAlerts: true,
-  whatsappAlerts: false,
 };
 
 const createEmptyDashboardState = (currentClient: PlatformUser): DashboardState => ({
@@ -65,6 +65,7 @@ const normalizeClient = (client: PlatformUser | null | undefined, fallback: Plat
   ...fallback,
   ...(client || {}),
   avatar: textOr(client?.avatar, fallback.avatar),
+  countryCode: textOr(client?.countryCode, fallback.countryCode),
   email: textOr(client?.email, fallback.email),
   id: textOr(client?.id, fallback.id),
   joinedAt: textOr(client?.joinedAt, fallback.joinedAt),

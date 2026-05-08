@@ -17,8 +17,8 @@ type ServiceRow = RowDataPacket & {
   code: string;
   dbId: number;
   description: string | null;
-  domainCode: string;
-  domainName: string;
+  domainCode: string | null;
+  domainName: string | null;
   icon: string | null;
   id: string;
   isActive: number;
@@ -46,6 +46,29 @@ type CountryPricingRow = RowDataPacket & {
   multiplier: number;
 };
 
+type PriceOverrideSubjectType = 'consultation_mode' | 'service' | 'urgency';
+
+type PriceOverrideRow = RowDataPacket & {
+  countryCode: string;
+  countryName: string;
+  currencyCode: string;
+  id: string;
+  isActive: number;
+  priceAmount: number;
+  subjectCode: string;
+  subjectType: PriceOverrideSubjectType;
+};
+
+type ExchangeRateRow = RowDataPacket & {
+  baseCurrency: string;
+  fetchedAt: string;
+  id: string;
+  provider: string;
+  quoteCurrency: string;
+  rate: number;
+  rateDate: string;
+};
+
 type PricingSlabRow = RowDataPacket & {
   baseAmount: number;
   effectiveFrom: string;
@@ -58,21 +81,37 @@ type PricingSlabRow = RowDataPacket & {
 };
 
 type UrgencyRuleRow = RowDataPacket & {
+  allowInPerson: number;
+  allowPhone: number;
+  allowVideo: number;
   code: string;
   id: number;
   isActive: number;
   label: string;
+  maxResponseHours: number | null;
+  minResponseHours: number | null;
   responseWindowHours: number | null;
   sortOrder: number;
   surchargeType: string;
   surchargeValue: number;
+  timingLabel: string | null;
+};
+
+const REFERENCE_CACHE_TTL_MS = 5 * 60_000;
+type CacheEntry<T> = { expiresAt: number; value: T };
+let serviceCatalogCache: CacheEntry<unknown> | null = null;
+let pricingRulesCache: CacheEntry<unknown> | null = null;
+
+const clearCatalogPricingCache = () => {
+  serviceCatalogCache = null;
+  pricingRulesCache = null;
 };
 
 export type CreateServiceInput = {
   baseFee?: number;
   code?: string;
   description?: string | null;
-  domainCode: string;
+  domainCode?: string | null;
   icon?: string | null;
   isActive?: boolean;
   name: string;
@@ -92,13 +131,19 @@ export type PricingSlabInput = {
 };
 
 export type UrgencyRuleInput = {
+  allowInPerson?: boolean;
+  allowPhone?: boolean;
+  allowVideo?: boolean;
   code?: string;
   isActive?: boolean;
   label: string;
+  maxResponseHours?: number | null;
+  minResponseHours?: number | null;
   responseWindowHours?: number | null;
   sortOrder?: number;
   surchargeType: 'flat' | 'percent';
   surchargeValue: number;
+  timingLabel?: string | null;
 };
 
 export type UpdateUrgencyRuleInput = Partial<Omit<UrgencyRuleInput, 'code'>>;
@@ -125,6 +170,26 @@ export type CountryPricingInput = {
 };
 
 export type UpdateCountryPricingInput = Partial<Omit<CountryPricingInput, 'countryCode'>>;
+
+export type PriceOverrideInput = {
+  countryCode: string;
+  countryName?: string;
+  currencyCode: string;
+  isActive?: boolean;
+  priceAmount: number;
+  subjectCode: string;
+  subjectType: PriceOverrideSubjectType;
+};
+
+export type UpdatePriceOverrideInput = Partial<Omit<PriceOverrideInput, 'subjectCode' | 'subjectType'>>;
+
+export type ExchangeRateInput = {
+  baseCurrency: string;
+  provider?: string;
+  quoteCurrency: string;
+  rate: number;
+  rateDate: string;
+};
 
 const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const CODE_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -164,7 +229,7 @@ const assertPositiveInteger = (value: number, fieldName: string) => {
 const normalizeServicePayload = (payload: CreateServiceInput) => {
   const name = payload.name.trim();
   const code = (payload.code?.trim() || toSlug(name)).toLowerCase();
-  const domainCode = payload.domainCode.trim();
+  const domainCode = payload.domainCode?.trim() || null;
 
   if (name.length < 2 || name.length > 180) {
     throw badRequest('invalid_service_name', 'Service name must be between 2 and 180 characters.');
@@ -187,15 +252,17 @@ const normalizeServicePayload = (payload: CreateServiceInput) => {
   };
 };
 
+const ACTIVE_PRICING_CURRENCY_CODE = 'USD';
 const normalizeCurrency = (value: string) => value.trim().toUpperCase();
+const normalizePricingCurrency = () => ACTIVE_PRICING_CURRENCY_CODE;
 const normalizeCountryCode = (value: string) => value.trim().toUpperCase().slice(0, 8);
 
 const mapService = (row: ServiceRow) => ({
   baseFee: Number(row.baseFee || 0),
   code: row.code,
   description: row.description || '',
-  domainCode: row.domainCode,
-  domainName: row.domainName,
+  domainCode: row.domainCode || '',
+  domainName: row.domainName || 'Unclassified',
   icon: row.icon || 'Briefcase',
   id: row.id,
   isActive: Boolean(row.isActive),
@@ -215,14 +282,25 @@ const mapSlab = (row: PricingSlabRow) => ({
 });
 
 const mapUrgency = (row: UrgencyRuleRow) => ({
+  allowInPerson: Boolean(row.allowInPerson),
+  allowPhone: Boolean(row.allowPhone),
+  allowVideo: Boolean(row.allowVideo),
+  allowedConsultationModes: [
+    row.allowPhone ? 'phone' : null,
+    row.allowVideo ? 'video' : null,
+    row.allowInPerson ? 'in-person' : null,
+  ].filter(Boolean),
   code: row.code,
   id: String(row.id),
   isActive: Boolean(row.isActive),
   label: row.label,
+  maxResponseHours: row.maxResponseHours === null ? null : Number(row.maxResponseHours),
+  minResponseHours: row.minResponseHours === null ? null : Number(row.minResponseHours),
   responseWindowHours: row.responseWindowHours === null ? null : Number(row.responseWindowHours),
   sortOrder: Number(row.sortOrder || 0),
   surchargeType: row.surchargeType,
   surchargeValue: Number(row.surchargeValue || 0),
+  timingLabel: row.timingLabel || '',
 });
 
 const mapConsultationMode = (row: ConsultationModeRow) => ({
@@ -245,6 +323,27 @@ const mapCountryPricing = (row: CountryPricingRow) => ({
   multiplier: Number(row.multiplier || 0),
 });
 
+const mapPriceOverride = (row: PriceOverrideRow) => ({
+  countryCode: row.countryCode,
+  countryName: row.countryName,
+  currencyCode: row.currencyCode,
+  id: row.id,
+  isActive: Boolean(row.isActive),
+  priceAmount: Number(row.priceAmount || 0),
+  subjectCode: row.subjectCode,
+  subjectType: row.subjectType,
+});
+
+const mapExchangeRate = (row: ExchangeRateRow) => ({
+  baseCurrency: row.baseCurrency,
+  fetchedAt: row.fetchedAt,
+  id: row.id,
+  provider: row.provider,
+  quoteCurrency: row.quoteCurrency,
+  rate: Number(row.rate || 0),
+  rateDate: row.rateDate,
+});
+
 const getServiceByPublicId = async (serviceId: string, executor?: QueryExecutor) => {
   const row = firstRow(
     await queryRows<ServiceRow>(
@@ -261,7 +360,7 @@ const getServiceByPublicId = async (serviceId: string, executor?: QueryExecutor)
          ld.domain_code AS domainCode,
          ld.domain_name AS domainName
        FROM services s
-       INNER JOIN legal_domains ld ON ld.id = s.legal_domain_id
+       LEFT JOIN legal_domains ld ON ld.id = s.legal_domain_id
        WHERE s.public_id = ?
        LIMIT 1`,
       [serviceId],
@@ -319,6 +418,12 @@ const getUrgencyById = async (ruleId: string) => {
          id,
          urgency_code AS code,
          label,
+         timing_label AS timingLabel,
+         min_response_hours AS minResponseHours,
+         max_response_hours AS maxResponseHours,
+         allow_phone AS allowPhone,
+         allow_video AS allowVideo,
+         allow_in_person AS allowInPerson,
          response_window_hours AS responseWindowHours,
          surcharge_type_code AS surchargeType,
          surcharge_value AS surchargeValue,
@@ -338,7 +443,7 @@ const getUrgencyById = async (ruleId: string) => {
   return row;
 };
 
-export const getServiceCatalog = async () => {
+const loadServiceCatalog = async () => {
   const [domainRows, serviceRows] = await Promise.all([
     queryRows<DomainRow>(
       `SELECT domain_code AS code, domain_name AS name, sort_order AS sortOrder, is_active AS isActive
@@ -359,8 +464,8 @@ export const getServiceCatalog = async () => {
          ld.domain_code AS domainCode,
          ld.domain_name AS domainName
        FROM services s
-       INNER JOIN legal_domains ld ON ld.id = s.legal_domain_id
-       ORDER BY ld.sort_order ASC, s.sort_order ASC, s.service_name ASC`
+       LEFT JOIN legal_domains ld ON ld.id = s.legal_domain_id
+       ORDER BY s.sort_order ASC, s.service_name ASC`
     ),
   ]);
 
@@ -375,26 +480,29 @@ export const getServiceCatalog = async () => {
   };
 };
 
-export const getPricingRules = async () => {
-  const [slabRows, urgencyRows, consultationRows, countryRows] = await Promise.all([
-    queryRows<PricingSlabRow>(
-      `SELECT
-         id,
-         effective_from AS effectiveFrom,
-         effective_to AS effectiveTo,
-         min_service_count AS minServiceCount,
-         max_service_count AS maxServiceCount,
-         base_amount AS baseAmount,
-         per_extra_service_amount AS perExtraServiceAmount,
-         is_active AS isActive
-       FROM pricing_service_slabs
-       ORDER BY effective_from DESC, min_service_count ASC, id DESC`
-    ),
+export const getServiceCatalog = async () => {
+  if (serviceCatalogCache && serviceCatalogCache.expiresAt > Date.now()) {
+    return serviceCatalogCache.value as Awaited<ReturnType<typeof loadServiceCatalog>>;
+  }
+
+  const value = await loadServiceCatalog();
+  serviceCatalogCache = { expiresAt: Date.now() + REFERENCE_CACHE_TTL_MS, value };
+  return value;
+};
+
+const loadPricingRules = async () => {
+  const [urgencyRows, consultationRows, countryRows, priceOverrideRows, exchangeRateRows] = await Promise.all([
     queryRows<UrgencyRuleRow>(
       `SELECT
          id,
          urgency_code AS code,
          label,
+         timing_label AS timingLabel,
+         min_response_hours AS minResponseHours,
+         max_response_hours AS maxResponseHours,
+         allow_phone AS allowPhone,
+         allow_video AS allowVideo,
+         allow_in_person AS allowInPerson,
          response_window_hours AS responseWindowHours,
          surcharge_type_code AS surchargeType,
          surcharge_value AS surchargeValue,
@@ -431,20 +539,56 @@ export const getPricingRules = async () => {
        WHERE archived_at IS NULL
        ORDER BY is_default DESC, country_name ASC`
     ),
+    queryRows<PriceOverrideRow>(
+      `SELECT
+         public_id AS id,
+         subject_type_code AS subjectType,
+         subject_code AS subjectCode,
+         country_code AS countryCode,
+         country_name AS countryName,
+         currency_code AS currencyCode,
+         price_amount AS priceAmount,
+         is_active AS isActive
+       FROM pricing_country_price_overrides
+       WHERE archived_at IS NULL
+       ORDER BY subject_type_code ASC, subject_code ASC, country_name ASC`
+    ),
+    queryRows<ExchangeRateRow>(
+      `SELECT
+         CAST(id AS CHAR) AS id,
+         base_currency AS baseCurrency,
+         quote_currency AS quoteCurrency,
+         rate,
+         DATE_FORMAT(rate_date, '%Y-%m-%d') AS rateDate,
+         provider,
+         DATE_FORMAT(fetched_at, '%Y-%m-%dT%H:%i:%sZ') AS fetchedAt
+       FROM exchange_rates
+       ORDER BY rate_date DESC, base_currency ASC, quote_currency ASC, provider ASC
+       LIMIT 200`
+    ),
   ]);
 
   return {
     consultationModes: consultationRows.map(mapConsultationMode),
     countryPricing: countryRows.map(mapCountryPricing),
-    serviceSlabs: slabRows.map(mapSlab),
+    exchangeRates: exchangeRateRows.map(mapExchangeRate),
+    priceOverrides: priceOverrideRows.map(mapPriceOverride),
     urgencyRules: urgencyRows.map(mapUrgency),
   };
 };
 
-export const createService = async (actor: AdminActor, payload: CreateServiceInput) => {
-  const next = normalizeServicePayload(payload);
+export const getPricingRules = async () => {
+  if (pricingRulesCache && pricingRulesCache.expiresAt > Date.now()) {
+    return pricingRulesCache.value as Awaited<ReturnType<typeof loadPricingRules>>;
+  }
 
-  return withTransaction(async (connection) => {
+  const value = await loadPricingRules();
+  pricingRulesCache = { expiresAt: Date.now() + REFERENCE_CACHE_TTL_MS, value };
+  return value;
+};
+
+const resolveServiceDomain = async (domainCode: string | null, executor?: QueryExecutor) => {
+  if (domainCode) {
     const domain = firstRow(
       await queryRows<RowDataPacket & { id: number }>(
         `SELECT id
@@ -452,23 +596,55 @@ export const createService = async (actor: AdminActor, payload: CreateServiceInp
          WHERE domain_code = ?
            AND is_active = 1
          LIMIT 1`,
-        [next.domainCode],
-        connection
+        [domainCode],
+        executor
       )
     );
 
     if (!domain) {
-      throw badRequest('invalid_domain', 'Select an active service domain.');
+      throw badRequest('invalid_domain', 'Select an active legal domain or leave the service unclassified.');
     }
+
+    return domain;
+  }
+
+  const fallback = firstRow(
+    await queryRows<RowDataPacket & { id: number }>(
+      `SELECT id
+       FROM legal_domains
+       WHERE is_active = 1
+       ORDER BY
+         CASE WHEN domain_code IN ('general', 'other') THEN 0 ELSE 1 END,
+         sort_order ASC,
+         domain_name ASC
+       LIMIT 1`,
+      [],
+      executor
+    )
+  );
+
+  if (!fallback) {
+    throw badRequest('service_domain_unavailable', 'Configure at least one legal domain before creating services.');
+  }
+
+  return fallback;
+};
+
+export const createService = async (actor: AdminActor, payload: CreateServiceInput) => {
+  clearCatalogPricingCache();
+  const next = normalizeServicePayload(payload);
+
+  return withTransaction(async (connection) => {
+    const domain = await resolveServiceDomain(next.domainCode, connection);
 
     const duplicate = firstRow(
       await queryRows<RowDataPacket & { id: number }>(
         `SELECT id
          FROM services
          WHERE service_code = ?
-            OR (legal_domain_id = ? AND LOWER(service_name) = LOWER(?))
+            OR LOWER(service_name) = LOWER(?)
          LIMIT 1`,
-        [next.code, domain.id, next.name],
+        [next.code, next.name],
         connection
       )
     );
@@ -516,7 +692,7 @@ export const createService = async (actor: AdminActor, payload: CreateServiceInp
           { fieldName: 'service_code', newValue: next.code },
           { fieldName: 'service_name', newValue: next.name },
           { fieldName: 'base_fee_amount', newValue: next.baseFee },
-          { fieldName: 'domain_code', newValue: next.domainCode },
+          { fieldName: 'domain_code', newValue: next.domainCode || 'internal-default' },
         ],
         entityPk: result.insertId,
         entityTableName: 'services',
@@ -546,11 +722,12 @@ export const updateService = async (
   serviceId: string,
   payload: UpdateServiceInput
 ) => {
+  clearCatalogPricingCache();
   const existing = await getServiceByPublicId(serviceId);
   const next = {
     description:
       payload.description === undefined ? existing.description : payload.description?.trim() || null,
-    domainCode: payload.domainCode?.trim() || existing.domainCode,
+    domainCode: payload.domainCode === undefined ? existing.domainCode || null : payload.domainCode?.trim() || null,
     baseFee: payload.baseFee ?? Number(existing.baseFee || 0),
     icon: payload.icon === undefined ? existing.icon : payload.icon?.trim() || null,
     isActive: payload.isActive ?? Boolean(existing.isActive),
@@ -564,33 +741,22 @@ export const updateService = async (
   assertNonNegativeAmount(next.baseFee, 'baseFee');
 
   return withTransaction(async (connection) => {
-    const domain = firstRow(
-      await queryRows<RowDataPacket & { id: number }>(
-        `SELECT id FROM legal_domains WHERE domain_code = ? AND is_active = 1 LIMIT 1`,
-        [next.domainCode],
-        connection
-      )
-    );
-
-    if (!domain) {
-      throw badRequest('invalid_domain', 'Select an active service domain.');
-    }
+    const domain = await resolveServiceDomain(next.domainCode, connection);
 
     const duplicate = firstRow(
       await queryRows<RowDataPacket & { id: number }>(
         `SELECT id
          FROM services
          WHERE id <> ?
-           AND legal_domain_id = ?
            AND LOWER(service_name) = LOWER(?)
          LIMIT 1`,
-        [existing.dbId, domain.id, next.name],
+        [existing.dbId, next.name],
         connection
       )
     );
 
     if (duplicate) {
-      throw new AppError(409, 'service_duplicate', 'A service with this name already exists in the selected domain.');
+      throw new AppError(409, 'service_duplicate', 'A service with this name already exists.');
     }
 
     await executeStatement(
@@ -641,6 +807,7 @@ export const updateService = async (
 };
 
 export const archiveService = async (actor: AdminActor, serviceId: string) => {
+  clearCatalogPricingCache();
   const existing = await getServiceByPublicId(serviceId);
 
   if (!existing.isActive) {
@@ -699,6 +866,7 @@ const normalizeSlabInput = (payload: PricingSlabInput) => {
 };
 
 export const createPricingSlab = async (actor: AdminActor, payload: PricingSlabInput) => {
+  clearCatalogPricingCache();
   const next = normalizeSlabInput(payload);
   const result = await executeStatement<ResultSetHeader>(
     `INSERT INTO pricing_service_slabs (
@@ -742,6 +910,7 @@ export const updatePricingSlab = async (
   slabId: string,
   payload: Partial<PricingSlabInput>
 ) => {
+  clearCatalogPricingCache();
   const existing = await getSlabById(slabId);
   const next = normalizeSlabInput({
     baseAmount: payload.baseAmount ?? Number(existing.baseAmount || 0),
@@ -795,6 +964,7 @@ export const updatePricingSlab = async (
 };
 
 export const archivePricingSlab = async (actor: AdminActor, slabId: string) => {
+  clearCatalogPricingCache();
   const existing = await getSlabById(slabId);
   await executeStatement(
     `UPDATE pricing_service_slabs SET is_active = 0, updated_at = UTC_TIMESTAMP(6) WHERE id = ?`,
@@ -818,6 +988,8 @@ export const archivePricingSlab = async (actor: AdminActor, slabId: string) => {
 const normalizeUrgencyInput = (payload: UrgencyRuleInput) => {
   const label = payload.label.trim();
   const code = (payload.code?.trim() || toSlug(label)).toLowerCase();
+  const minResponseHours = payload.minResponseHours ?? null;
+  const maxResponseHours = payload.maxResponseHours ?? payload.responseWindowHours ?? null;
   if (!label) {
     throw badRequest('invalid_urgency_label', 'Urgency label is required.');
   }
@@ -835,19 +1007,47 @@ const normalizeUrgencyInput = (payload: UrgencyRuleInput) => {
   ) {
     throw badRequest('invalid_response_window', 'Response window hours must be a positive whole number.');
   }
+  if (
+    minResponseHours !== null &&
+    (!Number.isInteger(minResponseHours) || minResponseHours < 0)
+  ) {
+    throw badRequest('invalid_min_response_window', 'Minimum timing hours must be a non-negative whole number.');
+  }
+  if (
+    maxResponseHours !== null &&
+    (!Number.isInteger(maxResponseHours) || maxResponseHours <= 0)
+  ) {
+    throw badRequest('invalid_max_response_window', 'Maximum timing hours must be a positive whole number.');
+  }
+  if (minResponseHours !== null && maxResponseHours !== null && maxResponseHours < minResponseHours) {
+    throw badRequest('invalid_response_window_range', 'Maximum timing hours must be at least the minimum timing hours.');
+  }
+  const allowPhone = payload.allowPhone ?? true;
+  const allowVideo = payload.allowVideo ?? true;
+  const allowInPerson = payload.allowInPerson ?? code === 'standard';
+  if (!allowPhone && !allowVideo && !allowInPerson) {
+    throw badRequest('invalid_urgency_modes', 'Urgency option must be allowed for at least one consultation mode.');
+  }
 
   return {
+    allowInPerson,
+    allowPhone,
+    allowVideo,
     code,
     isActive: payload.isActive ?? true,
     label,
-    responseWindowHours: payload.responseWindowHours ?? null,
+    maxResponseHours,
+    minResponseHours,
+    responseWindowHours: maxResponseHours,
     sortOrder: payload.sortOrder ?? 0,
     surchargeType: payload.surchargeType,
     surchargeValue: payload.surchargeValue,
+    timingLabel: payload.timingLabel?.trim() || null,
   };
 };
 
 export const createUrgencyRule = async (actor: AdminActor, payload: UrgencyRuleInput) => {
+  clearCatalogPricingCache();
   const next = normalizeUrgencyInput(payload);
   const duplicate = firstRow(
     await queryRows<RowDataPacket & { id: number }>(
@@ -863,6 +1063,12 @@ export const createUrgencyRule = async (actor: AdminActor, payload: UrgencyRuleI
     `INSERT INTO pricing_urgency_rules (
        urgency_code,
        label,
+       timing_label,
+       min_response_hours,
+       max_response_hours,
+       allow_phone,
+       allow_video,
+       allow_in_person,
        response_window_hours,
        surcharge_type_code,
        surcharge_value,
@@ -870,10 +1076,16 @@ export const createUrgencyRule = async (actor: AdminActor, payload: UrgencyRuleI
        is_active,
        created_at,
        updated_at
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))`,
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))`,
     [
       next.code,
       next.label,
+      next.timingLabel,
+      next.minResponseHours,
+      next.maxResponseHours,
+      next.allowPhone ? 1 : 0,
+      next.allowVideo ? 1 : 0,
+      next.allowInPerson ? 1 : 0,
       next.responseWindowHours,
       next.surchargeType,
       next.surchargeValue,
@@ -901,21 +1113,36 @@ export const updateUrgencyRule = async (
   ruleId: string,
   payload: UpdateUrgencyRuleInput
 ) => {
+  clearCatalogPricingCache();
   const existing = await getUrgencyById(ruleId);
   const next = normalizeUrgencyInput({
     code: existing.code,
+    allowInPerson: payload.allowInPerson ?? Boolean(existing.allowInPerson),
+    allowPhone: payload.allowPhone ?? Boolean(existing.allowPhone),
+    allowVideo: payload.allowVideo ?? Boolean(existing.allowVideo),
     isActive: payload.isActive ?? Boolean(existing.isActive),
     label: payload.label || existing.label,
+    maxResponseHours:
+      payload.maxResponseHours === undefined ? existing.maxResponseHours : payload.maxResponseHours,
+    minResponseHours:
+      payload.minResponseHours === undefined ? existing.minResponseHours : payload.minResponseHours,
     responseWindowHours:
       payload.responseWindowHours === undefined ? existing.responseWindowHours : payload.responseWindowHours,
     sortOrder: payload.sortOrder ?? Number(existing.sortOrder || 0),
     surchargeType: payload.surchargeType || (existing.surchargeType as 'flat' | 'percent'),
     surchargeValue: payload.surchargeValue ?? Number(existing.surchargeValue || 0),
+    timingLabel: payload.timingLabel === undefined ? existing.timingLabel : payload.timingLabel,
   });
 
   await executeStatement(
     `UPDATE pricing_urgency_rules
      SET label = ?,
+         timing_label = ?,
+         min_response_hours = ?,
+         max_response_hours = ?,
+         allow_phone = ?,
+         allow_video = ?,
+         allow_in_person = ?,
          response_window_hours = ?,
          surcharge_type_code = ?,
          surcharge_value = ?,
@@ -925,6 +1152,12 @@ export const updateUrgencyRule = async (
      WHERE id = ?`,
     [
       next.label,
+      next.timingLabel,
+      next.minResponseHours,
+      next.maxResponseHours,
+      next.allowPhone ? 1 : 0,
+      next.allowVideo ? 1 : 0,
+      next.allowInPerson ? 1 : 0,
       next.responseWindowHours,
       next.surchargeType,
       next.surchargeValue,
@@ -950,6 +1183,7 @@ export const updateUrgencyRule = async (
 };
 
 export const archiveUrgencyRule = async (actor: AdminActor, ruleId: string) => {
+  clearCatalogPricingCache();
   const existing = await getUrgencyById(ruleId);
   await executeStatement(
     `UPDATE pricing_urgency_rules SET is_active = 0, updated_at = UTC_TIMESTAMP(6) WHERE id = ?`,
@@ -1022,6 +1256,7 @@ const normalizeConsultationModeInput = (payload: ConsultationModeInput) => {
 };
 
 export const createConsultationMode = async (actor: AdminActor, payload: ConsultationModeInput) => {
+  clearCatalogPricingCache();
   const next = normalizeConsultationModeInput(payload);
   const duplicate = firstRow(
     await queryRows<RowDataPacket & { code: string }>(
@@ -1082,6 +1317,7 @@ export const updateConsultationMode = async (
   modeCode: string,
   payload: UpdateConsultationModeInput
 ) => {
+  clearCatalogPricingCache();
   const existing = await getConsultationModeByCode(modeCode);
   const next = normalizeConsultationModeInput({
     code: existing.code,
@@ -1146,6 +1382,7 @@ export const updateConsultationMode = async (
 };
 
 export const archiveConsultationMode = async (actor: AdminActor, modeCode: string) => {
+  clearCatalogPricingCache();
   const existing = await getConsultationModeByCode(modeCode);
   await executeStatement('UPDATE consultation_modes SET is_active = 0 WHERE code = ?', [existing.code]);
   await executeStatement(
@@ -1198,15 +1435,12 @@ const getCountryPricingByPublicId = async (countryPricingId: string, executor?: 
 const normalizeCountryPricingInput = (payload: CountryPricingInput) => {
   const countryName = payload.countryName.trim();
   const countryCode = normalizeCountryCode(payload.countryCode || countryName);
-  const currencyCode = normalizeCurrency(payload.currencyCode);
+  const currencyCode = normalizePricingCurrency();
   if (!countryName) {
     throw badRequest('invalid_country_name', 'Country name is required.');
   }
   if (!countryCode) {
     throw badRequest('invalid_country_code', 'Country code is required.');
-  }
-  if (!/^[A-Z]{3}$/.test(currencyCode)) {
-    throw badRequest('invalid_currency', 'Currency code must be a three-letter ISO code.');
   }
   assertNonNegativeAmount(payload.multiplier, 'multiplier');
 
@@ -1221,6 +1455,7 @@ const normalizeCountryPricingInput = (payload: CountryPricingInput) => {
 };
 
 export const createCountryPricing = async (actor: AdminActor, payload: CountryPricingInput) => {
+  clearCatalogPricingCache();
   const next = normalizeCountryPricingInput(payload);
   const duplicate = firstRow(
     await queryRows<RowDataPacket & { id: number }>(
@@ -1282,6 +1517,7 @@ export const updateCountryPricing = async (
   countryPricingId: string,
   payload: UpdateCountryPricingInput
 ) => {
+  clearCatalogPricingCache();
   const existing = await getCountryPricingByPublicId(countryPricingId);
   const next = normalizeCountryPricingInput({
     countryCode: existing.countryCode,
@@ -1335,6 +1571,7 @@ export const updateCountryPricing = async (
 };
 
 export const archiveCountryPricing = async (actor: AdminActor, countryPricingId: string) => {
+  clearCatalogPricingCache();
   const existing = await getCountryPricingByPublicId(countryPricingId);
   if (existing.isDefault) {
     throw badRequest('default_country_pricing_protected', 'The default country pricing rule cannot be archived.');
@@ -1359,4 +1596,344 @@ export const archiveCountryPricing = async (actor: AdminActor, countryPricingId:
   });
 
   return { id: countryPricingId, status: 'archived' as const };
+};
+
+const normalizePriceOverrideInput = (payload: PriceOverrideInput) => {
+  const subjectType = payload.subjectType;
+  const subjectCode = payload.subjectCode.trim().toLowerCase();
+  const countryCode = normalizeCountryCode(payload.countryCode);
+  const countryName = payload.countryName?.trim() || countryCode;
+  const currencyCode = normalizePricingCurrency();
+
+  if (!['consultation_mode', 'service', 'urgency'].includes(subjectType)) {
+    throw badRequest('invalid_price_subject', 'Price override subject must be service, consultation mode, or urgency.');
+  }
+  if (!subjectCode) {
+    throw badRequest('invalid_price_subject_code', 'Price override subject code is required.');
+  }
+  if (!countryCode) {
+    throw badRequest('invalid_country_code', 'Country code is required.');
+  }
+  assertNonNegativeAmount(payload.priceAmount, 'priceAmount');
+
+  return {
+    countryCode,
+    countryName,
+    currencyCode,
+    isActive: payload.isActive ?? true,
+    priceAmount: payload.priceAmount,
+    subjectCode,
+    subjectType,
+  };
+};
+
+const assertPricingSubjectExists = async (
+  subjectType: PriceOverrideSubjectType,
+  subjectCode: string,
+  executor?: QueryExecutor
+) => {
+  const queries = {
+    consultation_mode: {
+      sql: 'SELECT code AS subjectCode FROM consultation_modes WHERE code = ? LIMIT 1',
+      params: [subjectCode],
+    },
+    service: {
+      sql: 'SELECT service_code AS subjectCode FROM services WHERE service_code = ? LIMIT 1',
+      params: [subjectCode],
+    },
+    urgency: {
+      sql: 'SELECT urgency_code AS subjectCode FROM pricing_urgency_rules WHERE urgency_code = ? LIMIT 1',
+      params: [subjectCode],
+    },
+  } satisfies Record<PriceOverrideSubjectType, { params: string[]; sql: string }>;
+
+  const query = queries[subjectType];
+  const row = firstRow(await queryRows<RowDataPacket & { subjectCode: string }>(query.sql, query.params, executor));
+  if (!row) {
+    throw badRequest('invalid_price_subject', 'Select a valid pricing subject for this country override.');
+  }
+};
+
+const getPriceOverrideByPublicId = async (overrideId: string, executor?: QueryExecutor) => {
+  const row = firstRow(
+    await queryRows<PriceOverrideRow>(
+      `SELECT
+         public_id AS id,
+         subject_type_code AS subjectType,
+         subject_code AS subjectCode,
+         country_code AS countryCode,
+         country_name AS countryName,
+         currency_code AS currencyCode,
+         price_amount AS priceAmount,
+         is_active AS isActive
+       FROM pricing_country_price_overrides
+       WHERE public_id = ?
+         AND archived_at IS NULL
+       LIMIT 1`,
+      [overrideId],
+      executor
+    )
+  );
+
+  if (!row) {
+    throw notFound('price_override_not_found', 'Country price override not found.');
+  }
+
+  return row;
+};
+
+export const createPriceOverride = async (actor: AdminActor, payload: PriceOverrideInput) => {
+  clearCatalogPricingCache();
+  const next = normalizePriceOverrideInput(payload);
+
+  return withTransaction(async (connection) => {
+    await assertPricingSubjectExists(next.subjectType, next.subjectCode, connection);
+    const duplicate = firstRow(
+      await queryRows<RowDataPacket & { id: number }>(
+        `SELECT id
+         FROM pricing_country_price_overrides
+         WHERE subject_type_code = ?
+           AND subject_code = ?
+           AND country_code = ?
+           AND archived_at IS NULL
+         LIMIT 1`,
+        [next.subjectType, next.subjectCode, next.countryCode],
+        connection
+      )
+    );
+
+    if (duplicate) {
+      throw new AppError(409, 'price_override_duplicate', 'This country override already exists for the selected item.');
+    }
+
+    const result = await executeStatement<ResultSetHeader>(
+      `INSERT INTO pricing_country_price_overrides (
+         public_id, subject_type_code, subject_code, country_code, country_name,
+         currency_code, price_amount, is_active, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))`,
+      [
+        createPublicId(),
+        next.subjectType,
+        next.subjectCode,
+        next.countryCode,
+        next.countryName,
+        next.currencyCode,
+        next.priceAmount,
+        next.isActive ? 1 : 0,
+      ],
+      connection
+    );
+
+    await createAuditEvent(
+      {
+        actionCode: 'pricing_country_override.created',
+        actionLabel: 'Country price override created',
+        actorRoleCode: actor.roleCodes[0] || 'ops_admin',
+        actorUserId: actor.userId,
+        entityPk: result.insertId,
+        entityTableName: 'pricing_country_price_overrides',
+        sourceModule: 'settings_workspace',
+        summaryNewValue: next,
+      },
+      connection
+    );
+
+    const created = firstRow(
+      await queryRows<RowDataPacket & { id: string }>(
+        'SELECT public_id AS id FROM pricing_country_price_overrides WHERE id = ? LIMIT 1',
+        [result.insertId],
+        connection
+      )
+    );
+    return mapPriceOverride(await getPriceOverrideByPublicId(created!.id, connection));
+  });
+};
+
+export const updatePriceOverride = async (
+  actor: AdminActor,
+  overrideId: string,
+  payload: UpdatePriceOverrideInput
+) => {
+  clearCatalogPricingCache();
+  const existing = await getPriceOverrideByPublicId(overrideId);
+  const next = normalizePriceOverrideInput({
+    countryCode: payload.countryCode || existing.countryCode,
+    countryName: payload.countryName === undefined ? existing.countryName : payload.countryName,
+    currencyCode: payload.currencyCode || existing.currencyCode,
+    isActive: payload.isActive ?? Boolean(existing.isActive),
+    priceAmount: payload.priceAmount ?? Number(existing.priceAmount || 0),
+    subjectCode: existing.subjectCode,
+    subjectType: existing.subjectType,
+  });
+
+  return withTransaction(async (connection) => {
+    const duplicate = firstRow(
+      await queryRows<RowDataPacket & { id: string }>(
+        `SELECT public_id AS id
+         FROM pricing_country_price_overrides
+         WHERE public_id <> ?
+           AND subject_type_code = ?
+           AND subject_code = ?
+           AND country_code = ?
+           AND archived_at IS NULL
+         LIMIT 1`,
+        [overrideId, next.subjectType, next.subjectCode, next.countryCode],
+        connection
+      )
+    );
+
+    if (duplicate) {
+      throw new AppError(409, 'price_override_duplicate', 'This country override already exists for the selected item.');
+    }
+
+    await executeStatement(
+      `UPDATE pricing_country_price_overrides
+       SET country_code = ?,
+           country_name = ?,
+           currency_code = ?,
+           price_amount = ?,
+           is_active = ?,
+           updated_at = UTC_TIMESTAMP(6)
+       WHERE public_id = ?`,
+      [
+        next.countryCode,
+        next.countryName,
+        next.currencyCode,
+        next.priceAmount,
+        next.isActive ? 1 : 0,
+        overrideId,
+      ],
+      connection
+    );
+
+    await createAuditEvent(
+      {
+        actionCode: 'pricing_country_override.updated',
+        actionLabel: 'Country price override updated',
+        actorRoleCode: actor.roleCodes[0] || 'ops_admin',
+        actorUserId: actor.userId,
+        entityPk: null,
+        entityTableName: 'pricing_country_price_overrides',
+        sourceModule: 'settings_workspace',
+        summaryOldValue: mapPriceOverride(existing),
+        summaryNewValue: next,
+      },
+      connection
+    );
+
+    return mapPriceOverride(await getPriceOverrideByPublicId(overrideId, connection));
+  });
+};
+
+export const archivePriceOverride = async (actor: AdminActor, overrideId: string) => {
+  clearCatalogPricingCache();
+  const existing = await getPriceOverrideByPublicId(overrideId);
+  await executeStatement(
+    `UPDATE pricing_country_price_overrides
+     SET is_active = 0,
+         archived_at = UTC_TIMESTAMP(6),
+         updated_at = UTC_TIMESTAMP(6)
+     WHERE public_id = ?`,
+    [overrideId]
+  );
+  await createAuditEvent({
+    actionCode: 'pricing_country_override.archived',
+    actionLabel: 'Country price override archived',
+    actorRoleCode: actor.roleCodes[0] || 'ops_admin',
+    actorUserId: actor.userId,
+    entityPk: null,
+    entityTableName: 'pricing_country_price_overrides',
+    sourceModule: 'settings_workspace',
+    summaryOldValue: mapPriceOverride(existing),
+  });
+
+  return { id: overrideId, status: 'archived' as const };
+};
+
+const normalizeExchangeRateInput = (payload: ExchangeRateInput) => {
+  const baseCurrency = normalizeCurrency(payload.baseCurrency);
+  const quoteCurrency = normalizeCurrency(payload.quoteCurrency);
+  const provider = payload.provider?.trim() || 'manual';
+
+  if (!/^[A-Z]{3}$/.test(baseCurrency) || !/^[A-Z]{3}$/.test(quoteCurrency)) {
+    throw badRequest('invalid_currency', 'Exchange rates require three-letter base and quote currencies.');
+  }
+  if (!DATE_ONLY_PATTERN.test(payload.rateDate)) {
+    throw badRequest('invalid_rate_date', 'Exchange rate date must use YYYY-MM-DD format.');
+  }
+  assertNonNegativeAmount(payload.rate, 'rate');
+  if (payload.rate <= 0) {
+    throw badRequest('invalid_exchange_rate', 'Exchange rate must be greater than zero.');
+  }
+
+  return {
+    baseCurrency,
+    provider,
+    quoteCurrency,
+    rate: payload.rate,
+    rateDate: payload.rateDate,
+  };
+};
+
+export const createExchangeRate = async (actor: AdminActor, payload: ExchangeRateInput) => {
+  clearCatalogPricingCache();
+  const next = normalizeExchangeRateInput(payload);
+
+  const result = await executeStatement<ResultSetHeader>(
+    `INSERT INTO exchange_rates (
+       base_currency,
+       quote_currency,
+       rate,
+       rate_date,
+       provider,
+       fetched_at,
+       created_at,
+       updated_at
+     ) VALUES (?, ?, ?, ?, ?, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+     ON DUPLICATE KEY UPDATE
+       rate = VALUES(rate),
+       fetched_at = VALUES(fetched_at),
+       updated_at = VALUES(updated_at)`,
+    [next.baseCurrency, next.quoteCurrency, next.rate, next.rateDate, next.provider]
+  );
+
+  await createAuditEvent({
+    actionCode: 'exchange_rate.upserted',
+    actionLabel: 'Exchange rate saved',
+    actorRoleCode: actor.roleCodes[0] || 'ops_admin',
+    actorUserId: actor.userId,
+    changes: [
+      { fieldName: 'base_currency', newValue: next.baseCurrency },
+      { fieldName: 'quote_currency', newValue: next.quoteCurrency },
+      { fieldName: 'rate_date', newValue: next.rateDate },
+      { fieldName: 'rate', newValue: next.rate },
+      { fieldName: 'provider', newValue: next.provider },
+    ],
+    entityPk: result.insertId || null,
+    entityTableName: 'exchange_rates',
+    sourceModule: 'settings_workspace',
+    summaryNewValue: next,
+  });
+
+  const saved = firstRow(
+    await queryRows<ExchangeRateRow>(
+      `SELECT
+         CAST(id AS CHAR) AS id,
+         base_currency AS baseCurrency,
+         quote_currency AS quoteCurrency,
+         rate,
+         DATE_FORMAT(rate_date, '%Y-%m-%d') AS rateDate,
+         provider,
+         DATE_FORMAT(fetched_at, '%Y-%m-%dT%H:%i:%sZ') AS fetchedAt
+       FROM exchange_rates
+       WHERE base_currency = ?
+         AND quote_currency = ?
+         AND rate_date = ?
+         AND provider = ?
+       LIMIT 1`,
+      [next.baseCurrency, next.quoteCurrency, next.rateDate, next.provider]
+    )
+  );
+
+  return mapExchangeRate(saved!);
 };

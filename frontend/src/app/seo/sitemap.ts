@@ -17,6 +17,8 @@ const STATIC_ENTRIES: SitemapEntry[] = [
   { path: '/newsroom', changeFrequency: 'weekly', priority: '0.8' },
   { path: '/pro-bono', changeFrequency: 'monthly', priority: '0.7' },
   { path: '/careers', changeFrequency: 'weekly', priority: '0.8' },
+  { path: '/terms', changeFrequency: 'monthly', priority: '0.4' },
+  { path: '/refund-cancellation', changeFrequency: 'monthly', priority: '0.4' },
   { path: '/privacy', changeFrequency: 'monthly', priority: '0.4' },
   { path: '/cookies', changeFrequency: 'monthly', priority: '0.4' },
   { path: '/legal-disclaimer', changeFrequency: 'monthly', priority: '0.4' },

@@ -5,6 +5,7 @@ import { badRequest, conflict, forbidden, notFound } from '../../lib/httpErrors.
 import { executeResult, selectAll, selectOne, withConnection, withTransaction } from '../../lib/mysqlUtils.js';
 import { ensurePlatformReady } from '../platform/bootstrap.js';
 import { domainEventService } from '../domainEvents/service.js';
+import { getInvoicePaymentOptions } from '../payments/razorpayService.js';
 import { allocateBusinessNumber } from '../platform/sequences.js';
 import type {
   ClientAccountDetail,
@@ -229,6 +230,13 @@ interface InvoiceRow extends RowDataPacket {
   amount_due: number | string;
   amount_paid: number | string;
   amount_refunded: number | string;
+  business_address_snapshot: string | null;
+  business_email_snapshot: string | null;
+  business_gstin_snapshot: string | null;
+  business_name_snapshot: string | null;
+  business_phone_snapshot: string | null;
+  business_state_snapshot: string | null;
+  business_website_snapshot: string | null;
   client_account_public_id: string;
   created_at: string | Date;
   currency_code: string;
@@ -237,12 +245,19 @@ interface InvoiceRow extends RowDataPacket {
   issue_date: string;
   matter_public_id: string | null;
   public_id: string;
+  rendered_body_snapshot: string | null;
+  rendered_footer_snapshot: string | null;
+  rendered_subject_snapshot: string | null;
+  rendered_terms_snapshot: string | null;
   status_code: string;
   subtotal_amount: number | string;
   tax_amount: number | string;
   total_amount: number | string;
   invoice_number: string;
   invoice_type_code: string;
+  payment_instructions_snapshot: string | null;
+  template_public_id_snapshot: string | null;
+  template_version_snapshot: number | null;
 }
 
 interface BillingSnapshotRow extends RowDataPacket {
@@ -616,853 +631,6 @@ export class DomainRepository {
     );
   }
 
-  public async listClientAccounts() {
-    await this.initialize();
-
-    return withConnection(this.pool, async (connection) => {
-      const rows = await selectAll<ClientAccountRow>(
-        connection,
-        `SELECT
-           ca.public_id,
-           ca.client_code,
-           ca.client_type_code,
-           ca.legal_name,
-           ca.display_name,
-           ca.primary_email,
-           ca.primary_phone,
-           ca.onboarding_status_code,
-           ca.account_status_code,
-           owner.public_id AS owner_user_public_id
-         FROM client_accounts ca
-         LEFT JOIN users owner
-           ON owner.id = ca.owner_user_id
-         WHERE ca.archived_at IS NULL
-         ORDER BY ca.display_name ASC`
-      );
-
-      return rows.map((row) => ({
-        accountStatusCode: row.account_status_code,
-        clientCode: row.client_code,
-        clientTypeCode: row.client_type_code,
-        displayName: row.display_name,
-        id: row.public_id,
-        legalName: row.legal_name,
-        onboardingStatusCode: row.onboarding_status_code,
-        ownerUserId: row.owner_user_public_id,
-        primaryEmail: row.primary_email,
-        primaryPhone: row.primary_phone,
-      })) satisfies ClientAccountSummary[];
-    });
-  }
-
-  public async getClientAccountByPublicId(clientAccountPublicId: string) {
-    await this.initialize();
-
-    return withConnection(this.pool, async (connection) =>
-      this.getClientAccountByPublicIdInternal(connection, clientAccountPublicId)
-    );
-  }
-
-  public async listCounselPartners() {
-    await this.initialize();
-
-    return withConnection(this.pool, async (connection) => {
-      const rows = await selectAll<CounselPartnerRow>(
-        connection,
-        `SELECT
-           cp.public_id,
-           cp.counsel_code,
-           cp.full_name,
-           cp.organization_name,
-           cp.email,
-           cp.phone,
-           cp.primary_jurisdiction,
-           cp.city,
-           cp.state,
-           cp.country_code,
-           cp.years_experience,
-           cp.availability_status_code,
-           cp.partner_status_code,
-           invited.public_id AS invited_user_public_id,
-           cp.bar_registration_number
-         FROM counsel_partners cp
-         LEFT JOIN users invited
-           ON invited.id = cp.invited_user_id
-         WHERE cp.archived_at IS NULL
-         ORDER BY cp.full_name ASC`
-      );
-
-      return rows.map((row) => ({
-        availabilityStatusCode: row.availability_status_code,
-        counselCode: row.counsel_code,
-        email: row.email,
-        fullName: row.full_name,
-        id: row.public_id,
-        locationLabel: [row.city, row.state, row.country_code].filter(Boolean).join(', '),
-        organizationName: row.organization_name,
-        partnerStatusCode: row.partner_status_code,
-        phone: row.phone,
-        yearsExperience: row.years_experience,
-      })) satisfies CounselPartnerSummary[];
-    });
-  }
-
-  public async getCounselPartnerByPublicId(counselPublicId: string) {
-    await this.initialize();
-
-    return withConnection(this.pool, async (connection) => {
-      const row = await selectOne<CounselPartnerRow>(
-        connection,
-        `SELECT
-           cp.public_id,
-           cp.counsel_code,
-           cp.full_name,
-           cp.organization_name,
-           cp.email,
-           cp.phone,
-           cp.primary_jurisdiction,
-           cp.city,
-           cp.state,
-           cp.country_code,
-           cp.years_experience,
-           cp.availability_status_code,
-           cp.partner_status_code,
-           invited.public_id AS invited_user_public_id,
-           cp.bar_registration_number
-         FROM counsel_partners cp
-         LEFT JOIN users invited
-           ON invited.id = cp.invited_user_id
-         WHERE cp.public_id = ?
-           AND cp.archived_at IS NULL
-         LIMIT 1`,
-        [counselPublicId]
-      );
-
-      if (!row) {
-        throw notFound('counsel_partner_not_found', 'Counsel partner not found.');
-      }
-
-      const expertise = await selectAll<CounselExpertiseRow>(
-        connection,
-        `SELECT
-           ld.domain_code,
-           ld.domain_name,
-           cpe.proficiency_level_code,
-           s.service_code,
-           s.service_name,
-           cpe.years_experience
-         FROM counsel_partner_expertise cpe
-         INNER JOIN legal_domains ld
-           ON ld.id = cpe.legal_domain_id
-         LEFT JOIN services s
-           ON s.id = cpe.service_id
-         INNER JOIN counsel_partners cp
-           ON cp.id = cpe.counsel_partner_id
-         WHERE cp.public_id = ?
-         ORDER BY ld.sort_order ASC, s.sort_order ASC`,
-        [counselPublicId]
-      );
-
-      return {
-        availabilityStatusCode: row.availability_status_code,
-        barRegistrationNumber: row.bar_registration_number,
-        counselCode: row.counsel_code,
-        email: row.email,
-        expertise: expertise.map((entry) => ({
-          domainCode: entry.domain_code,
-          domainName: entry.domain_name,
-          proficiencyLevelCode: entry.proficiency_level_code,
-          serviceCode: entry.service_code,
-          serviceName: entry.service_name,
-          yearsExperience: entry.years_experience,
-        })),
-        fullName: row.full_name,
-        id: row.public_id,
-        invitedUserId: row.invited_user_public_id,
-        locationLabel: [row.city, row.state, row.country_code].filter(Boolean).join(', '),
-        organizationName: row.organization_name,
-        partnerStatusCode: row.partner_status_code,
-        phone: row.phone,
-        primaryJurisdiction: row.primary_jurisdiction,
-        yearsExperience: row.years_experience,
-      } satisfies CounselPartnerDetail;
-    });
-  }
-
-  public async listMatters() {
-    await this.initialize();
-    return withConnection(this.pool, async (connection) => this.listMattersInternal(connection));
-  }
-
-  public async getMatterByPublicId(matterPublicId: string) {
-    await this.initialize();
-    return withConnection(this.pool, async (connection) =>
-      this.getMatterInternal(connection, matterPublicId)
-    );
-  }
-
-  public async updateMatterStage(
-    actorUserPublicId: string,
-    actorRoleCodeSnapshot: string,
-    matterPublicId: string,
-    input: UpdateMatterStageInput
-  ) {
-    await this.initialize();
-
-    return withTransaction(this.pool, async (connection) => {
-      const actorUserId = await this.resolveUserId(connection, actorUserPublicId);
-      const matterId = await this.resolveMatterId(connection, matterPublicId);
-      const matterRow = await selectOne<RowDataPacket>(
-        connection,
-        'SELECT current_stage_code, title FROM matters WHERE id = ? LIMIT 1',
-        [matterId]
-      );
-
-      const stageExists = await selectOne<RowDataPacket>(
-        connection,
-        'SELECT code FROM matter_stages WHERE code = ? LIMIT 1',
-        [input.stageCode]
-      );
-
-      if (!stageExists) {
-        throw badRequest('matter_stage_invalid', 'Unknown matter stage code.');
-      }
-
-      if (input.operationalStatusCode) {
-        const statusExists = await selectOne<RowDataPacket>(
-          connection,
-          'SELECT code FROM matter_operational_statuses WHERE code = ? LIMIT 1',
-          [input.operationalStatusCode]
-        );
-
-        if (!statusExists) {
-          throw badRequest('matter_status_invalid', 'Unknown matter operational status code.');
-        }
-      }
-
-      const timestamp = toMysqlDateTime(nowUtc());
-
-      await connection.execute(
-        `UPDATE matter_stage_history
-         SET exited_at = ?
-         WHERE matter_id = ?
-           AND exited_at IS NULL`,
-        [timestamp, matterId]
-      );
-
-      await connection.execute(
-        `INSERT INTO matter_stage_history (
-          matter_id, stage_code, entered_at, exited_at, changed_by_user_id, visible_to_client, change_note
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          matterId,
-          input.stageCode,
-          timestamp,
-          null,
-          actorUserId,
-          input.visibleToClient === false ? 0 : 1,
-          input.changeNote?.trim() || null,
-        ]
-      );
-
-      await connection.execute(
-        `UPDATE matters
-         SET current_stage_code = ?,
-             operational_status_code = COALESCE(?, operational_status_code),
-             last_activity_at = ?,
-             updated_at = ?,
-             row_version = row_version + 1
-         WHERE id = ?`,
-        [input.stageCode, input.operationalStatusCode || null, timestamp, timestamp, matterId]
-      );
-
-      await connection.execute(
-        `INSERT INTO matter_updates (
-          matter_id, update_type_code, title, body_text, visible_to_client, created_by_user_id, created_at, edited_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          matterId,
-          'status',
-          'Matter stage updated',
-          input.changeNote?.trim() || `Stage changed to ${input.stageCode}.`,
-          input.visibleToClient === false ? 0 : 1,
-          actorUserId,
-          timestamp,
-          null,
-        ]
-      );
-
-      await domainEventService.publishMatterStageChanged(connection, {
-        actorRoleCodeSnapshot,
-        actorUserId,
-        changeNote: input.changeNote?.trim() || null,
-        clientVisible: input.visibleToClient !== false,
-        matterId,
-        stageCode: input.stageCode,
-        title: 'Matter stage updated',
-      });
-
-      return {
-        changeNote: input.changeNote?.trim() || null,
-        matterId: matterPublicId,
-        previousStageCode: String(matterRow?.current_stage_code || ''),
-        stageCode: input.stageCode,
-        title: String(matterRow?.title || ''),
-      };
-    });
-  }
-
-  public async createMatterAssignment(
-    actorUserPublicId: string,
-    matterPublicId: string,
-    input: CreateMatterAssignmentInput
-  ) {
-    await this.initialize();
-
-    return withTransaction(this.pool, async (connection) => {
-      const actorUserId = await this.resolveUserId(connection, actorUserPublicId);
-      const matterId = await this.resolveMatterId(connection, matterPublicId);
-      const wantsInternalUser = Boolean(input.internalUserId);
-      const wantsCounsel = Boolean(input.counselPartnerId);
-
-      if (wantsInternalUser === wantsCounsel) {
-        throw badRequest(
-          'assignment_target_invalid',
-          'Provide exactly one assignment target: internal user or counsel partner.'
-        );
-      }
-
-      const internalUserId = input.internalUserId
-        ? await this.resolveUserId(connection, input.internalUserId)
-        : null;
-      const counselPartnerId = input.counselPartnerId
-        ? await this.resolveCounselId(connection, input.counselPartnerId)
-        : null;
-      const timestamp = toMysqlDateTime(nowUtc());
-
-      if (input.isPrimary) {
-        await connection.execute(
-          `UPDATE matter_assignments
-           SET is_primary = 0
-           WHERE matter_id = ?
-             AND assignment_role_code = ?
-             AND removed_at IS NULL`,
-          [matterId, input.assignmentRoleCode]
-        );
-      }
-
-      const result = await executeResult(
-        connection,
-        `INSERT INTO matter_assignments (
-          matter_id, assignment_role_code, internal_user_id, counsel_partner_id, is_primary,
-          fee_agreed_amount, fee_paid_amount, fee_due_amount, assigned_by_user_id,
-          assigned_at, removed_at, assignment_status_code, notes
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          matterId,
-          input.assignmentRoleCode,
-          internalUserId,
-          counselPartnerId,
-          input.isPrimary ? 1 : 0,
-          input.feeAgreedAmount ?? null,
-          input.feePaidAmount ?? null,
-          input.feeDueAmount ?? null,
-          actorUserId,
-          timestamp,
-          null,
-          'active',
-          input.notes?.trim() || null,
-        ]
-      );
-
-      return {
-        assignmentId: Number(result.insertId),
-        matterId: matterPublicId,
-      };
-    });
-  }
-
-  public async listDocuments() {
-    await this.initialize();
-    return withConnection(this.pool, async (connection) => this.listDocumentsInternal(connection));
-  }
-
-  public async getDocumentByPublicId(documentPublicId: string) {
-    await this.initialize();
-    return withConnection(this.pool, async (connection) =>
-      this.getDocumentInternal(connection, documentPublicId)
-    );
-  }
-
-  public async listEvents() {
-    await this.initialize();
-    return withConnection(this.pool, async (connection) => this.listEventsInternal(connection));
-  }
-
-  public async getEventByPublicId(eventPublicId: string) {
-    await this.initialize();
-
-    return withConnection(this.pool, async (connection) => {
-      const row = await selectOne<EventRow>(
-        connection,
-        `SELECT
-           e.public_id,
-           ca.public_id AS client_account_public_id,
-           e.title,
-           e.event_type_code AS type_code,
-           e.status_code,
-           e.scheduled_start_at,
-           e.scheduled_end_at,
-           e.timezone_name,
-           e.mode_code,
-           e.location_text,
-           e.meeting_provider_code,
-           e.join_url,
-           e.host_url,
-           e.client_visible_flag,
-           e.notes,
-           e.cancelled_at,
-           cancelled_by.public_id AS cancelled_by_user_public_id,
-           m.public_id AS matter_public_id,
-           m.title AS matter_title
-         FROM events e
-         INNER JOIN client_accounts ca
-           ON ca.id = e.client_account_id
-         LEFT JOIN matters m
-           ON m.id = e.matter_id
-         LEFT JOIN users cancelled_by
-           ON cancelled_by.id = e.cancelled_by_user_id
-         WHERE e.public_id = ?
-         LIMIT 1`,
-        [eventPublicId]
-      );
-
-      if (!row) {
-        throw notFound('event_not_found', 'Event not found.');
-      }
-
-      const participants = await selectAll<EventParticipantRow>(
-        connection,
-        `SELECT
-           ep.id,
-           ep.participant_role_code,
-           ep.rsvp_status_code,
-           ep.attendance_status_code,
-           ep.joined_at,
-           ep.left_at,
-           internal_user.public_id AS internal_user_public_id,
-           client_user.public_id AS client_contact_user_public_id,
-           counsel.public_id AS counsel_partner_public_id,
-           COALESCE(internal_user.display_name, client_user.display_name, counsel.full_name) AS display_name
-         FROM event_participants ep
-         LEFT JOIN users internal_user
-           ON internal_user.id = ep.internal_user_id
-         LEFT JOIN users client_user
-           ON client_user.id = ep.client_contact_user_id
-         LEFT JOIN counsel_partners counsel
-           ON counsel.id = ep.counsel_partner_id
-         INNER JOIN events e
-           ON e.id = ep.event_id
-         WHERE e.public_id = ?
-         ORDER BY ep.id ASC`,
-        [eventPublicId]
-      );
-
-      return {
-        cancelledAt: row.cancelled_at ? toIso(row.cancelled_at) : null,
-        cancelledByUserId: row.cancelled_by_user_public_id,
-        clientAccountId: row.client_account_public_id,
-        clientVisibleFlag: Boolean(row.client_visible_flag),
-        hostUrl: row.host_url,
-        id: row.public_id,
-        joinUrl: row.join_url,
-        locationText: row.location_text,
-        matterId: row.matter_public_id,
-        matterTitle: row.matter_title,
-        meetingProviderCode: row.meeting_provider_code,
-        modeCode: row.mode_code,
-        notes: row.notes,
-        participants: participants.map((entry) => ({
-          attendanceStatusCode: entry.attendance_status_code,
-          id: entry.id,
-          joinedAt: entry.joined_at ? toIso(entry.joined_at) : null,
-          leftAt: entry.left_at ? toIso(entry.left_at) : null,
-          name: entry.display_name,
-          participantId:
-            entry.internal_user_public_id ||
-            entry.client_contact_user_public_id ||
-            entry.counsel_partner_public_id ||
-            '',
-          participantRoleCode: entry.participant_role_code,
-          participantType: entry.internal_user_public_id
-            ? 'internal_user'
-            : entry.client_contact_user_public_id
-              ? 'client_contact'
-              : 'counsel_partner',
-          rsvpStatusCode: entry.rsvp_status_code,
-        })),
-        scheduledEndAt: toIso(row.scheduled_end_at),
-        scheduledStartAt: toIso(row.scheduled_start_at),
-        statusCode: row.status_code,
-        timezoneName: row.timezone_name,
-        title: row.title,
-        typeCode: row.type_code,
-      } satisfies EventDetail;
-    });
-  }
-
-  public async createEvent(
-    actorUserPublicId: string,
-    actorRoleCodeSnapshot: string,
-    input: CreateEventInput
-  ) {
-    await this.initialize();
-
-    return withTransaction(this.pool, async (connection) => {
-      const actorUserId = await this.resolveUserId(connection, actorUserPublicId);
-      const clientAccountId = await this.resolveClientAccountId(connection, input.clientAccountId);
-      const matterId = input.matterId ? await this.resolveMatterId(connection, input.matterId) : null;
-      const timestamp = toMysqlDateTime(nowUtc());
-
-      const result = await executeResult(
-        connection,
-        `INSERT INTO events (
-          public_id, client_account_id, matter_id, title, event_type_code, status_code, scheduled_start_at,
-          scheduled_end_at, timezone_name, mode_code, location_text, meeting_provider_code,
-          external_meeting_id, join_url, host_url, client_visible_flag, notes, created_by_user_id,
-          cancelled_by_user_id, created_at, updated_at, cancelled_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          createPublicId(),
-          clientAccountId,
-          matterId,
-          input.title.trim(),
-          input.typeCode,
-          input.statusCode?.trim() || 'upcoming',
-          toMysqlDateTime(input.scheduledStartAt),
-          toMysqlDateTime(input.scheduledEndAt),
-          input.timezoneName?.trim() || 'Asia/Kolkata',
-          input.modeCode,
-          input.locationText?.trim() || null,
-          input.meetingProviderCode?.trim() || 'none',
-          null,
-          input.joinUrl?.trim() || null,
-          null,
-          input.clientVisibleFlag === false ? 0 : 1,
-          input.notes?.trim() || null,
-          actorUserId,
-          null,
-          timestamp,
-          timestamp,
-          null,
-        ]
-      );
-
-      const eventId = Number(result.insertId);
-
-      for (const participant of input.participants || []) {
-        const internalUserId = participant.internalUserId
-          ? await this.resolveUserId(connection, participant.internalUserId)
-          : null;
-        const clientContactUserId = participant.clientContactUserId
-          ? await this.resolveUserId(connection, participant.clientContactUserId)
-          : null;
-        const counselPartnerId = participant.counselPartnerId
-          ? await this.resolveCounselId(connection, participant.counselPartnerId)
-          : null;
-
-        const targetCount = [internalUserId, clientContactUserId, counselPartnerId].filter(Boolean).length;
-
-        if (targetCount !== 1) {
-          throw badRequest(
-            'event_participant_invalid',
-            'Each participant must reference exactly one internal user, client contact, or counsel partner.'
-          );
-        }
-
-        await connection.execute(
-          `INSERT INTO event_participants (
-            event_id, participant_role_code, internal_user_id, client_contact_user_id, counsel_partner_id,
-            rsvp_status_code, attendance_status_code, joined_at, left_at, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            eventId,
-            participant.participantRoleCode,
-            internalUserId,
-            clientContactUserId,
-            counselPartnerId,
-            participant.rsvpStatusCode?.trim() || 'pending',
-            'scheduled',
-            null,
-            null,
-            timestamp,
-          ]
-        );
-      }
-
-      const eventPublicId = await selectOne<RowDataPacket>(
-        connection,
-        'SELECT public_id FROM events WHERE id = ? LIMIT 1',
-        [eventId]
-      );
-
-      await domainEventService.publishEventScheduled(connection, {
-        actorRoleCodeSnapshot,
-        actorUserId,
-        clientVisibleFlag: input.clientVisibleFlag !== false,
-        eventId,
-        matterId,
-        title: input.title.trim(),
-      });
-
-      return {
-        eventId: String(eventPublicId?.public_id || ''),
-      };
-    });
-  }
-
-  public async listInvoices() {
-    await this.initialize();
-    return withConnection(this.pool, async (connection) => this.listInvoicesInternal(connection));
-  }
-
-  public async getInvoiceByPublicId(invoicePublicId: string) {
-    await this.initialize();
-    return withConnection(this.pool, async (connection) =>
-      this.getInvoiceInternal(connection, invoicePublicId)
-    );
-  }
-
-  public async listPayments() {
-    await this.initialize();
-    return withConnection(this.pool, async (connection) => this.listPaymentsInternal(connection));
-  }
-
-  public async listRefunds() {
-    await this.initialize();
-    return withConnection(this.pool, async (connection) => this.listRefundsInternal(connection));
-  }
-
-  public async createRefund(
-    actorUserPublicId: string,
-    actorRoleCodeSnapshot: string,
-    input: CreateRefundInput
-  ) {
-    await this.initialize();
-
-    return withTransaction(this.pool, async (connection) => {
-      const actorUserId = await this.resolveUserId(connection, actorUserPublicId);
-      const paymentId = await this.resolvePaymentId(connection, input.paymentId);
-      const invoiceId = input.invoiceId
-        ? await this.resolveInvoiceId(connection, input.invoiceId)
-        : null;
-
-      const payment = await selectOne<RowDataPacket>(
-        connection,
-        'SELECT gross_amount FROM payment_transactions WHERE id = ? LIMIT 1',
-        [paymentId]
-      );
-
-      const alreadyRefunded = await selectOne<CountRow>(
-        connection,
-        'SELECT COALESCE(SUM(amount), 0) AS count FROM refunds WHERE payment_transaction_id = ?',
-        [paymentId]
-      );
-
-      const requestedAmount = Number(input.amount);
-
-      if (requestedAmount <= 0) {
-        throw badRequest('refund_amount_invalid', 'Refund amount must be greater than zero.');
-      }
-
-      if (requestedAmount + Number(alreadyRefunded?.count || 0) > toNumber(payment?.gross_amount || 0)) {
-        throw conflict('refund_amount_exceeds_payment', 'Refund amount exceeds the captured payment total.');
-      }
-
-      const timestamp = toMysqlDateTime(nowUtc());
-      const result = await executeResult(
-        connection,
-        `INSERT INTO refunds (
-          public_id, payment_transaction_id, invoice_id, amount, refund_status_code, reason_text,
-          gateway_refund_ref, requested_by_user_id, approved_by_user_id, requested_at,
-          completed_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          createPublicId(),
-          paymentId,
-          invoiceId,
-          requestedAmount,
-          'requested',
-          input.reasonText.trim(),
-          null,
-          actorUserId,
-          null,
-          timestamp,
-          null,
-          timestamp,
-          timestamp,
-        ]
-      );
-
-      await domainEventService.publishRefundRequested(connection, {
-        actorRoleCodeSnapshot,
-        actorUserId,
-        amount: requestedAmount,
-        invoiceId,
-        paymentId,
-        refundId: Number(result.insertId),
-      });
-
-      return {
-        refundId: Number(result.insertId),
-      };
-    });
-  }
-
-  public async listRoles() {
-    await this.initialize();
-
-    return withConnection(this.pool, async (connection) => {
-      const rows = await selectAll<RoleRow>(
-        connection,
-        `SELECT code, name, description, is_system, is_active
-         FROM roles
-         ORDER BY name ASC`
-      );
-
-      return rows.map((row) => ({
-        code: row.code,
-        description: row.description,
-        isActive: Boolean(row.is_active),
-        isSystem: Boolean(row.is_system),
-        name: row.name,
-      })) satisfies RoleSummary[];
-    });
-  }
-
-  public async listPermissions() {
-    await this.initialize();
-
-    return withConnection(this.pool, async (connection) => {
-      const rows = await selectAll<PermissionRow>(
-        connection,
-        `SELECT code, module_name, action_name, description
-         FROM permissions
-         ORDER BY module_name ASC, action_name ASC`
-      );
-
-      return rows.map((row) => ({
-        actionName: row.action_name,
-        code: row.code,
-        description: row.description,
-        moduleName: row.module_name,
-      })) satisfies PermissionSummary[];
-    });
-  }
-
-  public async listUsersWithRoles() {
-    await this.initialize();
-
-    return withConnection(this.pool, async (connection) => {
-      const rows = await selectAll<UserRoleRow>(
-        connection,
-        `SELECT
-           u.public_id,
-           u.display_name,
-           u.email,
-           u.actor_type_code,
-           u.account_status_code,
-           GROUP_CONCAT(DISTINCT ur.role_code ORDER BY ur.role_code SEPARATOR ',') AS role_codes
-         FROM users u
-         LEFT JOIN user_roles ur
-           ON ur.user_id = u.id
-           AND ur.is_active = 1
-           AND (ur.starts_at IS NULL OR ur.starts_at <= UTC_TIMESTAMP(6))
-           AND (ur.ends_at IS NULL OR ur.ends_at > UTC_TIMESTAMP(6))
-         WHERE u.archived_at IS NULL
-         GROUP BY u.id, u.public_id, u.display_name, u.email, u.actor_type_code, u.account_status_code
-         ORDER BY u.display_name ASC`
-      );
-
-      return rows.map((row) => ({
-        accountStatusCode: row.account_status_code,
-        actorTypeCode: row.actor_type_code,
-        displayName: row.display_name,
-        email: row.email,
-        id: row.public_id,
-        roleCodes: row.role_codes ? row.role_codes.split(',').filter(Boolean) : [],
-      })) satisfies UserRoleSummary[];
-    });
-  }
-
-  public async replaceUserRoles(
-    actorUserPublicId: string,
-    userPublicId: string,
-    input: ReplaceUserRolesInput
-  ) {
-    await this.initialize();
-
-    return withTransaction(this.pool, async (connection) => {
-      const actorUserId = await this.resolveUserId(connection, actorUserPublicId);
-      const targetUserId = await this.resolveUserId(connection, userPublicId);
-      const requestedRoleCodes = Array.from(new Set(input.roleCodes.map((entry) => entry.trim()).filter(Boolean)));
-
-      if (requestedRoleCodes.length === 0) {
-        throw badRequest('role_codes_required', 'At least one role code must be supplied.');
-      }
-
-      const validRoles = await selectAll<RoleRow>(
-        connection,
-        `SELECT code, name, description, is_system, is_active
-         FROM roles
-         WHERE code IN (${requestedRoleCodes.map(() => '?').join(', ')})`,
-        requestedRoleCodes
-      );
-
-      if (validRoles.length !== requestedRoleCodes.length) {
-        throw badRequest('role_code_invalid', 'One or more requested role codes are invalid.');
-      }
-
-      const timestamp = toMysqlDateTime(nowUtc());
-
-      await connection.execute(
-        `UPDATE user_roles
-         SET is_active = 0,
-             ends_at = COALESCE(ends_at, ?),
-             updated_at = ?
-         WHERE user_id = ?
-           AND is_active = 1
-           AND role_code NOT IN (${requestedRoleCodes.map(() => '?').join(', ')})`,
-        [timestamp, timestamp, targetUserId, ...requestedRoleCodes]
-      );
-
-      for (const roleCode of requestedRoleCodes) {
-        const existingActive = await selectOne<RowDataPacket>(
-          connection,
-          `SELECT id
-           FROM user_roles
-           WHERE user_id = ?
-             AND role_code = ?
-             AND is_active = 1
-           LIMIT 1`,
-          [targetUserId, roleCode]
-        );
-
-        if (existingActive?.id) {
-          continue;
-        }
-
-        await connection.execute(
-          `INSERT INTO user_roles (
-            user_id, role_code, granted_by_user_id, starts_at, ends_at, is_active, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [targetUserId, roleCode, actorUserId, timestamp, null, 1, timestamp, timestamp]
-        );
-      }
-
-      return this.listUsersWithRoles();
-    });
-  }
 
   private async getClientAccountByPublicIdInternal(
     connection: PoolConnection,
@@ -2112,6 +1280,20 @@ export class DomainRepository {
          i.amount_paid,
          i.amount_refunded,
          i.amount_due,
+         i.template_public_id_snapshot,
+         i.template_version_snapshot,
+         i.rendered_subject_snapshot,
+         i.rendered_body_snapshot,
+         i.rendered_terms_snapshot,
+         i.rendered_footer_snapshot,
+         i.business_name_snapshot,
+         i.business_address_snapshot,
+         i.business_phone_snapshot,
+         i.business_email_snapshot,
+         i.business_website_snapshot,
+         i.business_gstin_snapshot,
+         i.business_state_snapshot,
+         i.payment_instructions_snapshot,
          i.created_at
        FROM invoices i
        INNER JOIN client_accounts client
@@ -2165,12 +1347,27 @@ export class DomainRepository {
          i.amount_paid,
          i.amount_refunded,
          i.amount_due,
+         i.template_public_id_snapshot,
+         i.template_version_snapshot,
+         i.rendered_subject_snapshot,
+         i.rendered_body_snapshot,
+         i.rendered_terms_snapshot,
+         i.rendered_footer_snapshot,
+         COALESCE(i.business_name_snapshot, settings.business_legal_name, settings.billing_display_name) AS business_name_snapshot,
+         COALESCE(i.business_address_snapshot, settings.business_address) AS business_address_snapshot,
+         COALESCE(i.business_phone_snapshot, settings.business_phone) AS business_phone_snapshot,
+         COALESCE(i.business_email_snapshot, settings.business_email) AS business_email_snapshot,
+         COALESCE(i.business_website_snapshot, settings.business_website) AS business_website_snapshot,
+         COALESCE(i.business_gstin_snapshot, settings.gstin) AS business_gstin_snapshot,
+         COALESCE(i.business_state_snapshot, settings.business_state) AS business_state_snapshot,
+         COALESCE(i.payment_instructions_snapshot, settings.payment_instructions) AS payment_instructions_snapshot,
          i.created_at
        FROM invoices i
        INNER JOIN client_accounts client
          ON client.id = i.client_account_id
        LEFT JOIN matters matter
          ON matter.id = i.matter_id
+       CROSS JOIN invoice_settings settings
        WHERE i.public_id = ?
          AND i.archived_at IS NULL
          ${clientAccountId ? 'AND i.client_account_id = ?' : ''}
@@ -2292,6 +1489,16 @@ export class DomainRepository {
       amountDue: toNumber(row.amount_due),
       amountPaid: toNumber(row.amount_paid),
       amountRefunded: toNumber(row.amount_refunded),
+      business: {
+        address: row.business_address_snapshot,
+        email: row.business_email_snapshot,
+        gstin: row.business_gstin_snapshot,
+        name: row.business_name_snapshot,
+        paymentInstructions: row.payment_instructions_snapshot,
+        phone: row.business_phone_snapshot,
+        state: row.business_state_snapshot,
+        website: row.business_website_snapshot,
+      },
       billingSnapshot: billingSnapshot
         ? {
             addressLine1: billingSnapshot.address_line1,
@@ -2351,8 +1558,25 @@ export class DomainRepository {
       })),
       matterId: row.matter_public_id,
       statusCode: row.status_code,
+      paymentOptions: getInvoicePaymentOptions({
+        amountDue: toNumber(row.amount_due),
+        currencyCode: row.currency_code,
+        installments: installments.map((entry) => ({
+          amountRemaining: toNumber(entry.amount_remaining),
+          statusCode: entry.status_code,
+        })),
+        statusCode: row.status_code,
+      }),
       subtotalAmount: toNumber(row.subtotal_amount),
       taxAmount: toNumber(row.tax_amount),
+      template: {
+        body: row.rendered_body_snapshot,
+        footer: row.rendered_footer_snapshot,
+        id: row.template_public_id_snapshot,
+        subject: row.rendered_subject_snapshot,
+        terms: row.rendered_terms_snapshot,
+        version: row.template_version_snapshot,
+      },
       totalAmount: toNumber(row.total_amount),
       typeCode: row.invoice_type_code,
     } satisfies InvoiceDetail;

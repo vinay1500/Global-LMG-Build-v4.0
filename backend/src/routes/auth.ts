@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 import { createSignedCsrfToken, verifySignedCsrfToken } from '../lib/authCrypto.js';
 import { asyncHandler, forbidden } from '../lib/httpErrors.js';
 import { appendCookie, clearCookie, parseCookies } from '../lib/httpCookies.js';
+import { recordSecurityEventSafely } from '../lib/securityEvents.js';
 import { authService } from '../modules/auth/authService.js';
 
 const authRouter = Router();
@@ -26,6 +27,17 @@ const signUpSchema = z.object({
   phone: z.string().trim().min(8).max(40),
   password: z.string().min(8).max(200),
   country: z.string().trim().min(2).max(80),
+  address: z.object({
+    line1: z.string().trim().min(3).max(255),
+    line2: z.string().trim().max(255).optional().default(''),
+    city: z.string().trim().min(2).max(100),
+    state: z.string().trim().min(2).max(100),
+    postalCode: z.string().trim().min(3).max(20),
+    country: z.string().trim().min(2).max(80),
+    sourceCode: z.enum(['google', 'ip_prefill', 'manual']).default('manual'),
+    googlePlaceId: z.string().trim().max(255).optional().nullable(),
+    validationStatusCode: z.enum(['manual', 'unverified', 'verified']).default('manual'),
+  }),
   acceptTerms: z.literal(true),
 });
 
@@ -84,10 +96,22 @@ const requireCsrf = (request: Request, response: Response) => {
   const headerToken = request.header('x-csrf-token');
 
   if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+    recordSecurityEventSafely({
+      eventTypeCode: 'client.csrf_mismatch',
+      ipAddress: getRequestIpAddress(request),
+      success: false,
+      userAgent: getUserAgent(request),
+    });
     throw forbidden('csrf_mismatch', 'CSRF validation failed.');
   }
 
   if (!verifySignedCsrfToken(cookieToken, env.AUTH_SESSION_SECRET)) {
+    recordSecurityEventSafely({
+      eventTypeCode: 'client.csrf_mismatch',
+      ipAddress: getRequestIpAddress(request),
+      success: false,
+      userAgent: getUserAgent(request),
+    });
     setCsrfCookie(response);
     throw forbidden('csrf_invalid', 'CSRF validation failed.');
   }
@@ -260,8 +284,6 @@ authRouter.post(
     response.json({
       status: result.status,
       message: result.message,
-      deliveryHint: result.deliveryHint,
-      email: result.email,
     });
   })
 );

@@ -7,12 +7,15 @@ import type { AdminActor } from '../auth/service.js';
 import {
   fetchClientAudit,
   fetchClientsForList,
+  countClientsForList,
   fetchDocuments,
   fetchEvents,
   fetchInvoices,
   fetchMatters,
   fetchPayments,
   fetchThreads,
+  buildPaginationMeta,
+  normalizePagination,
 } from '../shared.js';
 import { createAuditEvent } from '../writeSupport.js';
 import { mapLifecycle, toUiDate, toUiDateTime } from '../../lib/viewModels.js';
@@ -346,8 +349,15 @@ const fetchClientNotifications = async (clientAccountId: string) => {
 };
 
 export const listClients = async (options: { limit: number; offset: number; search?: string }) => {
+  const pagination = normalizePagination(options);
+  const [clients, total] = await Promise.all([
+    fetchClientsForList({ ...pagination, search: options.search }),
+    countClientsForList({ search: options.search }),
+  ]);
+
   return {
-    clients: await fetchClientsForList(options),
+    clients,
+    pagination: buildPaginationMeta(pagination, total),
   };
 };
 

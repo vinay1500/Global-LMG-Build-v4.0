@@ -2,6 +2,7 @@ import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { env } from '../config/env.js';
 import { createPublicId, hashPassword } from '../lib/authCrypto.js';
 import { closeMysqlPool, executeStatement, queryRows, withTransaction } from '../lib/mysql.js';
+import { logEvent } from '../lib/observability.js';
 import { createAuditEvent } from '../modules/writeSupport.js';
 
 type UserRow = RowDataPacket & {
@@ -224,18 +225,21 @@ const bootstrapAdmin = async () => {
     };
   });
 
-  console.log('Admin bootstrap complete.');
-  console.log(`Email: ${result.email}`);
-  console.log(`Role: ${result.roleCode}`);
-  console.log(`User created: ${result.userCreated ? 'yes' : 'no'}`);
-  console.log(`Password action: ${result.passwordAction}`);
-  console.log(`Must rotate password: ${result.forceRotationApplied ? 'yes' : 'no'}`);
-  console.log(`Existing password reset enabled: ${result.resetPassword ? 'yes' : 'no'}`);
+  logEvent('info', 'admin_bootstrap.completed', {
+    email: result.email,
+    forceRotationApplied: result.forceRotationApplied,
+    passwordAction: result.passwordAction,
+    resetPassword: result.resetPassword,
+    roleCode: result.roleCode,
+    userCreated: result.userCreated,
+  });
 };
 
 void bootstrapAdmin()
   .catch((error) => {
-    console.error(error instanceof Error ? error.message : 'Admin bootstrap failed.');
+    logEvent('error', 'admin_bootstrap.failed', {
+      errorMessage: error instanceof Error ? error.message : 'Admin bootstrap failed.',
+    });
     process.exitCode = 1;
   })
   .finally(async () => {

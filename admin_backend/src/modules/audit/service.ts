@@ -1,6 +1,7 @@
 import type { RowDataPacket } from 'mysql2/promise';
 import { queryRows } from '../../lib/mysql.js';
 import { toUiDateTime } from '../../lib/viewModels.js';
+import { buildPaginationMeta, normalizePagination } from '../shared.js';
 
 type AuditRow = RowDataPacket & {
   action: string;
@@ -43,8 +44,12 @@ const mapEntityType = (entityTableName: string) => {
   }
 };
 
-export const listEntries = async (options: { limit?: number } = {}) => {
-  const limit = Math.max(1, Math.min(options.limit ?? 100, 250));
+export const listEntries = async (options: { limit?: number; offset?: number } = {}) => {
+  const pagination = normalizePagination(options);
+  const totalRows = await queryRows<RowDataPacket & { total: number }>(
+    `SELECT COUNT(*) AS total
+     FROM audit_events`
+  );
 
   const rows = await queryRows<AuditRow>(
     `SELECT
@@ -71,8 +76,8 @@ export const listEntries = async (options: { limit?: number } = {}) => {
      LEFT JOIN users usr ON ae.entity_table_name = 'users' AND usr.id = ae.entity_pk
      LEFT JOIN client_accounts ca ON ae.entity_table_name = 'client_accounts' AND ca.id = ae.entity_pk
      ORDER BY ae.occurred_at DESC
-     LIMIT ?`,
-    [limit]
+     LIMIT ? OFFSET ?`,
+    [pagination.limit, pagination.offset]
   );
 
   return {
@@ -104,5 +109,6 @@ export const listEntries = async (options: { limit?: number } = {}) => {
       sourceModule: row.sourceModule,
       timestamp: toUiDateTime(row.timestamp),
     })),
+    pagination: buildPaginationMeta(pagination, Number(totalRows[0]?.total || 0)),
   };
 };

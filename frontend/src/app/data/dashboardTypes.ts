@@ -67,7 +67,7 @@ export type EventType =
   | 'deadline'
   | 'reminder';
 
-export type ConsultationMode = 'video' | 'phone' | 'in-person';
+export type ConsultationMode = string;
 
 export type AdminRole =
   | 'super-admin'
@@ -84,6 +84,7 @@ export interface PlatformUser {
   name: string;
   email: string;
   phone: string;
+  countryCode?: string;
   avatar: string;
   lifecycle: UserLifecycle;
   joinedAt: string;
@@ -105,7 +106,7 @@ export interface Lead {
     | 'lost-closed';
   selectedServices: string[];
   expertiseArea: string;
-  urgency: 'standard' | 'within-6hrs' | 'within-2hrs';
+  urgency: string;
   consultationMode: ConsultationMode;
   preferredSlot: string;
   issueSummary: string;
@@ -135,10 +136,16 @@ export interface Matter {
   selectedServices: string[];
   expertiseArea: string;
   issueSummary: string;
-  urgency: 'standard' | 'within-6hrs' | 'within-2hrs';
+  urgency: string;
   consultationMode: ConsultationMode;
   assignedCounsel?: string;
   assignedStaff?: string;
+  assignments?: Array<{
+    id: string;
+    name: string;
+    type: 'external_counsel' | 'field_partner' | 'internal_staff';
+    visibleToClient: boolean;
+  }>;
   packageId?: string;
   totalFee: number;
   paidAmount: number;
@@ -148,6 +155,7 @@ export interface Matter {
   lastUpdated: string;
   clientVisibleNotes: string[];
   internalNotes: string[];
+  currencyCode?: string;
 }
 
 export interface MatterPackage {
@@ -157,6 +165,7 @@ export interface MatterPackage {
   description: string;
   services: string[];
   price: number;
+  currencyCode?: string;
   createdBy: string;
   createdAt: string;
   displayOrder: number;
@@ -177,6 +186,7 @@ export interface Invoice {
   matterTitle: string;
   clientId: string;
   clientName: string;
+  currencyCode: string;
   amount: number;
   tax: number;
   discount: number;
@@ -206,11 +216,16 @@ export interface PlatformEvent {
   id: string;
   title: string;
   type: EventType;
-  calendarSyncStatus?: 'disabled' | 'failed' | 'local' | 'synced';
+  calendarSyncError?: string;
+  calendarSyncStatus?: 'cancelled' | 'disabled' | 'failed' | 'local' | 'pending' | 'synced';
+  calendarSyncedAt?: string;
+  calendarOwnerEmail?: string;
   clientId: string;
   clientName: string;
+  googleAttendeeStatus?: string;
   matterId: string;
   matterTitle: string;
+  meetConferenceId?: string;
   date: string;
   time: string;
   duration: number;
@@ -238,6 +253,7 @@ export interface PlatformDocument {
   uploadedAt: string;
   visibility: 'client' | 'internal';
   reviewState: DocReviewState;
+  virusStatus?: string;
   docCategory: string;
 }
 
@@ -249,7 +265,7 @@ export interface MessageThread {
   matterTitle: string;
   matterRef: string;
   stage: LifecycleStage;
-  urgency: 'standard' | 'within-6hrs' | 'within-2hrs';
+  urgency: string;
   lastMessage: string;
   lastMessageAt: string;
   unreadCount: number;

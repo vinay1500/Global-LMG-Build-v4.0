@@ -88,17 +88,62 @@ export interface DashboardRequestSubmissionPayload {
   consultationMode: ConsultationMode;
   documentUploadIds: string[];
   documents: DashboardRequestDocumentPayload[];
-  email: string;
-  fullName: string;
   legalDomain: string;
-  mobile: string;
-  whatsappNumber?: string;
   pastLegalAction: boolean;
   preferredDate: string;
+  preferredEndAtUtc?: string;
+  preferredStartAtUtc?: string;
   preferredTime: string;
+  preferredTimezone?: string;
   services: string[];
   urgency: UrgencyLevel;
-  whatsappSame: boolean;
+}
+
+export interface RequestPricingConfigResponse {
+  consultationModes: Array<{
+    description: string;
+    fee: number;
+    id: string;
+    isInPerson: boolean;
+    label: string;
+    transportDisclaimer: string | null;
+  }>;
+  countryPricing: {
+    countryCode: string;
+    countryName: string;
+    countrySource: 'default' | 'ip_geolocation' | 'phone' | 'request' | 'saved_address';
+    currencyCode: string;
+    isDefaultFallback: boolean;
+    multiplier: number;
+    pricingCountryConfidence: 'fallback' | 'high' | 'medium';
+  };
+  currencyCode: string;
+  detectedCountryCode: string;
+  detectedCurrency: string;
+  legalDomains: Array<{
+    description: string;
+    id: string;
+    name: string;
+  }>;
+  services: Array<{
+    baseFee: number;
+    description: string;
+    icon: string;
+    id: string;
+    name: string;
+  }>;
+  urgencyOptions: Array<{
+    allowedConsultationModes: string[];
+    id: string;
+    isImmediate: boolean;
+    label: string;
+    maxResponseHours: number | null;
+    minResponseHours: number | null;
+    responseWindowHours: number | null;
+    surcharge: number;
+    surchargeType: 'flat' | 'percent';
+    timingLabel: string;
+  }>;
 }
 
 export interface DashboardMessageSubmissionPayload {
@@ -176,35 +221,41 @@ export interface NotificationPreferencesResponse {
   invoiceReminders: boolean;
   productAnnouncements: boolean;
   smsAlerts: boolean;
-  whatsappAlerts: boolean;
 }
 
 export type UpdateNotificationPreferencesPayload = NotificationPreferencesResponse;
 
 export interface ClientAccountSettingsResponse {
   account: {
+    address: {
+      city: string;
+      countryCode: string;
+      line1: string;
+      line2: string;
+      postalCode: string;
+      sourceCode: 'google' | 'ip_prefill' | 'manual';
+      state: string;
+      validationStatusCode: 'manual' | 'unverified' | 'verified';
+    };
     email: string;
     emailVerified: boolean;
     mobileNumber: string;
     name: string;
     phone: string;
     phoneVerified: boolean;
-    whatsappNumber: string;
-    whatsappSameAsMobile: boolean;
   };
-  providerMode: {
-    email: 'disabled' | 'preview' | 'resend';
-    inApp: 'local';
-    sms: 'disabled' | 'preview' | 'twilio-verify';
-    whatsapp: 'informational';
+  deliveryAvailability: {
+    email: 'available' | 'unavailable';
+    portal: 'available';
+    sms: 'available' | 'unavailable';
   };
 }
 
 export interface AccountChangeRequestResponse {
   deliveryHint?: string;
+  deliveryStatus?: 'queued' | 'sent' | 'verification_required';
   email?: string;
   phone?: string;
-  providerMode: string;
   status: 'verification_required';
 }
 
@@ -268,6 +319,16 @@ export interface InvoiceDetailResponse {
   amountDue: number;
   amountPaid: number;
   amountRefunded: number;
+  business: {
+    address: string | null;
+    email: string | null;
+    gstin: string | null;
+    name: string | null;
+    paymentInstructions: string | null;
+    phone: string | null;
+    state: string | null;
+    website: string | null;
+  };
   billingSnapshot: {
     addressLine1: string;
     addressLine2: string | null;
@@ -291,9 +352,52 @@ export interface InvoiceDetailResponse {
   issueDate: string;
   lines: InvoiceLineSummaryResponse[];
   matterId: string | null;
+  paymentOptions: {
+    allowsPartial: boolean;
+    amountDue: number;
+    currencyCode: string;
+    minimumPaymentAmount: number;
+    offlineEnabled: boolean;
+    onlineEnabled: boolean;
+    suggestedPaymentAmount: number;
+  };
   statusCode: string;
   subtotalAmount: number;
   taxAmount: number;
+  template: {
+    body: string | null;
+    footer: string | null;
+    id: string | null;
+    subject: string | null;
+    terms: string | null;
+    version: number | null;
+  };
   totalAmount: number;
   typeCode: string;
+}
+
+export interface InvoicePaymentOrderResponse {
+  amount: number;
+  amountMinor: number;
+  currencyCode: string;
+  customer: {
+    email: string;
+    name: string;
+    phone: string | null;
+  };
+  invoiceId: string;
+  invoiceNumber: string;
+  keyId: string;
+  orderId: string;
+  provider: 'razorpay';
+  receipt: string;
+}
+
+export interface InvoicePaymentVerifyResponse {
+  amountDue: number;
+  amountPaid: number;
+  invoiceId: string;
+  invoiceStatus: string;
+  paymentId: string | null;
+  status: 'authorized' | 'paid';
 }

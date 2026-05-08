@@ -67,6 +67,16 @@ type DocumentTypeRow = RowDataPacket & {
   usageCount: number;
 };
 
+const REFERENCE_CACHE_TTL_MS = 5 * 60_000;
+type CacheEntry<T> = { expiresAt: number; value: T };
+let templatesCache: CacheEntry<unknown> | null = null;
+let documentTypesCache: CacheEntry<unknown> | null = null;
+
+const clearTemplatesDocumentTypesCache = () => {
+  templatesCache = null;
+  documentTypesCache = null;
+};
+
 const TEMPLATE_TYPES: TemplateType[] = ['invoice', 'message', 'notification', 'document_checklist', 'general'];
 
 const VARIABLE_ALLOWLIST: Record<TemplateType, Set<string>> = {
@@ -74,12 +84,30 @@ const VARIABLE_ALLOWLIST: Record<TemplateType, Set<string>> = {
   general: new Set(['platformName', 'supportEmail', 'supportPhone']),
   invoice: new Set([
     'amountDue',
+    'amountPaid',
+    'businessAddress',
+    'businessEmail',
+    'businessLegalName',
+    'businessPhone',
+    'businessWebsite',
     'clientName',
     'dueDate',
     'footerNote',
+    'footer',
+    'gstin',
     'invoiceNumber',
+    'issueDate',
+    'lineItems',
     'matterTitle',
+    'paymentInstructions',
+    'paymentTerms',
     'platformName',
+    'sacCode',
+    'subtotal',
+    'taxBreakdown',
+    'taxMode',
+    'taxTotal',
+    'total',
     'totalAmount',
   ]),
   message: new Set(['adminName', 'clientName', 'matterTitle', 'platformName', 'supportEmail']),
@@ -323,7 +351,7 @@ const getDocumentTypeRow = async (documentTypeId: string) => {
   return row;
 };
 
-export const getTemplates = async () => {
+const loadTemplates = async () => {
   const rows = await queryRows<TemplateRow>(
     `${templateSelectSql}
      ORDER BY template_type_code ASC, is_default DESC, is_active DESC, template_name ASC`
@@ -334,7 +362,17 @@ export const getTemplates = async () => {
   };
 };
 
-export const getDocumentTypes = async () => {
+export const getTemplates = async () => {
+  if (templatesCache && templatesCache.expiresAt > Date.now()) {
+    return templatesCache.value as Awaited<ReturnType<typeof loadTemplates>>;
+  }
+
+  const value = await loadTemplates();
+  templatesCache = { expiresAt: Date.now() + REFERENCE_CACHE_TTL_MS, value };
+  return value;
+};
+
+const loadDocumentTypes = async () => {
   const rows = await queryRows<DocumentTypeRow>(
     `${documentTypeSelectSql}
      ORDER BY dt.is_active DESC, dt.display_order ASC, dt.name ASC`
@@ -345,7 +383,18 @@ export const getDocumentTypes = async () => {
   };
 };
 
+export const getDocumentTypes = async () => {
+  if (documentTypesCache && documentTypesCache.expiresAt > Date.now()) {
+    return documentTypesCache.value as Awaited<ReturnType<typeof loadDocumentTypes>>;
+  }
+
+  const value = await loadDocumentTypes();
+  documentTypesCache = { expiresAt: Date.now() + REFERENCE_CACHE_TTL_MS, value };
+  return value;
+};
+
 export const createTemplate = async (actor: AdminActor, payload: TemplateInput) => {
+  clearTemplatesDocumentTypesCache();
   const next = normalizeTemplateInput(payload);
 
   const result = await executeStatement<ResultSetHeader>(
@@ -401,6 +450,7 @@ export const updateTemplate = async (
   templateId: string,
   payload: UpdateTemplateInput
 ) => {
+  clearTemplatesDocumentTypesCache();
   const existing = await getTemplateRow(templateId);
   const next = normalizeTemplateInput({
     body: payload.body ?? existing.body,
@@ -449,6 +499,7 @@ export const updateTemplate = async (
 };
 
 export const archiveTemplate = async (actor: AdminActor, templateId: string) => {
+  clearTemplatesDocumentTypesCache();
   const existing = await getTemplateRow(templateId);
 
   await executeStatement(
@@ -478,6 +529,7 @@ export const archiveTemplate = async (actor: AdminActor, templateId: string) => 
 
 export const setDefaultTemplate = async (actor: AdminActor, templateId: string) =>
   withTransaction(async (connection) => {
+    clearTemplatesDocumentTypesCache();
     const existing = firstRow(
       await queryRows<TemplateRow>(
         `${templateSelectSql}
@@ -543,6 +595,7 @@ export const setDefaultTemplate = async (actor: AdminActor, templateId: string) 
   });
 
 export const createDocumentType = async (actor: AdminActor, payload: DocumentTypeInput) => {
+  clearTemplatesDocumentTypesCache();
   const next = normalizeDocumentTypeInput(payload);
   const duplicate = firstRow(
     await queryRows<RowDataPacket & { id: number }>(`SELECT id FROM document_types WHERE code = ? LIMIT 1`, [
@@ -608,6 +661,7 @@ export const updateDocumentType = async (
   documentTypeId: string,
   payload: UpdateDocumentTypeInput
 ) => {
+  clearTemplatesDocumentTypesCache();
   const existing = await getDocumentTypeRow(documentTypeId);
   const next = normalizeDocumentTypeInput({
     allowedExtensions: payload.allowedExtensions ?? parseStringArray(existing.allowedExtensionsJson),
@@ -665,6 +719,7 @@ export const updateDocumentType = async (
 };
 
 export const archiveDocumentType = async (actor: AdminActor, documentTypeId: string) => {
+  clearTemplatesDocumentTypesCache();
   const existing = await getDocumentTypeRow(documentTypeId);
 
   await executeStatement(

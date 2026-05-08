@@ -15,10 +15,22 @@ const SECURITY_HEADERS = {
 };
 
 export default defineConfig({
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          icons: ['lucide-react'],
+          motion: ['motion'],
+          react: ['react', 'react-dom', 'react/jsx-runtime'],
+          router: ['react-router'],
+        },
+      },
+    },
+  },
   optimizeDeps: {
     include: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
   },
-  plugins: [react({ fastRefresh: false }), tailwindcss()],
+  plugins: [react(), tailwindcss()],
   preview: {
     headers: SECURITY_HEADERS,
   },

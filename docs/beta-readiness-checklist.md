@@ -121,6 +121,122 @@ Optional overrides:
 
 The smoke script never prints passwords. By default it is read-only and does not create records.
 
+Use explicit `BETA_SMOKE_*` credentials for authenticated smoke. Do not rely on
+`ADMIN_BOOTSTRAP_PASSWORD` after first login because the admin is expected to
+rotate that temporary password. Do not rely on preview account credentials unless
+the preview account is explicitly enabled and known to exist in the current DB.
+
+Recommended local pattern:
+
+```bash
+cat > /tmp/glmg-beta-smoke.env <<'EOF'
+BETA_SMOKE_ADMIN_EMAIL=<active-admin-email>
+BETA_SMOKE_ADMIN_PASSWORD=<current-rotated-admin-password>
+BETA_SMOKE_CLIENT_EMAIL=<disposable-client-email>
+BETA_SMOKE_CLIENT_PASSWORD=<disposable-client-password>
+BETA_SMOKE_CLIENT_WEB_BASE=http://127.0.0.1:5173
+BETA_SMOKE_ADMIN_WEB_BASE=http://127.0.0.1:5174
+BETA_SMOKE_CLIENT_API_BASE=http://127.0.0.1:3001/api/v1
+BETA_SMOKE_ADMIN_API_BASE=http://127.0.0.1:3005/api/v1/admin
+EOF
+chmod 600 /tmp/glmg-beta-smoke.env
+BETA_SMOKE_ENV_FILES=/tmp/glmg-beta-smoke.env npm run smoke:beta
+```
+
+After a disposable DB reset, create or reset the smoke client before running
+the smoke test:
+
+```bash
+BETA_SMOKE_ENV_FILES=/tmp/glmg-beta-smoke.env npm run setup:beta-smoke-client
+```
+
+The setup script reads `BETA_SMOKE_CLIENT_EMAIL` and
+`BETA_SMOKE_CLIENT_PASSWORD`, hashes the password with the app's `scrypt`
+format, and creates or repairs the client user, credential, active client role,
+client account, portal contact, primary billing address, and notification
+preferences. It never prints the password.
+
+The script is for local/disposable beta data only. If the target env file still
+has `APP_ENV=production` but the database is a freshly reset disposable beta DB,
+you must opt in explicitly:
+
+```bash
+BETA_SMOKE_ENV_FILES=/tmp/glmg-beta-smoke.env \
+BETA_SMOKE_SETUP_ALLOW_DISPOSABLE_DB=true \
+npm run setup:beta-smoke-client
+```
+
+For safety, the configured smoke client email must look disposable: use a
+`.local` address, a `+smoke` alias, or an address containing `smoke`.
+
+Required smoke identity state:
+
+- Admin user exists, `login_enabled=1`, has an active role, and does not require password rotation.
+- Client user exists, `login_enabled=1`, email/phone verification is complete, and the linked client account is active.
+- Passwords are stored only in ignored local env files or `/tmp` smoke env files, never in git.
+
+### Live Playwright E2E
+
+The Playwright suite can reuse the same disposable smoke identities. Keep the
+credentials in `/tmp` or another ignored local file and export only variable
+names in docs or CI logs.
+
+Required variables:
+
+- `E2E_RUN_LIVE=true`
+- `E2E_RUN_MUTATIONS=false` for read-only auth checks
+- `E2E_RUN_MUTATIONS=true` for disposable create/update workflows
+- `E2E_ADMIN_EMAIL`
+- `E2E_ADMIN_PASSWORD`
+- `E2E_CLIENT_EMAIL`
+- `E2E_CLIENT_PASSWORD`
+- `E2E_ADMIN_WEB_BASE`
+- `E2E_CLIENT_WEB_BASE`
+- `E2E_ADMIN_API_BASE`
+- `E2E_CLIENT_API_BASE`
+
+Safe local read-only pass:
+
+```bash
+set -a
+source /tmp/glmg-beta-smoke.env
+set +a
+E2E_RUN_LIVE=true \
+E2E_RUN_MUTATIONS=false \
+E2E_ADMIN_EMAIL="$BETA_SMOKE_ADMIN_EMAIL" \
+E2E_ADMIN_PASSWORD="$BETA_SMOKE_ADMIN_PASSWORD" \
+E2E_CLIENT_EMAIL="$BETA_SMOKE_CLIENT_EMAIL" \
+E2E_CLIENT_PASSWORD="$BETA_SMOKE_CLIENT_PASSWORD" \
+E2E_ADMIN_WEB_BASE="$BETA_SMOKE_ADMIN_WEB_BASE" \
+E2E_CLIENT_WEB_BASE="$BETA_SMOKE_CLIENT_WEB_BASE" \
+E2E_ADMIN_API_BASE="$BETA_SMOKE_ADMIN_API_BASE" \
+E2E_CLIENT_API_BASE="$BETA_SMOKE_CLIENT_API_BASE" \
+npm run test:e2e
+```
+
+Safe disposable mutation pass:
+
+```bash
+set -a
+source /tmp/glmg-beta-smoke.env
+set +a
+E2E_RUN_LIVE=true \
+E2E_RUN_MUTATIONS=true \
+E2E_ADMIN_EMAIL="$BETA_SMOKE_ADMIN_EMAIL" \
+E2E_ADMIN_PASSWORD="$BETA_SMOKE_ADMIN_PASSWORD" \
+E2E_CLIENT_EMAIL="$BETA_SMOKE_CLIENT_EMAIL" \
+E2E_CLIENT_PASSWORD="$BETA_SMOKE_CLIENT_PASSWORD" \
+E2E_ADMIN_WEB_BASE="$BETA_SMOKE_ADMIN_WEB_BASE" \
+E2E_CLIENT_WEB_BASE="$BETA_SMOKE_CLIENT_WEB_BASE" \
+E2E_ADMIN_API_BASE="$BETA_SMOKE_ADMIN_API_BASE" \
+E2E_CLIENT_API_BASE="$BETA_SMOKE_CLIENT_API_BASE" \
+npm run test:e2e
+```
+
+Mutation mode creates disposable records only. The extended package
+selection/message fixture test skips unless the disposable client already has a
+published or recommended package and a message thread fixture.
+
 ## 3. Start All Four Apps
 
 Run each command in its own terminal:

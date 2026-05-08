@@ -13,10 +13,12 @@ import {
 } from '../../lib/httpErrors.js';
 import { getMysqlPool } from '../../lib/mysql.js';
 import { selectOne, withTransaction } from '../../lib/mysqlUtils.js';
-import { logEvent } from '../../lib/observability.js';
+import { getRequestContext, logEvent } from '../../lib/observability.js';
 import { allocateBusinessNumber } from '../platform/sequences.js';
 import { LocalDocumentStorage } from './localDocumentStorage.js';
+import { isScanBlocked, scanDocumentContent } from './malwareScanner.js';
 import { MysqlStoredUploadRepository } from './mysqlStoredUploadRepository.js';
+import { S3DocumentStorage } from './s3DocumentStorage.js';
 import type {
   CreateStoredUploadInput,
   StoredUploadRecord,
@@ -77,7 +79,23 @@ const resolveDocumentRoot = () =>
     ? env.DOCUMENT_STORAGE_ROOT
     : path.resolve(process.cwd(), env.DOCUMENT_STORAGE_ROOT);
 
-const storageDriver = new LocalDocumentStorage(resolveDocumentRoot());
+const createStorageDriver = () => {
+  if (env.DOCUMENT_STORAGE_DRIVER === 's3') {
+    return new S3DocumentStorage({
+      accessKeyId: env.S3_ACCESS_KEY_ID || '',
+      bucket: env.S3_BUCKET || '',
+      endpoint: env.S3_ENDPOINT || '',
+      region: env.S3_REGION,
+      secretAccessKey: env.S3_SECRET_ACCESS_KEY || '',
+      sessionToken: env.S3_SESSION_TOKEN || null,
+      verifyUploadSha256: env.S3_VERIFY_UPLOAD_SHA256,
+    });
+  }
+
+  return new LocalDocumentStorage(resolveDocumentRoot());
+};
+
+const storageDriver = createStorageDriver();
 
 let repositoryPromise: Promise<StoredUploadRepository | null> | null = null;
 let initializationPromise: Promise<void> | null = null;
@@ -145,7 +163,7 @@ const requireUploadEnabled = async () => {
   if (env.DOCUMENT_STORAGE_DRIVER === 'disabled') {
     throw serviceUnavailable(
       'document_storage_disabled',
-      'Document storage is disabled in this environment.'
+      'Document storage is not available right now.'
     );
   }
 
@@ -228,6 +246,7 @@ const insertDocumentAuditEvent = async (
     summaryNewValue?: string | null;
   }
 ) => {
+  const requestContext = getRequestContext();
   await connection.execute(
     `INSERT INTO audit_events (
        public_id,
@@ -244,7 +263,7 @@ const insertDocumentAuditEvent = async (
        summary_old_value,
        summary_new_value,
        occurred_at
-     ) VALUES (?, ?, ?, 'documents', ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, ?)`,
+     ) VALUES (?, ?, ?, 'documents', ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
     [
       createPublicId(),
       input.actorUserId,
@@ -253,6 +272,9 @@ const insertDocumentAuditEvent = async (
       input.actionCode,
       input.actionLabel,
       input.sourceModule,
+      requestContext?.requestId ?? null,
+      requestContext?.ipAddress ?? null,
+      requestContext?.userAgent ?? null,
       input.summaryNewValue || null,
       toMysqlDateTime(nowUtc()),
     ]
@@ -371,7 +393,7 @@ export const documentStorageService = {
     const record = buildRecord(uploadId, {
       ...input,
       ownerAccountId,
-      storageDriver: 'local',
+      storageDriver: storageDriver.driverCode,
       storageKey,
     });
 
@@ -420,6 +442,7 @@ export const documentStorageService = {
     }
 
     await storageDriver.writeBuffer(record.storageKey, content);
+    const scanResult = await scanDocumentContent(content);
 
     const finalizedAt = nowUtc();
 
@@ -455,8 +478,9 @@ export const documentStorageService = {
         `INSERT INTO document_versions (
           public_id, document_id, version_no, storage_driver_code, storage_path, original_file_name,
           mime_type, file_extension, file_size_bytes, checksum_sha256, virus_scan_status_code,
+          scan_provider_code, scan_checked_at, scan_error_text, quarantine_flag,
           uploaded_by_user_id, uploaded_at, is_current, retention_hold_flag
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           createPublicId(),
           documentId,
@@ -468,7 +492,11 @@ export const documentStorageService = {
           toFileExtension(record.originalName),
           record.sizeBytes,
           record.checksumSha256,
-          'pending',
+          scanResult.status,
+          scanResult.providerCode,
+          toMysqlDateTime(finalizedAt),
+          scanResult.errorText,
+          scanResult.status === 'infected' ? 1 : 0,
           Number(ownerContext.user_id),
           toMysqlDateTime(finalizedAt),
           1,
@@ -499,6 +527,33 @@ export const documentStorageService = {
         entityPk: documentId,
         sourceModule: record.sourceModule,
         summaryNewValue: `${documentNumber}: ${record.originalName}`,
+      });
+
+      await insertDocumentAuditEvent(connection, {
+        actionCode: 'document.scan_requested',
+        actionLabel: 'Document malware scan requested',
+        actorRoleCode: 'client',
+        actorUserId: Number(ownerContext.user_id),
+        entityPk: documentId,
+        sourceModule: record.sourceModule,
+        summaryNewValue: record.originalName,
+      });
+
+      await insertDocumentAuditEvent(connection, {
+        actionCode:
+          scanResult.status === 'clean'
+            ? 'document.scan_clean'
+            : scanResult.status === 'infected'
+              ? 'document.scan_infected'
+              : scanResult.status === 'scan_failed'
+                ? 'document.scan_failed'
+                : 'document.scan_skipped',
+        actionLabel: `Document scan ${scanResult.status.replace(/_/g, ' ')}`,
+        actorRoleCode: 'client',
+        actorUserId: Number(ownerContext.user_id),
+        entityPk: documentId,
+        sourceModule: record.sourceModule,
+        summaryNewValue: `${scanResult.providerCode}: ${scanResult.status}`,
       });
     });
 
@@ -538,7 +593,7 @@ export const documentStorageService = {
     }
 
     return {
-      absolutePath: storageDriver.getAbsolutePath(record.storageKey),
+      content: await storageDriver.readBuffer(record.storageKey),
       upload: record,
     };
   },
@@ -591,8 +646,13 @@ export const documentStorageService = {
         throw notFound('document_not_found', 'Document could not be found.');
       }
 
-      if (['blocked', 'infected', 'quarantined'].includes(documentRow.virus_scan_status_code)) {
-        throw forbidden('document_not_available', 'This document is not available for download.');
+      if (isScanBlocked(documentRow.virus_scan_status_code, options.mode)) {
+        throw forbidden(
+          'document_not_available',
+          options.mode === 'preview'
+            ? 'Preview is unavailable until malware scanning allows it.'
+            : 'Download is unavailable until malware scanning allows it.'
+        );
       }
 
       if (options.mode === 'preview' && !isSafePreviewMimeType(documentRow.mime_type)) {
@@ -629,7 +689,7 @@ export const documentStorageService = {
       });
 
       return {
-        absolutePath: storageDriver.getAbsolutePath(documentRow.storage_path),
+        content: await storageDriver.readBuffer(documentRow.storage_path),
         mimeType: documentRow.mime_type,
         originalName: documentRow.original_file_name,
       };

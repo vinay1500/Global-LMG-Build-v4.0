@@ -49,7 +49,7 @@ type SettingRule = {
 
 const SETTING_RULES: Record<string, SettingRule> = {
   'platform.default_currency': {
-    options: ['INR', 'USD', 'GBP', 'EUR', 'SGD', 'AED'],
+    options: ['USD'],
     pattern: /^[A-Z]{3}$/,
     type: 'select',
   },

@@ -1,19 +1,20 @@
-export type UrgencyLevel = 'standard' | 'within-6hrs' | 'within-2hrs';
-export type ConsultationMode = 'video' | 'phone' | 'in-person';
+export type UrgencyLevel = string;
+export type ConsultationMode = string;
 
 export interface RequestData {
   fullName: string;
   email: string;
   mobile: string;
-  whatsappNumber: string;
-  whatsappSame: boolean;
   services: string[];
   legalDomain: string;
   caseDetails: string;
   documents: File[];
   consultationMode: ConsultationMode;
   preferredDate: string;
+  preferredEndAtUtc?: string;
+  preferredStartAtUtc?: string;
   preferredTime: string;
+  preferredTimezone?: string;
   urgency: UrgencyLevel;
   pastLegalAction: boolean;
 }
@@ -24,6 +25,47 @@ export interface RequestWizardService {
   description: string;
   icon: string;
   baseFee: number;
+}
+
+export interface RequestWizardConsultationMode {
+  description: string;
+  fee: number;
+  id: string;
+  isInPerson: boolean;
+  label: string;
+  transportDisclaimer: string | null;
+}
+
+export interface RequestWizardUrgencyOption {
+  allowedConsultationModes: string[];
+  id: string;
+  isImmediate: boolean;
+  label: string;
+  maxResponseHours: number | null;
+  minResponseHours: number | null;
+  responseWindowHours: number | null;
+  surcharge: number;
+  surchargeType: 'flat' | 'percent';
+  timingLabel: string;
+}
+
+export interface RequestWizardPricingConfig {
+  consultationModes: RequestWizardConsultationMode[];
+  countryPricing: {
+    countryCode: string;
+    countryName: string;
+    countrySource: 'default' | 'ip_geolocation' | 'phone' | 'request' | 'saved_address';
+    currencyCode: string;
+    isDefaultFallback: boolean;
+    multiplier: number;
+    pricingCountryConfidence: 'fallback' | 'high' | 'medium';
+  };
+  currencyCode: string;
+  detectedCountryCode?: string;
+  detectedCurrency?: string;
+  legalDomains: LegalDomainOption[];
+  services: RequestWizardService[];
+  urgencyOptions: RequestWizardUrgencyOption[];
 }
 
 export interface LegalDomainOption {
@@ -111,6 +153,88 @@ export const TIME_SLOTS = [
   '04:00 PM - 04:45 PM',
   '05:00 PM - 05:45 PM',
 ];
+
+export const DEFAULT_REQUEST_PRICING_CONFIG: RequestWizardPricingConfig = {
+  consultationModes: [
+    {
+      description: 'Remote video consultation',
+      fee: 0,
+      id: 'video',
+      isInPerson: false,
+      label: 'Video Call',
+      transportDisclaimer: null,
+    },
+    {
+      description: 'Phone consultation',
+      fee: 0,
+      id: 'phone',
+      isInPerson: false,
+      label: 'Phone Call',
+      transportDisclaimer: null,
+    },
+    {
+      description: 'In-person coordination meeting',
+      fee: 0,
+      id: 'in-person',
+      isInPerson: true,
+      label: 'In-Person',
+      transportDisclaimer:
+        'Transportation cost is extra and borne by the client. Final travel support cost depends on city and country.',
+    },
+  ],
+  countryPricing: {
+    countryCode: 'US',
+    countryName: 'United States',
+    countrySource: 'default',
+    currencyCode: 'USD',
+    isDefaultFallback: true,
+    multiplier: 1,
+    pricingCountryConfidence: 'fallback',
+  },
+  currencyCode: 'USD',
+  detectedCountryCode: 'US',
+  detectedCurrency: 'USD',
+  legalDomains: LEGAL_DOMAINS,
+  services: REQUEST_WIZARD_SERVICES,
+  urgencyOptions: [
+    {
+      allowedConsultationModes: ['phone', 'video', 'in-person'],
+      id: 'standard',
+      isImmediate: false,
+      label: 'Standard (24-48 hrs)',
+      maxResponseHours: 48,
+      minResponseHours: 24,
+      responseWindowHours: 48,
+      surcharge: 0,
+      surchargeType: 'flat',
+      timingLabel: '24-48 hrs',
+    },
+    {
+      allowedConsultationModes: ['phone', 'video'],
+      id: 'within-6hrs',
+      isImmediate: true,
+      label: 'Immediate (Within 6 hrs)',
+      maxResponseHours: 6,
+      minResponseHours: null,
+      responseWindowHours: 6,
+      surcharge: 500,
+      surchargeType: 'flat',
+      timingLabel: 'Within 6 hrs',
+    },
+    {
+      allowedConsultationModes: ['phone', 'video'],
+      id: 'within-2hrs',
+      isImmediate: true,
+      label: 'Immediate (Within 2 hrs)',
+      maxResponseHours: 2,
+      minResponseHours: null,
+      responseWindowHours: 2,
+      surcharge: 1000,
+      surchargeType: 'flat',
+      timingLabel: 'Within 2 hrs',
+    },
+  ],
+};
 
 const PRICING_TIERS = [
   { count: 1, fee: 1000 },

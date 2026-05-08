@@ -13,8 +13,8 @@ export const AccessDeniedPage = () => {
           Access Restricted
         </h1>
         <p className="text-sm text-[#8C8981] mt-2">
-          The current Phase 1 shell can authenticate against the shared session boundary, but it does
-          not yet enforce a full admin role matrix.
+          Your admin role does not include permission for this workspace. Ask an ops admin to adjust
+          your role in Settings, or return to a section available to your account.
         </p>
         <Link
           className="inline-flex mt-6 px-4 py-2 rounded-lg bg-[#2C2B29] text-white text-sm font-medium hover:bg-[#4A4946] transition"

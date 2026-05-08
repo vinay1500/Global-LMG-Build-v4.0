@@ -16,6 +16,7 @@ import {
 import { LifecycleStepper } from '../LifecycleStepper';
 import { StatusBadge, UrgencyDot } from '../StatusBadge';
 import { formatCurrency, formatDate } from '../../../utils/dashboardFormatting';
+import { getGreetingForCountry } from '../../../utils/localGreeting';
 import type {
   Invoice,
   Matter,
@@ -28,6 +29,7 @@ import type {
 
 interface DashboardOverviewSectionProps {
   user: PlatformUser;
+  billingCountryCode?: string | null;
   activeMatters: Matter[];
   myEvents: PlatformEvent[];
   totalUnread: number;
@@ -43,6 +45,7 @@ interface DashboardOverviewSectionProps {
 
 export const DashboardOverviewSection = ({
   user,
+  billingCountryCode,
   activeMatters,
   myEvents,
   totalUnread,
@@ -59,7 +62,7 @@ export const DashboardOverviewSection = ({
     <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-gray-900 via-gray-800 to-[#1a1a3e] p-8 text-white lg:p-10">
       <div className="absolute right-0 top-0 -mr-20 -mt-20 h-64 w-64 rounded-full bg-white/5" />
       <div className="relative">
-        <p className="mb-1 text-gray-400">Good morning,</p>
+        <p className="mb-1 text-gray-400">{getGreetingForCountry(billingCountryCode || user.countryCode)},</p>
         <h1 className="text-3xl lg:text-4xl" style={{ fontFamily: "'Playfair Display', serif" }}>
           {user.name}
         </h1>
@@ -118,7 +121,8 @@ export const DashboardOverviewSection = ({
           value: formatCurrency(
             myInvoices
               .filter((invoice) => invoice.status === 'paid')
-              .reduce((sum, invoice) => sum + invoice.totalAmount, 0)
+              .reduce((sum, invoice) => sum + invoice.totalAmount, 0),
+            myInvoices[0]?.currencyCode || activeMatters[0]?.currencyCode || 'USD'
           ),
           color: 'text-emerald-600',
         },
@@ -196,7 +200,7 @@ export const DashboardOverviewSection = ({
                     onClick={onOpenBilling}
                     className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-100"
                   >
-                    View Billing {formatCurrency(matter.dueAmount)}
+                    View Billing {formatCurrency(matter.dueAmount, matter.currencyCode || 'USD')}
                   </button>
                 )}
               </div>
@@ -242,6 +246,9 @@ export const DashboardOverviewSection = ({
                 >
                   <Video className="h-3.5 w-3.5" /> Join Call
                 </a>
+              )}
+              {event.googleAttendeeStatus === 'invited' && (
+                <p className="mt-2 text-xs text-gray-400">Google Calendar invite sent to your email.</p>
               )}
             </div>
           ))}
@@ -384,9 +391,9 @@ export const DashboardCasesSection = ({
               </div>
               {matter.totalFee > 0 && (
                 <div className="text-right">
-                  <p>{formatCurrency(matter.totalFee)}</p>
+                  <p>{formatCurrency(matter.totalFee, matter.currencyCode || 'USD')}</p>
                   {matter.dueAmount > 0 && (
-                    <p className="text-amber-600">Due: {formatCurrency(matter.dueAmount)}</p>
+                    <p className="text-amber-600">Due: {formatCurrency(matter.dueAmount, matter.currencyCode || 'USD')}</p>
                   )}
                 </div>
               )}
@@ -410,6 +417,31 @@ interface DashboardDocumentsSectionProps {
 }
 
 const SAFE_DOCUMENT_PREVIEW_TYPES = new Set(['CSV', 'GIF', 'JPG', 'JPEG', 'PDF', 'PNG', 'TXT', 'WEBP']);
+
+const documentScanLabel = (status?: string) => {
+  switch (status) {
+    case 'clean':
+      return 'Scan clean';
+    case 'infected':
+    case 'blocked':
+    case 'quarantined':
+      return 'Blocked';
+    case 'scan_failed':
+      return 'Scan failed';
+    case 'scan_skipped_manual_mode':
+      return 'Not virus scanned';
+    case 'pending_scan':
+      return 'Scan pending';
+    default:
+      return 'Unscanned';
+  }
+};
+
+const canPreviewDocument = (document: PlatformDocument) =>
+  SAFE_DOCUMENT_PREVIEW_TYPES.has(document.type.toUpperCase()) && document.virusStatus === 'clean';
+
+const canDownloadDocument = (document: PlatformDocument) =>
+  !['blocked', 'infected', 'quarantined'].includes(document.virusStatus || '');
 
 export const DashboardDocumentsSection = ({
   myDocs,
@@ -492,19 +524,19 @@ export const DashboardDocumentsSection = ({
                     <p className="truncate text-sm">{document.name}</p>
                     <p className="text-xs text-gray-400">
                       {document.type} · {formatSize(document.size)} · {formatDate(document.uploadedAt)} · by{' '}
-                      {document.uploadedBy}
+                      {document.uploadedBy} · {documentScanLabel(document.virusStatus)}
                     </p>
                   </div>
                   <div className="flex gap-2">
                     {(() => {
-                      const canPreview = SAFE_DOCUMENT_PREVIEW_TYPES.has(document.type.toUpperCase());
+                      const canPreview = canPreviewDocument(document);
 
                       return (
                         <button
                           type="button"
                           disabled={!canPreview}
                           onClick={() => onPreviewDocument(document.id)}
-                          title={canPreview ? 'Preview document' : 'Preview unavailable for this file type'}
+                          title={canPreview ? 'Preview document' : 'Preview unavailable until this safe file type has a clean scan'}
                           className="rounded-lg p-2 text-gray-400 hover:bg-gray-50 hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           <Eye className="h-4 w-4" />
@@ -513,8 +545,10 @@ export const DashboardDocumentsSection = ({
                     })()}
                     <button
                       type="button"
+                      disabled={!canDownloadDocument(document)}
                       onClick={() => onDownloadDocument(document.id)}
-                      className="rounded-lg p-2 text-gray-400 hover:bg-gray-50 hover:text-gray-600"
+                      title={canDownloadDocument(document) ? 'Download document' : 'Download blocked by malware scan policy'}
+                      className="rounded-lg p-2 text-gray-400 hover:bg-gray-50 hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       <Download className="h-4 w-4" />
                     </button>
@@ -544,6 +578,7 @@ export const DashboardBillingSection = ({
   onPayInvoice,
   onViewInvoice,
 }: DashboardBillingSectionProps) => {
+  const currencyCode = myInvoices[0]?.currencyCode || 'USD';
   const paid = myInvoices
     .filter((invoice) => invoice.status === 'paid')
     .reduce((sum, invoice) => sum + invoice.totalAmount, 0);
@@ -562,9 +597,9 @@ export const DashboardBillingSection = ({
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
         {[
-          { label: 'Total Paid', value: formatCurrency(paid), color: 'text-emerald-600', bg: 'bg-emerald-50' },
-          { label: 'Pending', value: formatCurrency(pending), color: 'text-amber-600', bg: 'bg-amber-50' },
-          { label: 'Overdue', value: formatCurrency(overdue), color: 'text-red-600', bg: 'bg-red-50' },
+          { label: 'Total Paid', value: formatCurrency(paid, currencyCode), color: 'text-emerald-600', bg: 'bg-emerald-50' },
+          { label: 'Pending', value: formatCurrency(pending, currencyCode), color: 'text-amber-600', bg: 'bg-amber-50' },
+          { label: 'Overdue', value: formatCurrency(overdue, currencyCode), color: 'text-red-600', bg: 'bg-red-50' },
         ].map((card) => (
           <div key={card.label} className={`${card.bg} rounded-xl border border-gray-100 p-5`}>
             <p className="mb-1 text-xs text-gray-500">{card.label}</p>
@@ -595,7 +630,7 @@ export const DashboardBillingSection = ({
                     <p className="text-sm">{invoice.matterTitle}</p>
                     <p className="text-xs text-gray-400">{invoice.matterRef}</p>
                   </td>
-                  <td className="px-4 py-3 text-sm">{formatCurrency(invoice.totalAmount)}</td>
+                  <td className="px-4 py-3 text-sm">{formatCurrency(invoice.totalAmount, invoice.currencyCode)}</td>
                   <td className="px-4 py-3 text-xs text-gray-500">{formatDate(invoice.issueDate)}</td>
                   <td className="px-4 py-3 text-xs text-gray-500">{formatDate(invoice.dueDate)}</td>
                   <td className="px-4 py-3">
@@ -647,7 +682,7 @@ export const DashboardBillingSection = ({
             {myPayments.map((payment) => (
               <div key={payment.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <p className="text-sm text-gray-900">{formatCurrency(payment.amount)}</p>
+                  <p className="text-sm text-gray-900">{formatCurrency(payment.amount, currencyCode)}</p>
                   <p className="text-xs text-gray-400">
                     Invoice {payment.invoiceId} · {payment.method.replace('-', ' ')} · Ref {payment.reference}
                   </p>

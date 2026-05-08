@@ -10,21 +10,26 @@ import {
 import { notFound, conflict, tooManyRequests, unauthorized } from '../../lib/httpErrors.js';
 import { getMysqlPool } from '../../lib/mysql.js';
 import { createPublicId } from '../../lib/ids.js';
+import { recordSecurityEvent } from '../../lib/securityEvents.js';
+import { validateAddressForStorage } from '../../lib/addressValidation.js';
 import { emailAuthProvider } from './providers/email.js';
 import { googleAuthProvider } from './providers/google.js';
 import { smsAuthProvider } from './providers/sms.js';
 import { MysqlAuthStore } from './mysqlAuthStore.js';
-import { InMemoryRateLimiter } from './rateLimiter.js';
+import {
+  clearPersistentRateLimit,
+  consumePersistentRateLimit,
+  getPersistentRateLimitStatus,
+} from './persistentRateLimiter.js';
 import type {
   AuthAccountRecord,
+  AuthFlowRecord,
   AuthFlowPurpose,
   AuthSessionUser,
   AuthStore,
   ChallengeType,
   PendingChallenge,
 } from './types.js';
-
-const limiter = new InMemoryRateLimiter();
 
 const normalizeEmail = (value: string) => value.trim().toLowerCase();
 const normalizePhone = (value: string) => value.replace(/\s+/g, ' ').trim();
@@ -34,6 +39,14 @@ const addMinutes = (minutes: number) => new Date(Date.now() + minutes * 60_000).
 const addHours = (hours: number) => new Date(Date.now() + hours * 60 * 60_000).toISOString();
 const addDays = (days: number) => new Date(Date.now() + days * 24 * 60 * 60_000).toISOString();
 const getWindowMs = () => env.AUTH_RATE_LIMIT_WINDOW_MINUTES * 60_000;
+const PASSWORD_RESET_RESPONSE_FLOOR_MS = 700;
+const PASSWORD_RESET_GENERIC_MESSAGE =
+  'If an account exists for that identifier, password reset instructions will be sent.';
+const isPreviewAccountEnabled = () => env.APP_ENV === 'development' && env.PREVIEW_ACCOUNT_ENABLED;
+const isPreviewAccount = (account: AuthAccountRecord) =>
+  normalizeEmail(account.email) === normalizeEmail(env.PREVIEW_ACCOUNT_EMAIL);
+const canAuthenticateAccount = (account: AuthAccountRecord) =>
+  !isPreviewAccount(account) || isPreviewAccountEnabled();
 
 const isMysqlConfigured = Boolean(
   env.MYSQL_HOST && env.MYSQL_DATABASE && env.MYSQL_USER && env.MYSQL_PASSWORD
@@ -97,7 +110,7 @@ const issuePhoneChallenge = async (phone: string) => {
   const expiresAt = addMinutes(env.PHONE_OTP_TTL_MINUTES);
   const lastSentAt = nowIso();
 
-  if (env.SMS_PROVIDER_MODE === 'preview') {
+  if (env.SMS_PROVIDER_MODE !== 'twilio-verify') {
     const challenge = createChallenge('phone', env.PHONE_OTP_TTL_MINUTES);
     const delivery = await smsAuthProvider.sendCode({
       code: challenge.code,
@@ -109,7 +122,7 @@ const issuePhoneChallenge = async (phone: string) => {
       challenge: {
         ...challenge.challenge,
         phoneSnapshot: phone,
-        providerCode: 'preview' as const,
+        providerCode: env.SMS_PROVIDER_MODE === 'twilio' ? ('twilio' as const) : ('preview' as const),
       },
       deliveryHint: delivery.deliveryHint,
     };
@@ -133,20 +146,93 @@ const issuePhoneChallenge = async (phone: string) => {
   };
 };
 
-const assertRateLimit = (key: string) => {
-  const rateLimit = limiter.consume(
-    key,
-    env.AUTH_RATE_LIMIT_MAX_ATTEMPTS,
-    getWindowMs()
-  );
+const consumeAuthRateLimit = async (options: { key: string; maxAttempts?: number }) => {
+  const rateLimit = await consumePersistentRateLimit({
+    key: options.key,
+    maxAttempts: options.maxAttempts ?? env.AUTH_RATE_LIMIT_MAX_ATTEMPTS,
+    scope: 'client_auth',
+    windowMs: getWindowMs(),
+  });
 
   if (!rateLimit.allowed) {
+    await recordSecurityEvent({
+      eventTypeCode: 'client.rate_limit_blocked',
+      identifierValue: options.key,
+      success: false,
+    });
     throw tooManyRequests(
       'too_many_attempts',
       'Too many attempts. Please wait before trying again.',
       rateLimit.retryAfterSeconds
     );
   }
+};
+
+const getClientAuthRateLimitKeys = (
+  actionCode: 'password-reset' | 'signin' | 'signup',
+  identifier: string,
+  ipAddress: string
+) => [
+  {
+    key: `${actionCode}:identifier:${identifier.trim().toLowerCase()}`,
+    maxAttempts: env.AUTH_RATE_LIMIT_MAX_ATTEMPTS,
+  },
+  {
+    key: `${actionCode}:ip:${ipAddress || 'unknown'}`,
+    maxAttempts: env.AUTH_RATE_LIMIT_IP_MAX_ATTEMPTS,
+  },
+];
+
+const consumeClientAuthRateLimits = async (
+  actionCode: 'password-reset' | 'signin' | 'signup',
+  identifier: string,
+  ipAddress: string
+) => {
+  for (const key of getClientAuthRateLimitKeys(actionCode, identifier, ipAddress)) {
+    await consumeAuthRateLimit(key);
+  }
+};
+
+const assertClientSignInAllowed = async (identifier: string, ipAddress: string) => {
+  for (const key of getClientAuthRateLimitKeys('signin', identifier, ipAddress)) {
+    const rateLimit = await getPersistentRateLimitStatus({
+      key: key.key,
+      maxAttempts: key.maxAttempts,
+      scope: 'client_auth',
+      windowMs: getWindowMs(),
+    });
+
+    if (!rateLimit.allowed) {
+      await recordSecurityEvent({
+        eventTypeCode: 'client.rate_limit_blocked',
+        identifierValue: key.key,
+        success: false,
+      });
+      throw tooManyRequests(
+        'too_many_attempts',
+        'Too many attempts. Please wait before trying again.',
+        rateLimit.retryAfterSeconds
+      );
+    }
+  }
+};
+
+const recordClientSignInFailure = async (identifier: string, ipAddress: string) => {
+  for (const key of getClientAuthRateLimitKeys('signin', identifier, ipAddress)) {
+    await consumePersistentRateLimit({
+      key: key.key,
+      maxAttempts: key.maxAttempts,
+      scope: 'client_auth',
+      windowMs: getWindowMs(),
+    });
+  }
+};
+
+const clearClientSignInFailures = async (identifier: string) => {
+  await clearPersistentRateLimit({
+    key: `signin:identifier:${identifier.trim().toLowerCase()}`,
+    scope: 'client_auth',
+  });
 };
 
 const isSmsDeliveryFailure = (error: unknown): error is Error & { code: string } =>
@@ -346,6 +432,10 @@ const verifyPhoneChallenge = async (
 };
 
 const createPreviewAccount = async (store: AuthStore) => {
+  if (!isPreviewAccountEnabled()) {
+    return;
+  }
+
   const existing = await store.getAccountByEmail(env.PREVIEW_ACCOUNT_EMAIL);
 
   if (existing) {
@@ -365,6 +455,16 @@ const createPreviewAccount = async (store: AuthStore) => {
     createdAt: '2024-08-15T09:00:00.000Z',
     lastLoginAt: nowIso(),
   });
+};
+
+const waitForPasswordResetFloor = async (startedAt: number) => {
+  const remainingMs = PASSWORD_RESET_RESPONSE_FLOOR_MS - (Date.now() - startedAt);
+
+  if (remainingMs > 0) {
+    await new Promise((resolve) => {
+      setTimeout(resolve, remainingMs);
+    });
+  }
 };
 
 const ensureInitialized = async () => {
@@ -413,6 +513,14 @@ export const authService = {
       };
     }
 
+    if (!canAuthenticateAccount(account)) {
+      await store.deleteSessionByHashedToken(hashedToken);
+      return {
+        clearSessionCookie: true,
+        user: null,
+      };
+    }
+
     return {
       clearSessionCookie: false,
       user: toUser(account),
@@ -426,11 +534,29 @@ export const authService = {
     const store = await ensureInitialized();
     const identifier = payload.identifier.trim();
 
-    assertRateLimit(`signin:${context.ipAddress}:${identifier.toLowerCase()}`);
+    await assertClientSignInAllowed(identifier, context.ipAddress);
 
     const account = await findAccountByIdentifier(store, identifier);
 
     if (!account) {
+      await recordSecurityEvent({
+        eventTypeCode: 'client.login_failed',
+        identifierValue: identifier.trim().toLowerCase(),
+        ipAddress: context.ipAddress,
+        success: false,
+      });
+      await recordClientSignInFailure(identifier, context.ipAddress);
+      throw unauthorized('invalid_credentials', 'Invalid credentials. Please try again.');
+    }
+
+    if (!canAuthenticateAccount(account)) {
+      await recordSecurityEvent({
+        eventTypeCode: 'client.login_failed',
+        identifierValue: identifier.trim().toLowerCase(),
+        ipAddress: context.ipAddress,
+        success: false,
+      });
+      await recordClientSignInFailure(identifier, context.ipAddress);
       throw unauthorized('invalid_credentials', 'Invalid credentials. Please try again.');
     }
 
@@ -444,8 +570,17 @@ export const authService = {
     const passwordMatches = await verifyPassword(payload.password, account.passwordHash);
 
     if (!passwordMatches) {
+      await recordSecurityEvent({
+        eventTypeCode: 'client.login_failed',
+        identifierValue: identifier.trim().toLowerCase(),
+        ipAddress: context.ipAddress,
+        success: false,
+      });
+      await recordClientSignInFailure(identifier, context.ipAddress);
       throw unauthorized('invalid_credentials', 'Invalid credentials. Please try again.');
     }
+
+    await clearClientSignInFailures(identifier);
 
     if (!account.isEmailVerified) {
       const emailChallenge = await issueEmailChallenge(
@@ -504,6 +639,17 @@ export const authService = {
 
   async signUp(payload: {
     acceptTerms: boolean;
+    address: {
+      city: string;
+      country: string;
+      line1: string;
+      line2?: string | null;
+      postalCode: string;
+      sourceCode?: 'google' | 'ip_prefill' | 'manual';
+      state: string;
+      googlePlaceId?: string | null;
+      validationStatusCode?: 'manual' | 'unverified' | 'verified';
+    };
     country: string;
     email: string;
     fullName: string;
@@ -513,6 +659,8 @@ export const authService = {
     const store = await ensureInitialized();
     const normalizedEmail = normalizeEmail(payload.email);
     const normalizedPhone = normalizePhone(payload.phone);
+
+    await consumeClientAuthRateLimits('signup', normalizedEmail, context.ipAddress);
 
     if (await store.getAccountByEmail(normalizedEmail)) {
       throw conflict('email_already_exists', 'An account with this email already exists.');
@@ -527,13 +675,15 @@ export const authService = {
       fullName: payload.fullName.trim(),
       email: normalizedEmail,
       phone: normalizedPhone,
-      country: payload.country.trim(),
+      country: (payload.address.country || payload.country).trim(),
       passwordHash: await hashPassword(payload.password),
       provider: 'email',
       isEmailVerified: false,
       isPhoneVerified: false,
       createdAt: nowIso(),
     };
+
+    const primaryAddress = await validateAddressForStorage(payload.address);
 
     await store.saveAccount(account, {
       legalAcceptance: payload.acceptTerms
@@ -545,6 +695,7 @@ export const authService = {
             userAgent: context.userAgent || null,
           }
         : undefined,
+      primaryAddress,
     });
 
     const emailChallenge = await issueEmailChallenge(
@@ -789,35 +940,51 @@ export const authService = {
   },
 
   async requestPasswordReset(identifier: string, context: { ipAddress: string }) {
+    const startedAt = Date.now();
     const store = await ensureInitialized();
     const normalizedIdentifier = identifier.trim().toLowerCase();
 
-    assertRateLimit(`password-reset:${context.ipAddress}:${normalizedIdentifier}`);
-
-    const account = await findAccountByIdentifier(store, identifier);
-
-    if (!account) {
-      throw notFound(
-        'account_not_found',
-        'We could not find an account for that email or phone number.'
-      );
-    }
-
-    const challenge = await issueEmailChallenge(
-      account.email,
-      account.fullName,
-      env.PASSWORD_RESET_TTL_MINUTES,
-      'password_reset'
+    await consumeClientAuthRateLimits(
+      'password-reset',
+      normalizedIdentifier,
+      context.ipAddress
     );
 
+    const account = await findAccountByIdentifier(store, identifier);
+    const resettableAccount =
+      account && canAuthenticateAccount(account) ? account : undefined;
+    let flowToken = createRandomToken();
+
+    await recordSecurityEvent({
+      eventTypeCode: 'client.password_reset_requested',
+      identifierValue: normalizedIdentifier,
+      ipAddress: context.ipAddress,
+      success: true,
+    });
+
+    if (resettableAccount) {
+      try {
+        const challenge = await issueEmailChallenge(
+          resettableAccount.email,
+          resettableAccount.fullName,
+          env.PASSWORD_RESET_TTL_MINUTES,
+          'password_reset'
+        );
+
+        flowToken = await createFlow(store, resettableAccount.id, 'password-reset', false, {
+          passwordResetChallenge: challenge.challenge,
+        });
+      } catch {
+        flowToken = createRandomToken();
+      }
+    }
+
+    await waitForPasswordResetFloor(startedAt);
+
     return {
-      flowToken: await createFlow(store, account.id, 'password-reset', false, {
-        passwordResetChallenge: challenge.challenge,
-      }),
+      flowToken,
       status: 'password_reset_requested' as const,
-      message: 'Password reset code sent. Use the verification code to continue.',
-      deliveryHint: challenge.deliveryHint,
-      email: account.email,
+      message: PASSWORD_RESET_GENERIC_MESSAGE,
     };
   },
 
@@ -826,14 +993,25 @@ export const authService = {
     payload: { code: string; email: string; password: string }
   ) {
     const store = await ensureInitialized();
-    const { account, flow } = await readFlow(store, rawFlowToken);
+    let account: AuthAccountRecord;
+    let flow: AuthFlowRecord;
+
+    try {
+      ({ account, flow } = await readFlow(store, rawFlowToken));
+    } catch {
+      throw unauthorized('invalid_reset_code', 'The reset code is invalid or expired.');
+    }
+
+    if (!canAuthenticateAccount(account)) {
+      throw unauthorized('invalid_reset_code', 'The reset code is invalid or expired.');
+    }
 
     if (flow.purpose !== 'password-reset') {
-      throw unauthorized('invalid_auth_flow', 'Password reset is not pending.');
+      throw unauthorized('invalid_reset_code', 'The reset code is invalid or expired.');
     }
 
     if (normalizeEmail(payload.email) !== normalizeEmail(account.email)) {
-      throw conflict('reset_email_mismatch', 'Reset email does not match the requested account.');
+      throw unauthorized('invalid_reset_code', 'The reset code is invalid or expired.');
     }
 
     verifyChallengeCode(flow.passwordResetChallenge, payload.code, {
@@ -847,6 +1025,11 @@ export const authService = {
     });
     await store.deleteFlowByHashedToken(flow.hashedToken);
     await store.deleteSessionsByAccountId(account.id);
+    await recordSecurityEvent({
+      eventTypeCode: 'client.password_reset_completed',
+      identifierValue: normalizeEmail(account.email),
+      success: true,
+    });
 
     return {
       clearFlowCookie: true,
@@ -910,32 +1093,42 @@ export const authService = {
   },
 
   async resendPasswordReset(rawFlowToken: string | undefined) {
+    const startedAt = Date.now();
     const store = await ensureInitialized();
-    const { account, flow } = await readFlow(store, rawFlowToken);
+    let flowToken = createRandomToken();
 
-    if (flow.purpose !== 'password-reset') {
-      throw unauthorized('invalid_auth_flow', 'Password reset is not pending.');
+    try {
+      const { account, flow } = await readFlow(store, rawFlowToken);
+
+      if (flow.purpose === 'password-reset' && canAuthenticateAccount(account)) {
+        try {
+          const challenge = await issueEmailChallenge(
+            account.email,
+            account.fullName,
+            env.PASSWORD_RESET_TTL_MINUTES,
+            'password_reset'
+          );
+
+          await store.deleteFlowByHashedToken(flow.hashedToken);
+          flowToken = await createFlow(store, account.id, 'password-reset', false, {
+            passwordResetChallenge: challenge.challenge,
+          });
+        } catch {
+          flowToken = createRandomToken();
+        }
+      }
+    } catch {
+      flowToken = createRandomToken();
     }
 
-    const challenge = await issueEmailChallenge(
-      account.email,
-      account.fullName,
-      env.PASSWORD_RESET_TTL_MINUTES,
-      'password_reset'
-    );
-
-    await store.deleteFlowByHashedToken(flow.hashedToken);
+    await waitForPasswordResetFloor(startedAt);
 
     return {
-      flowToken: await createFlow(store, account.id, 'password-reset', false, {
-        passwordResetChallenge: challenge.challenge,
-      }),
+      flowToken,
       clearFlowCookie: true,
       result: {
         status: 'password_reset_requested' as const,
-        message: 'Password reset code resent.',
-        deliveryHint: challenge.deliveryHint,
-        email: account.email,
+        message: PASSWORD_RESET_GENERIC_MESSAGE,
       },
     };
   },

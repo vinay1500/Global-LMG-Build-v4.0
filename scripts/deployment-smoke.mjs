@@ -8,6 +8,7 @@ const config = {
   adminWebBase: process.env.ADMIN_WEB_BASE || DEFAULT_ADMIN_WEB_URL,
   clientApiBase: process.env.CLIENT_API_BASE || DEFAULT_CLIENT_API_URL,
   clientWebBase: process.env.CLIENT_WEB_BASE || DEFAULT_CLIENT_WEB_URL,
+  requireSecurityHeaders: process.env.SMOKE_REQUIRE_SECURITY_HEADERS === 'true',
 };
 
 const results = [];
@@ -61,24 +62,40 @@ const test = async (name, callback) => {
   }
 };
 
+const expectSecurityHeaders = (result, headers = ['x-content-type-options']) => {
+  if (!config.requireSecurityHeaders) {
+    return;
+  }
+
+  for (const header of headers) {
+    ensure(result.response.headers.has(header), `missing security header ${header}`);
+  }
+};
+
 await test('client web root', async () => {
-  const { body, contentType, response } = await request(`${config.clientWebBase}/`);
+  const result = await request(`${config.clientWebBase}/`);
+  const { body, contentType, response } = result;
   ensure(response.ok, `expected 2xx, received ${response.status}`);
   ensure(contentType.includes('text/html'), `expected html response, received ${contentType}`);
   ensure(body.includes('<!doctype html') || body.includes('<!DOCTYPE html'), 'missing HTML shell');
+  expectSecurityHeaders(result, ['x-content-type-options', 'strict-transport-security']);
 });
 
 await test('admin web login', async () => {
-  const { body, contentType, response } = await request(`${config.adminWebBase}/login`);
+  const result = await request(`${config.adminWebBase}/login`);
+  const { body, contentType, response } = result;
   ensure(response.ok, `expected 2xx, received ${response.status}`);
   ensure(contentType.includes('text/html'), `expected html response, received ${contentType}`);
   ensure(body.includes('<!doctype html') || body.includes('<!DOCTYPE html'), 'missing HTML shell');
+  expectSecurityHeaders(result, ['x-content-type-options', 'strict-transport-security']);
 });
 
 await test('client api live health', async () => {
-  const { data, response } = await request(`${config.clientApiBase}/health/live`);
+  const result = await request(`${config.clientApiBase}/health/live`);
+  const { data, response } = result;
   ensure(response.ok, `expected 2xx, received ${response.status}`);
   ensure(data?.status === 'ok', `expected status ok, received ${data?.status ?? 'unknown'}`);
+  expectSecurityHeaders(result);
 });
 
 await test('client api ready health', async () => {
@@ -89,9 +106,11 @@ await test('client api ready health', async () => {
 });
 
 await test('admin api live health', async () => {
-  const { data, response } = await request(`${config.adminApiBase}/health/live`);
+  const result = await request(`${config.adminApiBase}/health/live`);
+  const { data, response } = result;
   ensure(response.ok, `expected 2xx, received ${response.status}`);
   ensure(data?.status === 'ok', `expected status ok, received ${data?.status ?? 'unknown'}`);
+  expectSecurityHeaders(result);
 });
 
 await test('admin api ready health', async () => {
@@ -100,6 +119,16 @@ await test('admin api ready health', async () => {
   ensure(data?.status === 'ok', `expected status ok, received ${data?.status ?? 'unknown'}`);
   ensure(data?.checks?.mysql?.ready === true, 'admin mysql readiness is not true');
   ensure(data?.checks?.schema?.ready === true, 'admin schema readiness is not true');
+});
+
+await test('client dashboard rejects unauthenticated access', async () => {
+  const { response } = await request(`${config.clientApiBase}/dashboard`);
+  ensure(response.status === 401, `expected 401, received ${response.status}`);
+});
+
+await test('admin reports reject unauthenticated access', async () => {
+  const { response } = await request(`${config.adminApiBase}/reports/workspace`);
+  ensure(response.status === 401, `expected 401, received ${response.status}`);
 });
 
 const failed = results.filter((result) => result.status === 'failed');

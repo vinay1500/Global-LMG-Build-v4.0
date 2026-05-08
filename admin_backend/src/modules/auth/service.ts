@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { env } from '../../config/env.js';
 import {
+  createNumericCode,
   createPublicId,
   createRandomToken,
   hashOpaqueValue,
@@ -18,6 +19,15 @@ import {
   unauthorized,
 } from '../../lib/httpErrors.js';
 import { createAuditEvent } from '../writeSupport.js';
+import { sendEmail } from '../providers/email.js';
+import { logEvent } from '../../lib/observability.js';
+import { recordSecurityEvent, recordSecurityEventSafely } from '../../lib/securityEvents.js';
+import {
+  clearPersistentRateLimit,
+  consumePersistentRateLimit,
+  getPersistentRateLimitStatus,
+} from './persistentRateLimiter.js';
+import { validateStrongPassword } from './passwordPolicy.js';
 
 type ActorRow = RowDataPacket & {
   account_status_code: string;
@@ -38,6 +48,7 @@ type SessionRow = RowDataPacket & {
   display_name: string;
   email: string;
   expires_at: string;
+  last_seen_at: string | Date;
   login_enabled: number;
   must_rotate_password: number | null;
   permission_code: string | null;
@@ -52,6 +63,19 @@ type CredentialRow = RowDataPacket & {
   password_hash: string;
 };
 
+type PasswordResetTokenRow = RowDataPacket & {
+  attempt_count: number;
+  code_hash: string;
+  consumed_at: string | null;
+  display_name: string;
+  email: string;
+  expires_at: string;
+  must_rotate_password: number | null;
+  password_hash: string;
+  token_id: number;
+  user_id: number;
+};
+
 export type AdminActor = {
   displayName: string;
   email: string;
@@ -63,17 +87,11 @@ export type AdminActor = {
   userId: number;
 };
 
-const SIGN_IN_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
-const SIGN_IN_RATE_LIMIT_LOCK_MS = 10 * 60 * 1000;
-const SIGN_IN_RATE_LIMIT_MAX_FAILURES = 5;
-
-type SignInAttemptState = {
-  failureCount: number;
-  firstFailureAt: number;
-  lockedUntil?: number;
-};
-
-const signInAttempts = new Map<string, SignInAttemptState>();
+const getSignInRateLimitWindowMs = () => env.AUTH_RATE_LIMIT_WINDOW_MINUTES * 60_000;
+const getSignInRateLimitLockMs = () => env.AUTH_RATE_LIMIT_LOCK_MINUTES * 60_000;
+const ADMIN_PASSWORD_RESET_TTL_MINUTES = 30;
+const ADMIN_PASSWORD_RESET_MAX_CODE_ATTEMPTS = 5;
+const ADMIN_PASSWORD_RESET_RESPONSE_FLOOR_MS = 700;
 
 const COOKIE_OPTIONS = {
   path: '/',
@@ -92,108 +110,152 @@ const toAdminSessionUser = (actor: AdminActor) => ({
 
 const normalizeIdentifier = (identifier: string) => identifier.trim().toLowerCase();
 
-const getRateLimitKey = (identifier: string, request: Request) =>
-  `${request.ip || request.socket.remoteAddress || 'unknown'}:${normalizeIdentifier(identifier)}`;
+const getRequestIpAddress = (request: Request) =>
+  request.ip || request.socket.remoteAddress || 'unknown';
 
-const assertSignInAllowed = (key: string) => {
-  const now = Date.now();
-  const state = signInAttempts.get(key);
+const getRequestUserAgent = (request: Request) => request.header('user-agent')?.trim() || null;
 
-  if (!state) {
-    return;
+const toMysqlDateTime = (date: Date) => date.toISOString().slice(0, 23).replace('T', ' ');
+
+const fromMysqlDateTime = (value: string | Date | null | undefined) => {
+  if (!value) {
+    return null;
   }
 
-  if (state.lockedUntil && state.lockedUntil > now) {
-    const retryAfterSeconds = Math.ceil((state.lockedUntil - now) / 1000);
-    throw tooManyRequests(
-      'admin_sign_in_rate_limited',
-      `Too many failed sign-in attempts. Try again in ${retryAfterSeconds} seconds.`,
-      { retryAfterSeconds }
-    );
+  if (value instanceof Date) {
+    return value;
   }
 
-  if (now - state.firstFailureAt > SIGN_IN_RATE_LIMIT_WINDOW_MS) {
-    signInAttempts.delete(key);
+  const normalized = value.replace(' ', 'T').replace(/(\.\d{3})\d+$/, '$1');
+  return new Date(`${normalized}Z`);
+};
+
+const maskEmail = (value: string) => {
+  const [localPart, domainPart] = value.split('@');
+  if (!domainPart) {
+    return 'masked-email';
+  }
+
+  return `${localPart.slice(0, 2)}***@${domainPart}`;
+};
+
+const waitForPasswordResetFloor = async (startedAt: number) => {
+  const remainingMs = ADMIN_PASSWORD_RESET_RESPONSE_FLOOR_MS - (Date.now() - startedAt);
+
+  if (remainingMs > 0) {
+    await new Promise((resolve) => {
+      setTimeout(resolve, remainingMs);
+    });
   }
 };
 
-const recordSignInFailure = (key: string) => {
-  const now = Date.now();
-  const current = signInAttempts.get(key);
-  const next: SignInAttemptState =
-    current && now - current.firstFailureAt <= SIGN_IN_RATE_LIMIT_WINDOW_MS
-      ? {
-          failureCount: current.failureCount + 1,
-          firstFailureAt: current.firstFailureAt,
-        }
-      : {
-          failureCount: 1,
-          firstFailureAt: now,
-        };
+const getSignInRateLimitKeys = (identifier: string, request: Request) => [
+  {
+    key: `signin:identifier:${normalizeIdentifier(identifier)}`,
+    maxAttempts: env.AUTH_RATE_LIMIT_MAX_ATTEMPTS,
+  },
+  {
+    key: `signin:ip:${getRequestIpAddress(request)}`,
+    maxAttempts: env.AUTH_RATE_LIMIT_IP_MAX_ATTEMPTS,
+  },
+];
 
-  if (next.failureCount >= SIGN_IN_RATE_LIMIT_MAX_FAILURES) {
-    next.lockedUntil = now + SIGN_IN_RATE_LIMIT_LOCK_MS;
+const getPasswordResetDeliveryMode = () =>
+  env.EMAIL_PROVIDER_MODE === 'resend' ? ('email' as const) : ('manual' as const);
+
+const getPasswordResetMessage = () =>
+  env.EMAIL_PROVIDER_MODE === 'resend'
+    ? 'If an admin account exists for that identifier, password reset instructions will be sent.'
+    : 'If an admin account exists for that identifier, a reset request was recorded. Email delivery is in manual/local mode.';
+
+const getPasswordResetRateLimitKeys = (identifier: string, ipAddress: string) => [
+  {
+    key: `password-reset:identifier:${normalizeIdentifier(identifier)}`,
+    maxAttempts: env.AUTH_RATE_LIMIT_MAX_ATTEMPTS,
+  },
+  {
+    key: `password-reset:ip:${ipAddress || 'unknown'}`,
+    maxAttempts: env.AUTH_RATE_LIMIT_IP_MAX_ATTEMPTS,
+  },
+];
+
+const consumeAuthRateLimits = async (
+  keys: Array<{ key: string; maxAttempts: number }>
+) => {
+  for (const key of keys) {
+    const rateLimit = await consumePersistentRateLimit({
+      key: key.key,
+      lockMs: getSignInRateLimitLockMs(),
+      maxAttempts: key.maxAttempts,
+      scope: 'admin_auth',
+      windowMs: getSignInRateLimitWindowMs(),
+    });
+
+    if (!rateLimit.allowed) {
+      await recordSecurityEvent({
+        eventTypeCode: 'admin.rate_limit_blocked',
+        identifierValue: key.key,
+        success: false,
+      });
+      throw tooManyRequests(
+        'admin_auth_rate_limited',
+        `Too many attempts. Try again in ${rateLimit.retryAfterSeconds} seconds.`,
+        { retryAfterSeconds: rateLimit.retryAfterSeconds }
+      );
+    }
   }
-
-  signInAttempts.set(key, next);
 };
 
-const clearSignInFailures = (key: string) => {
-  signInAttempts.delete(key);
+const assertSignInAllowed = async (
+  keys: Array<{ key: string; maxAttempts: number }>
+) => {
+  for (const key of keys) {
+    const rateLimit = await getPersistentRateLimitStatus({
+      key: key.key,
+      maxAttempts: key.maxAttempts,
+      scope: 'admin_auth',
+      windowMs: getSignInRateLimitWindowMs(),
+    });
+
+    if (!rateLimit.allowed) {
+      await recordSecurityEvent({
+        eventTypeCode: 'admin.rate_limit_blocked',
+        identifierValue: key.key,
+        success: false,
+      });
+      throw tooManyRequests(
+        'admin_sign_in_rate_limited',
+        `Too many failed sign-in attempts. Try again in ${rateLimit.retryAfterSeconds} seconds.`,
+        { retryAfterSeconds: rateLimit.retryAfterSeconds }
+      );
+    }
+  }
+};
+
+const recordSignInFailure = async (
+  keys: Array<{ key: string; maxAttempts: number }>
+) => {
+  for (const key of keys) {
+    await consumePersistentRateLimit({
+      key: key.key,
+      lockMs: getSignInRateLimitLockMs(),
+      maxAttempts: key.maxAttempts,
+      scope: 'admin_auth',
+      windowMs: getSignInRateLimitWindowMs(),
+    });
+  }
+};
+
+const clearSignInFailures = async (identifier: string) => {
+  await clearPersistentRateLimit({
+    key: `signin:identifier:${normalizeIdentifier(identifier)}`,
+    scope: 'admin_auth',
+  });
 };
 
 const shouldCountSignInFailure = (error: unknown) =>
   error instanceof AppError &&
   ['invalid_credentials', 'admin_access_required'].includes(error.code);
-
-const validateStrongPassword = (
-  newPassword: string,
-  actor: Pick<AdminActor, 'displayName' | 'email'>
-) => {
-  const issues: string[] = [];
-  const normalizedPassword = newPassword.toLowerCase();
-  const emailLocalPart = actor.email.split('@')[0]?.toLowerCase() || '';
-  const displayTokens = actor.displayName
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter((token) => token.length >= 4);
-
-  if (newPassword.length < 12) {
-    issues.push('Use at least 12 characters.');
-  }
-
-  if (!/[a-z]/.test(newPassword)) {
-    issues.push('Include a lowercase letter.');
-  }
-
-  if (!/[A-Z]/.test(newPassword)) {
-    issues.push('Include an uppercase letter.');
-  }
-
-  if (!/[0-9]/.test(newPassword)) {
-    issues.push('Include a number.');
-  }
-
-  if (!/[^A-Za-z0-9]/.test(newPassword)) {
-    issues.push('Include a symbol.');
-  }
-
-  if (emailLocalPart.length >= 4 && normalizedPassword.includes(emailLocalPart)) {
-    issues.push('Do not include the email username.');
-  }
-
-  if (displayTokens.some((token) => normalizedPassword.includes(token))) {
-    issues.push('Do not include your display name.');
-  }
-
-  if (issues.length > 0) {
-    throw badRequest(
-      'password_strength_failed',
-      'The new password does not meet admin security requirements.',
-      issues
-    );
-  }
-};
 
 const collectActor = (rows: Array<ActorRow | SessionRow>) => {
   if (rows.length === 0) {
@@ -299,6 +361,7 @@ const fetchActorBySessionToken = async (rawSessionToken: string) => {
        us.user_id,
        us.csrf_secret_hash,
        us.expires_at,
+       us.last_seen_at,
        u.public_id,
        u.email,
        u.display_name,
@@ -340,8 +403,121 @@ const fetchActorBySessionToken = async (rawSessionToken: string) => {
   return {
     actor,
     csrfHash: rows[0]!.csrf_secret_hash,
+    lastSeenAt: fromMysqlDateTime(rows[0]!.last_seen_at),
     sessionId: rows[0]!.session_id,
   };
+};
+
+const fetchPasswordResetToken = async (token: string) => {
+  const rows = await queryRows<PasswordResetTokenRow>(
+    `SELECT
+       prt.id AS token_id,
+       prt.user_id,
+       prt.code_hash,
+       prt.expires_at,
+       prt.consumed_at,
+       prt.attempt_count,
+       u.email,
+       u.display_name,
+       uc.password_hash,
+       uc.must_rotate_password
+     FROM password_reset_tokens prt
+     JOIN users u ON u.id = prt.user_id
+     JOIN user_credentials uc ON uc.user_id = u.id
+     WHERE prt.public_id = ?
+       AND u.archived_at IS NULL
+       AND u.login_enabled = 1
+       AND u.actor_type_code <> 'client'
+       AND EXISTS (
+         SELECT 1
+           FROM user_roles ur
+           JOIN roles r ON r.code = ur.role_code
+          WHERE ur.user_id = u.id
+            AND ur.is_active = 1
+            AND (ur.starts_at IS NULL OR ur.starts_at <= UTC_TIMESTAMP(6))
+            AND (ur.ends_at IS NULL OR ur.ends_at >= UTC_TIMESTAMP(6))
+            AND r.is_active = 1
+            AND r.code <> 'client'
+       )
+     LIMIT 1`,
+    [token]
+  );
+
+  return rows[0] || null;
+};
+
+const auditAdminPasswordResetRequested = async (
+  input: {
+    deliveryStatus: string;
+    errorMessage?: string | null;
+    maskedRecipient: string;
+    providerCode: string;
+    providerReference?: string | null;
+    userId: number;
+  },
+  executor?: Parameters<typeof createAuditEvent>[1]
+) => {
+  await createAuditEvent(
+    {
+      actionCode: 'admin.password_reset_requested',
+      actionLabel: 'Admin password reset requested',
+      actorRoleCode: 'system',
+      actorUserId: null,
+      changes: [
+        { fieldName: 'provider_code', newValue: input.providerCode },
+        { fieldName: 'delivery_status', newValue: input.deliveryStatus },
+        { fieldName: 'provider_reference', newValue: input.providerReference || null },
+        { fieldName: 'failure_reason', newValue: input.errorMessage || null },
+        { fieldName: 'recipient', newValue: input.maskedRecipient },
+      ],
+      entityPk: input.userId,
+      entityTableName: 'users',
+      sourceModule: 'admin_auth',
+      summaryNewValue: {
+        deliveryStatus: input.deliveryStatus,
+        providerCode: input.providerCode,
+      },
+    },
+    executor
+  );
+};
+
+const deliverPasswordResetEmail = async (input: {
+  code: string;
+  displayName: string;
+  email: string;
+  resetToken: string;
+  userId: number;
+}) => {
+  const resetUrl = new URL('/login', env.PUBLIC_ADMIN_WEB_ORIGIN);
+  resetUrl.searchParams.set('resetToken', input.resetToken);
+
+  const text = [
+    `Hello ${input.displayName},`,
+    '',
+    'Use this code to reset your Global LMG admin password:',
+    input.code,
+    '',
+    `Reset link: ${resetUrl.toString()}`,
+    '',
+    `This code expires in ${ADMIN_PASSWORD_RESET_TTL_MINUTES} minutes.`,
+    'If you did not request this reset, ignore this email and contact an ops admin.',
+  ].join('\n');
+
+  const result = await sendEmail({
+    subject: 'Global LMG admin password reset',
+    text,
+    to: input.email,
+  });
+
+  await auditAdminPasswordResetRequested({
+    deliveryStatus: result.status,
+    errorMessage: result.errorMessage || null,
+    maskedRecipient: maskEmail(input.email),
+    providerCode: result.providerCode,
+    providerReference: result.providerReference || null,
+    userId: input.userId,
+  });
 };
 
 export const getSession = async (request: Request, response: Response) => {
@@ -367,9 +543,11 @@ export const getSession = async (request: Request, response: Response) => {
     };
   }
 
-  await queryRows(`UPDATE user_sessions SET last_seen_at = UTC_TIMESTAMP(6), updated_at = UTC_TIMESTAMP(6) WHERE id = ?`, [
-    resolution.sessionId,
-  ]);
+  if (!resolution.lastSeenAt || Date.now() - resolution.lastSeenAt.getTime() >= 5 * 60_000) {
+    await queryRows(`UPDATE user_sessions SET last_seen_at = UTC_TIMESTAMP(6), updated_at = UTC_TIMESTAMP(6) WHERE id = ?`, [
+      resolution.sessionId,
+    ]);
+  }
 
   const csrfToken = getCsrfToken(request) || createRandomToken(18);
   const expectedHash = hashOpaqueValue(csrfToken, env.AUTH_SESSION_SECRET);
@@ -400,8 +578,8 @@ export const signIn = async (
   request: Request,
   response: Response
 ) => {
-  const rateLimitKey = getRateLimitKey(identifier, request);
-  assertSignInAllowed(rateLimitKey);
+  const rateLimitKeys = getSignInRateLimitKeys(identifier, request);
+  await assertSignInAllowed(rateLimitKeys);
 
   try {
     const initialResolution = await fetchActorByIdentifier(identifier);
@@ -455,7 +633,7 @@ export const signIn = async (
       [actor.userId]
     );
 
-    clearSignInFailures(rateLimitKey);
+    await clearSignInFailures(identifier);
 
     setSessionCookies(response, {
       csrfToken,
@@ -470,7 +648,14 @@ export const signIn = async (
     };
   } catch (error) {
     if (shouldCountSignInFailure(error)) {
-      recordSignInFailure(rateLimitKey);
+      await recordSecurityEvent({
+        eventTypeCode: 'admin.login_failed',
+        identifierValue: normalizeIdentifier(identifier),
+        ipAddress: getRequestIpAddress(request),
+        success: false,
+        userAgent: getRequestUserAgent(request),
+      });
+      await recordSignInFailure(rateLimitKeys);
     }
 
     throw error;
@@ -494,6 +679,11 @@ export const signOut = async (request: Request, response: Response) => {
   }
 
   if (!csrfToken || hashOpaqueValue(csrfToken, env.AUTH_SESSION_SECRET) !== resolution.csrfHash) {
+    recordSecurityEventSafely({
+      eventTypeCode: 'admin.csrf_mismatch',
+      success: false,
+      userId: resolution.actor.userId,
+    });
     throw forbidden('csrf_mismatch', 'CSRF validation failed.');
   }
 
@@ -503,6 +693,220 @@ export const signOut = async (request: Request, response: Response) => {
 
   clearSessionCookies(response);
   return { status: 'signed_out' as const };
+};
+
+export const requestPasswordReset = async (
+  identifier: string,
+  context: { ipAddress: string }
+) => {
+  const startedAt = Date.now();
+  await consumeAuthRateLimits(getPasswordResetRateLimitKeys(identifier, context.ipAddress));
+
+  const resolution = await fetchActorByIdentifier(identifier);
+  const target =
+    resolution.actor && resolution.firstRow?.password_hash
+      ? {
+          displayName: resolution.actor.displayName,
+          email: resolution.actor.email,
+          userId: resolution.actor.userId,
+        }
+      : null;
+
+  await recordSecurityEvent({
+    eventTypeCode: 'admin.password_reset_requested',
+    identifierValue: normalizeIdentifier(identifier),
+    ipAddress: context.ipAddress,
+    success: true,
+    userId: target?.userId ?? null,
+  });
+
+  if (target) {
+    const resetToken = createPublicId();
+    const code = createNumericCode();
+    const codeHash = hashOpaqueValue(code, env.AUTH_SESSION_SECRET);
+    const expiresAt = new Date(Date.now() + ADMIN_PASSWORD_RESET_TTL_MINUTES * 60_000);
+
+    await withTransaction(async (connection) => {
+      await executeStatement(
+        `UPDATE password_reset_tokens
+            SET consumed_at = COALESCE(consumed_at, UTC_TIMESTAMP(6)),
+                updated_at = UTC_TIMESTAMP(6)
+          WHERE user_id = ?
+            AND consumed_at IS NULL`,
+        [target.userId],
+        connection
+      );
+
+      await executeStatement<ResultSetHeader>(
+        `INSERT INTO password_reset_tokens (
+           public_id, user_id, code_hash, expires_at, sent_at, consumed_at, attempt_count,
+           created_at, updated_at
+         ) VALUES (?, ?, ?, ?, UTC_TIMESTAMP(6), NULL, 0, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))`,
+        [resetToken, target.userId, codeHash, toMysqlDateTime(expiresAt)],
+        connection
+      );
+    });
+
+    if (env.EMAIL_PROVIDER_MODE === 'resend') {
+      void deliverPasswordResetEmail({
+        code,
+        displayName: target.displayName,
+        email: target.email,
+        resetToken,
+        userId: target.userId,
+      }).catch((error) => {
+        logEvent('error', 'admin.password_reset_email_unhandled_error', {
+          errorMessage: error instanceof Error ? error.message : 'Unknown email failure.',
+          userId: target.userId,
+        });
+      });
+    } else {
+      await auditAdminPasswordResetRequested({
+        deliveryStatus: env.EMAIL_PROVIDER_MODE === 'preview' ? 'preview' : 'disabled',
+        maskedRecipient: maskEmail(target.email),
+        providerCode: env.EMAIL_PROVIDER_MODE,
+        userId: target.userId,
+      });
+    }
+  }
+
+  await waitForPasswordResetFloor(startedAt);
+
+  return {
+    deliveryMode: getPasswordResetDeliveryMode(),
+    message: getPasswordResetMessage(),
+    status: 'password_reset_requested' as const,
+  };
+};
+
+export const resetPassword = async (payload: {
+  code: string;
+  newPassword: string;
+  token: string;
+}) => {
+  await consumeAuthRateLimits([
+    {
+      key: `password-reset-confirm:token:${payload.token.trim()}`,
+      maxAttempts: env.AUTH_RATE_LIMIT_MAX_ATTEMPTS,
+    },
+  ]);
+
+  const resetToken = await fetchPasswordResetToken(payload.token.trim());
+
+  if (!resetToken) {
+    throw unauthorized('invalid_reset_code', 'The reset code is invalid or expired.');
+  }
+
+  const expiresAt = fromMysqlDateTime(resetToken.expires_at);
+  if (
+    resetToken.consumed_at ||
+    !expiresAt ||
+    expiresAt.getTime() <= Date.now()
+  ) {
+    throw unauthorized('invalid_reset_code', 'The reset code is invalid or expired.');
+  }
+
+  if (resetToken.attempt_count >= ADMIN_PASSWORD_RESET_MAX_CODE_ATTEMPTS) {
+    throw tooManyRequests(
+      'admin_password_reset_rate_limited',
+      'Too many invalid reset attempts. Request a new password reset.',
+      { retryAfterSeconds: ADMIN_PASSWORD_RESET_TTL_MINUTES * 60 }
+    );
+  }
+
+  const expectedCodeHash = hashOpaqueValue(payload.code.trim(), env.AUTH_SESSION_SECRET);
+  if (expectedCodeHash !== resetToken.code_hash) {
+    await executeStatement(
+      `UPDATE password_reset_tokens
+          SET attempt_count = attempt_count + 1,
+              updated_at = UTC_TIMESTAMP(6)
+        WHERE id = ?`,
+      [resetToken.token_id]
+    );
+    throw unauthorized('invalid_reset_code', 'The reset code is invalid or expired.');
+  }
+
+  validateStrongPassword(payload.newPassword, {
+    displayName: resetToken.display_name,
+    email: resetToken.email,
+  });
+
+  const reusesCurrentPassword = await verifyPassword(
+    payload.newPassword,
+    resetToken.password_hash
+  );
+
+  if (reusesCurrentPassword) {
+    throw badRequest(
+      'password_reuse_not_allowed',
+      'The new password must be different from the current password.'
+    );
+  }
+
+  const nextPasswordHash = await hashPassword(payload.newPassword);
+
+  await withTransaction(async (connection) => {
+    await executeStatement<ResultSetHeader>(
+      `UPDATE user_credentials
+          SET password_hash = ?,
+              password_algo = 'scrypt',
+              password_changed_at = UTC_TIMESTAMP(6),
+              must_rotate_password = 0
+        WHERE user_id = ?`,
+      [nextPasswordHash, resetToken.user_id],
+      connection
+    );
+
+    await executeStatement(
+      `UPDATE password_reset_tokens
+          SET consumed_at = UTC_TIMESTAMP(6),
+              updated_at = UTC_TIMESTAMP(6)
+        WHERE id = ?`,
+      [resetToken.token_id],
+      connection
+    );
+
+    await executeStatement(
+      `UPDATE user_sessions
+          SET revoked_at = UTC_TIMESTAMP(6),
+              updated_at = UTC_TIMESTAMP(6)
+        WHERE user_id = ?
+          AND revoked_at IS NULL`,
+      [resetToken.user_id],
+      connection
+    );
+
+    await createAuditEvent(
+      {
+        actionCode: 'admin.password_reset_completed',
+        actionLabel: 'Admin password reset completed',
+        actorRoleCode: 'system',
+        actorUserId: null,
+        changes: [
+          { fieldName: 'must_rotate_password', newValue: false, oldValue: Boolean(resetToken.must_rotate_password) },
+          { fieldName: 'sessions_revoked', newValue: true },
+        ],
+        entityPk: resetToken.user_id,
+        entityTableName: 'users',
+        sourceModule: 'admin_auth',
+        summaryNewValue: { passwordResetCompleted: true },
+      },
+      connection
+    );
+    await recordSecurityEvent(
+      {
+        eventTypeCode: 'admin.password_reset_completed',
+        success: true,
+        userId: resetToken.user_id,
+      },
+      connection
+    );
+  });
+
+  return {
+    message: 'Password reset complete. You can sign in with the new password.',
+    status: 'password_reset_completed' as const,
+  };
 };
 
 export const changePassword = async (
@@ -587,6 +991,14 @@ export const changePassword = async (
       },
       connection
     );
+    await recordSecurityEvent(
+      {
+        eventTypeCode: 'admin.password_changed',
+        success: true,
+        userId: actor.userId,
+      },
+      connection
+    );
   });
 
   return {
@@ -617,6 +1029,11 @@ export const requireAdminSession = async (
   if (options?.requireCsrf) {
     const csrfToken = getCsrfToken(request);
     if (!csrfToken || hashOpaqueValue(csrfToken, env.AUTH_SESSION_SECRET) !== resolution.csrfHash) {
+      recordSecurityEventSafely({
+        eventTypeCode: 'admin.csrf_mismatch',
+        success: false,
+        userId: resolution.actor.userId,
+      });
       throw forbidden('csrf_mismatch', 'CSRF validation failed.');
     }
   }

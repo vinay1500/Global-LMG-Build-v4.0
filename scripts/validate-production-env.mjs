@@ -1,79 +1,89 @@
 #!/usr/bin/env node
-
-import fs from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-const rootDir = process.cwd();
+const repoRoot = process.cwd();
 
-const envSpecs = [
-  {
-    name: 'backend',
-    file: 'backend/.env.production',
-    exampleFile: 'backend/.env.production.example',
-    requiredKeys: [
-      'APP_ENV',
-      'PUBLIC_WEB_ORIGIN',
-      'AUTH_SESSION_SECRET',
-      'MYSQL_HOST',
-      'MYSQL_PORT',
-      'MYSQL_DATABASE',
-      'MYSQL_USER',
-      'MYSQL_PASSWORD',
-      'DOCUMENT_STORAGE_ROOT',
-    ],
-  },
-  {
-    name: 'admin_backend',
-    file: 'admin_backend/.env.production',
-    exampleFile: 'admin_backend/.env.production.example',
-    requiredKeys: [
-      'APP_ENV',
-      'PUBLIC_ADMIN_WEB_ORIGIN',
-      'AUTH_SESSION_SECRET',
-      'MYSQL_HOST',
-      'MYSQL_PORT',
-      'MYSQL_DATABASE',
-      'MYSQL_USER',
-      'MYSQL_PASSWORD',
-    ],
-  },
-  {
-    name: 'frontend',
-    file: 'frontend/.env.production',
-    exampleFile: 'frontend/.env.production.example',
-    requiredKeys: ['VITE_PUBLIC_SITE_URL', 'VITE_API_BASE_URL', 'VITE_PORTAL_MODE'],
-  },
-  {
-    name: 'admin_frontend',
-    file: 'admin_frontend/.env.production',
-    exampleFile: 'admin_frontend/.env.production.example',
-    requiredKeys: ['VITE_API_BASE_URL'],
-  },
-];
+const args = process.argv.slice(2);
+const options = {
+  adminEnv: 'admin_backend/.env',
+  adminFrontendEnv: 'admin_frontend/.env.production',
+  backendEnv: 'backend/.env',
+  frontendEnv: 'frontend/.env.production',
+  strictProviders: false,
+};
 
-const placeholderPatterns = [
-  /replace-me/i,
-  /replace-with-/i,
-  /change-me/i,
-  /change-this/i,
-];
+for (let index = 0; index < args.length; index += 1) {
+  const arg = args[index];
+  const next = args[index + 1];
 
-const parseEnvFile = (content) => {
-  const entries = new Map();
+  if (arg === '--help' || arg === '-h') {
+    console.log(`Usage:
+  npm run validate:production-env -- [options]
 
-  for (const line of content.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith('#')) {
+Options:
+  --backend-env <path>          Client API env file. Default backend/.env
+  --admin-env <path>            Admin API env file. Default admin_backend/.env
+  --frontend-env <path>         Public frontend env file. Default frontend/.env.production
+  --admin-frontend-env <path>   Admin frontend env file. Default admin_frontend/.env.production
+  --strict-providers            Treat disabled email/SMS/Google/storage/scan providers as failures.
+
+No secret values are printed.`);
+    process.exit(0);
+  }
+
+  if (arg === '--strict-providers') {
+    options.strictProviders = true;
+    continue;
+  }
+
+  if (arg === '--backend-env' && next) {
+    options.backendEnv = next;
+    index += 1;
+    continue;
+  }
+
+  if (arg === '--admin-env' && next) {
+    options.adminEnv = next;
+    index += 1;
+    continue;
+  }
+
+  if (arg === '--frontend-env' && next) {
+    options.frontendEnv = next;
+    index += 1;
+    continue;
+  }
+
+  if (arg === '--admin-frontend-env' && next) {
+    options.adminFrontendEnv = next;
+    index += 1;
+    continue;
+  }
+
+  throw new Error(`Unknown option: ${arg}`);
+}
+
+const parseEnvFile = (filePath) => {
+  const absolutePath = path.resolve(repoRoot, filePath);
+
+  if (!existsSync(absolutePath)) {
+    return { absolutePath, exists: false, values: {} };
+  }
+
+  const values = {};
+  const content = readFileSync(absolutePath, 'utf8');
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const trimmed = rawLine.trim();
+
+    if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) {
       continue;
     }
 
-    const separatorIndex = trimmed.indexOf('=');
-    if (separatorIndex <= 0) {
-      continue;
-    }
-
-    const key = trimmed.slice(0, separatorIndex).trim();
-    let value = trimmed.slice(separatorIndex + 1).trim();
+    const index = trimmed.indexOf('=');
+    const key = trimmed.slice(0, index).trim();
+    let value = trimmed.slice(index + 1).trim();
 
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
@@ -82,193 +92,376 @@ const parseEnvFile = (content) => {
       value = value.slice(1, -1);
     }
 
-    entries.set(key, value);
+    values[key] = value;
   }
 
-  return entries;
+  return { absolutePath, exists: true, values };
 };
 
-const readEnvSpec = (spec) => {
-  const filePath = path.join(rootDir, spec.file);
-  const examplePath = path.join(rootDir, spec.exampleFile);
-
-  if (fs.existsSync(filePath)) {
-    return {
-      exists: true,
-      fromExample: false,
-      path: filePath,
-      values: parseEnvFile(fs.readFileSync(filePath, 'utf8')),
-    };
-  }
-
-  return {
-    exists: false,
-    fromExample: true,
-    path: examplePath,
-    values: parseEnvFile(fs.readFileSync(examplePath, 'utf8')),
-  };
+const files = {
+  admin_backend: parseEnvFile(options.adminEnv),
+  admin_frontend: parseEnvFile(options.adminFrontendEnv),
+  backend: parseEnvFile(options.backendEnv),
+  frontend: parseEnvFile(options.frontendEnv),
 };
-
-const isHttpsOrigin = (value) => typeof value === 'string' && value.startsWith('https://');
-const isRelativeApiBase = (value) => value === '/api';
-const isPlaceholderValue = (value) =>
-  typeof value === 'string' && placeholderPatterns.some((pattern) => pattern.test(value));
 
 const results = [];
-let hasError = false;
 
-const pushResult = (status, scope, message) => {
-  results.push({ message, scope, status });
-  if (status === 'error') {
-    hasError = true;
+const record = (status, scope, check, message) => {
+  results.push({ check, message, scope, status });
+};
+
+const pass = (scope, check, message) => record('PASS', scope, check, message);
+const warn = (scope, check, message) => record('WARN', scope, check, message);
+const fail = (scope, check, message) => record('FAIL', scope, check, message);
+
+const get = (env, key) => env[key]?.trim() || '';
+const has = (env, key) => Boolean(get(env, key));
+const isHttps = (value) => /^https:\/\//i.test(value);
+const isRelativeApi = (value) => value.startsWith('/');
+const providerDisabled = (scope, check, message) =>
+  options.strictProviders ? fail(scope, check, message) : warn(scope, check, message);
+
+const validateRequiredFile = (scope, file) => {
+  if (!file.exists) {
+    fail(scope, 'env_file', `Missing env file: ${path.relative(repoRoot, file.absolutePath)}`);
+    return false;
+  }
+
+  pass(scope, 'env_file', `Loaded ${path.relative(repoRoot, file.absolutePath)}`);
+  return true;
+};
+
+const validateCoreApi = (scope, env, originKey) => {
+  if (get(env, 'APP_ENV') !== 'production') {
+    fail(scope, 'APP_ENV', 'APP_ENV must be production.');
+  } else {
+    pass(scope, 'APP_ENV', 'APP_ENV is production.');
+  }
+
+  if (!has(env, 'AUTH_SESSION_SECRET') || get(env, 'AUTH_SESSION_SECRET').length < 32) {
+    fail(scope, 'AUTH_SESSION_SECRET', 'AUTH_SESSION_SECRET must be a strong 32+ character secret.');
+  } else if (/change-this|development/i.test(get(env, 'AUTH_SESSION_SECRET'))) {
+    fail(scope, 'AUTH_SESSION_SECRET', 'AUTH_SESSION_SECRET still looks like a development placeholder.');
+  } else {
+    pass(scope, 'AUTH_SESSION_SECRET', 'AUTH_SESSION_SECRET is present and not a known placeholder.');
+  }
+
+  if (!isHttps(get(env, originKey))) {
+    fail(scope, originKey, `${originKey} must be an https:// origin in production.`);
+  } else {
+    pass(scope, originKey, `${originKey} is HTTPS.`);
+  }
+
+  for (const key of ['MYSQL_HOST', 'MYSQL_DATABASE', 'MYSQL_USER', 'MYSQL_PASSWORD']) {
+    if (!has(env, key)) {
+      fail(scope, key, `${key} is required.`);
+    }
+  }
+
+  if (get(env, 'MYSQL_SSL_MODE').toUpperCase() !== 'REQUIRED') {
+    fail(scope, 'MYSQL_SSL_MODE', 'MYSQL_SSL_MODE must be REQUIRED for production DB connections.');
+  } else if (!has(env, 'MYSQL_SSL_CA') && !has(env, 'MYSQL_SSL_CA_PATH')) {
+    fail(scope, 'MYSQL_SSL_CA', 'MYSQL_SSL_MODE=REQUIRED needs MYSQL_SSL_CA or MYSQL_SSL_CA_PATH.');
+  } else {
+    pass(scope, 'MYSQL_SSL', 'DB SSL is required and a CA variable is present.');
+  }
+
+  for (const key of ['SESSION_COOKIE_NAME', 'CSRF_COOKIE_NAME']) {
+    if (!has(env, key)) {
+      fail(scope, key, `${key} is required.`);
+    }
   }
 };
 
-const envData = new Map();
+const validateEmail = (scope, env) => {
+  const mode = get(env, 'EMAIL_PROVIDER_MODE') || 'disabled';
 
-for (const spec of envSpecs) {
-  const data = readEnvSpec(spec);
-  envData.set(spec.name, data);
-
-  if (!data.exists) {
-    pushResult(
-      'warn',
-      spec.name,
-      `${spec.file} does not exist yet; validating fallback example ${spec.exampleFile}.`
-    );
+  if (mode === 'preview') {
+    fail(scope, 'EMAIL_PROVIDER_MODE', 'preview email mode is not allowed in production.');
+    return;
   }
 
-  for (const key of spec.requiredKeys) {
-    const value = data.values.get(key);
-    if (!value) {
-      pushResult('error', spec.name, `Missing required key ${key}.`);
-      continue;
+  if (mode === 'disabled') {
+    providerDisabled(scope, 'EMAIL_PROVIDER_MODE', 'Email provider is disabled; email workflows will be manual/local.');
+    return;
+  }
+
+  if (mode !== 'resend') {
+    fail(scope, 'EMAIL_PROVIDER_MODE', 'EMAIL_PROVIDER_MODE must be disabled or resend.');
+    return;
+  }
+
+  if (!has(env, 'RESEND_API_KEY') || !has(env, 'EMAIL_FROM_ADDRESS')) {
+    fail(scope, 'RESEND', 'EMAIL_PROVIDER_MODE=resend requires RESEND_API_KEY and EMAIL_FROM_ADDRESS.');
+  } else {
+    pass(scope, 'RESEND', 'Resend email mode has required variables.');
+  }
+};
+
+const validateSentry = (scope, env, dsnKey = 'SENTRY_DSN') => {
+  const dsn = get(env, dsnKey);
+  const sampleRate = Number(get(env, dsnKey === 'SENTRY_DSN' ? 'SENTRY_TRACES_SAMPLE_RATE' : 'VITE_SENTRY_TRACES_SAMPLE_RATE') || '0.05');
+
+  if (!Number.isFinite(sampleRate) || sampleRate < 0 || sampleRate > 1) {
+    fail(scope, 'SENTRY_TRACES_SAMPLE_RATE', 'Sentry trace sample rate must be between 0 and 1.');
+    return;
+  }
+
+  if (!dsn) {
+    warn(scope, dsnKey, 'Sentry DSN is not configured; runtime error monitoring is disabled.');
+    return;
+  }
+
+  if (!/^https:\/\/[^@]+@[^/]+\/\d+/i.test(dsn)) {
+    fail(scope, dsnKey, 'Sentry DSN must look like an HTTPS Sentry project DSN.');
+    return;
+  }
+
+  pass(scope, dsnKey, 'Sentry DSN is configured.');
+};
+
+const validateSms = (scope, env) => {
+  const mode = get(env, 'SMS_PROVIDER_MODE') || 'disabled';
+
+  if (mode === 'preview') {
+    fail(scope, 'SMS_PROVIDER_MODE', 'preview SMS mode is not allowed in production.');
+    return;
+  }
+
+  if (mode === 'disabled') {
+    providerDisabled(scope, 'SMS_PROVIDER_MODE', 'SMS provider is disabled; SMS workflows will be manual/local.');
+    return;
+  }
+
+  if (!['twilio', 'twilio-verify'].includes(mode)) {
+    fail(scope, 'SMS_PROVIDER_MODE', 'SMS_PROVIDER_MODE must be disabled, twilio, or twilio-verify.');
+    return;
+  }
+
+  if (!has(env, 'TWILIO_ACCOUNT_SID') || !has(env, 'TWILIO_AUTH_TOKEN')) {
+    fail(scope, 'TWILIO', 'Twilio mode requires TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN.');
+    return;
+  }
+
+  if (mode === 'twilio' && !has(env, 'TWILIO_FROM_NUMBER') && !has(env, 'TWILIO_MESSAGING_SERVICE_SID')) {
+    fail(scope, 'TWILIO', 'SMS_PROVIDER_MODE=twilio requires TWILIO_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID.');
+    return;
+  }
+
+  if (mode === 'twilio-verify' && !has(env, 'TWILIO_VERIFY_SERVICE_SID')) {
+    fail(scope, 'TWILIO_VERIFY_SERVICE_SID', 'SMS_PROVIDER_MODE=twilio-verify requires TWILIO_VERIFY_SERVICE_SID.');
+    return;
+  }
+
+  pass(scope, 'TWILIO', `Twilio ${mode} mode has required variables.`);
+};
+
+const validatePayments = (scope, env) => {
+  const mode = get(env, 'PAYMENT_PROVIDER_MODE') || 'disabled';
+
+  if (mode === 'disabled') {
+    providerDisabled(scope, 'PAYMENT_PROVIDER_MODE', 'Online payments are disabled; client payment will be manual/offline.');
+    return;
+  }
+
+  if (mode !== 'razorpay') {
+    fail(scope, 'PAYMENT_PROVIDER_MODE', 'PAYMENT_PROVIDER_MODE must be disabled or razorpay.');
+    return;
+  }
+
+  for (const key of ['RAZORPAY_KEY_ID', 'RAZORPAY_KEY_SECRET', 'RAZORPAY_WEBHOOK_SECRET']) {
+    if (!has(env, key)) {
+      fail(scope, key, `${key} is required for Razorpay payments.`);
     }
-
-    if (isPlaceholderValue(value)) {
-      pushResult('error', spec.name, `${key} still contains a placeholder value.`);
-    }
-  }
-}
-
-const backendEnv = envData.get('backend')?.values;
-const adminBackendEnv = envData.get('admin_backend')?.values;
-const frontendEnv = envData.get('frontend')?.values;
-const adminFrontendEnv = envData.get('admin_frontend')?.values;
-
-if (backendEnv) {
-  if (backendEnv.get('APP_ENV') !== 'production') {
-    pushResult('error', 'backend', 'APP_ENV must be production.');
   }
 
-  if (!isHttpsOrigin(backendEnv.get('PUBLIC_WEB_ORIGIN'))) {
-    pushResult('error', 'backend', 'PUBLIC_WEB_ORIGIN must use https://.');
+  if (!['auto', 'manual'].includes(get(env, 'RAZORPAY_CAPTURE_MODE') || 'auto')) {
+    fail(scope, 'RAZORPAY_CAPTURE_MODE', 'RAZORPAY_CAPTURE_MODE must be auto or manual.');
   }
 
-  if ((backendEnv.get('AUTH_SESSION_SECRET') || '').length < 32) {
-    pushResult('error', 'backend', 'AUTH_SESSION_SECRET must be at least 32 characters.');
+  if (!results.some((result) => result.scope === scope && result.status === 'FAIL' && result.check.startsWith('RAZORPAY'))) {
+    pass(scope, 'RAZORPAY', 'Razorpay payment mode has required variables.');
+  }
+};
+
+const validateStorage = (scope, env) => {
+  const driver = get(env, 'OBJECT_STORAGE_DRIVER') || get(env, 'DOCUMENT_STORAGE_DRIVER') || 'local';
+
+  if (driver === 'local') {
+    providerDisabled(scope, 'OBJECT_STORAGE_DRIVER', 'Local document storage is configured; use s3 for multi-host production.');
+    return;
   }
 
-  if (backendEnv.get('DOCUMENT_STORAGE_ROOT') === 'var/uploads') {
-    pushResult('warn', 'backend', 'DOCUMENT_STORAGE_ROOT is still using the local development path.');
+  if (driver !== 's3') {
+    fail(scope, 'OBJECT_STORAGE_DRIVER', 'OBJECT_STORAGE_DRIVER must be local or s3.');
+    return;
   }
 
-  const mysqlHost = backendEnv.get('MYSQL_HOST');
-  if (mysqlHost === '127.0.0.1' || mysqlHost === 'localhost') {
-    pushResult('warn', 'backend', 'MYSQL_HOST is still pointing at a localhost-style value.');
-  }
-
-  const emailMode = backendEnv.get('EMAIL_PROVIDER_MODE');
-  if (emailMode === 'resend') {
-    for (const key of ['EMAIL_FROM_ADDRESS', 'RESEND_API_KEY']) {
-      const value = backendEnv.get(key);
-      if (!value || isPlaceholderValue(value)) {
-        pushResult('error', 'backend', `${key} must be real when EMAIL_PROVIDER_MODE=resend.`);
-      }
+  for (const key of ['S3_ENDPOINT', 'S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY']) {
+    if (!has(env, key)) {
+      fail(scope, key, `${key} is required for S3-compatible storage.`);
     }
   }
 
-  const smsMode = backendEnv.get('SMS_PROVIDER_MODE');
-  if (smsMode === 'twilio-verify') {
-    for (const key of ['TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'TWILIO_VERIFY_SERVICE_SID']) {
-      const value = backendEnv.get(key);
-      if (!value || isPlaceholderValue(value)) {
-        pushResult('error', 'backend', `${key} must be real when SMS_PROVIDER_MODE=twilio-verify.`);
-      }
+  if (results.some((result) => result.scope === scope && result.status === 'FAIL' && result.check.startsWith('S3_'))) {
+    return;
+  }
+
+  pass(scope, 'S3_STORAGE', 'S3-compatible object storage has required variables.');
+};
+
+const validateScan = (scope, env) => {
+  const mode = get(env, 'FILE_SCAN_MODE') || 'disabled';
+
+  if (mode === 'disabled') {
+    providerDisabled(scope, 'FILE_SCAN_MODE', 'File scanning is disabled; uploads will not be marked clean.');
+    return;
+  }
+
+  if (mode !== 'clamav') {
+    fail(scope, 'FILE_SCAN_MODE', 'FILE_SCAN_MODE must be disabled or clamav.');
+    return;
+  }
+
+  if (!has(env, 'CLAMAV_HOST') || !has(env, 'CLAMAV_PORT')) {
+    fail(scope, 'CLAMAV', 'FILE_SCAN_MODE=clamav requires CLAMAV_HOST and CLAMAV_PORT.');
+  } else {
+    pass(scope, 'CLAMAV', 'ClamAV mode has host/port configured.');
+  }
+};
+
+const validateClientGoogleAuth = (scope, backendEnv, frontendEnv) => {
+  const mode = get(backendEnv, 'GOOGLE_AUTH_MODE') || 'disabled';
+
+  if (mode === 'preview') {
+    fail(scope, 'GOOGLE_AUTH_MODE', 'preview Google auth mode is not allowed in production.');
+    return;
+  }
+
+  if (mode === 'disabled') {
+    warn(scope, 'GOOGLE_AUTH_MODE', 'Google client auth is disabled.');
+    return;
+  }
+
+  if (mode !== 'google-jwt') {
+    fail(scope, 'GOOGLE_AUTH_MODE', 'GOOGLE_AUTH_MODE must be disabled or google-jwt.');
+    return;
+  }
+
+  if (!has(backendEnv, 'GOOGLE_CLIENT_ID') || !has(frontendEnv, 'VITE_GOOGLE_CLIENT_ID')) {
+    fail(scope, 'GOOGLE_CLIENT_ID', 'Google auth needs GOOGLE_CLIENT_ID and VITE_GOOGLE_CLIENT_ID.');
+  } else {
+    pass(scope, 'GOOGLE_AUTH', 'Google client auth variables are present.');
+  }
+};
+
+const validateCalendar = (scope, env) => {
+  const mode = get(env, 'CALENDAR_SYNC_MODE') || 'disabled';
+
+  if (mode === 'disabled') {
+    providerDisabled(scope, 'CALENDAR_SYNC_MODE', 'Google Calendar sync is disabled; events remain local/manual.');
+    return;
+  }
+
+  if (mode !== 'google') {
+    fail(scope, 'CALENDAR_SYNC_MODE', 'CALENDAR_SYNC_MODE must be disabled or google.');
+    return;
+  }
+
+  const required = [
+    'GOOGLE_CALENDAR_SERVICE_ACCOUNT_EMAIL',
+    'GOOGLE_CALENDAR_SERVICE_ACCOUNT_PRIVATE_KEY',
+    'GOOGLE_CALENDAR_SEND_UPDATES',
+  ];
+  for (const key of required) {
+    if (!has(env, key)) {
+      fail(scope, key, `${key} is required for Google Workspace calendar sync.`);
     }
   }
 
-  const googleMode = backendEnv.get('GOOGLE_AUTH_MODE');
-  if (googleMode === 'google-jwt') {
-    const value = backendEnv.get('GOOGLE_CLIENT_ID');
-    if (!value || isPlaceholderValue(value)) {
-      pushResult('error', 'backend', 'GOOGLE_CLIENT_ID must be real when GOOGLE_AUTH_MODE=google-jwt.');
-    }
+  if (get(env, 'CALENDAR_ADMIN_AUTH_MODE') !== 'workspace_delegation') {
+    fail(scope, 'CALENDAR_ADMIN_AUTH_MODE', 'Calendar sync must use workspace_delegation.');
+  }
+
+  if (get(env, 'CALENDAR_CLIENT_INVITE_MODE') !== 'google_attendee') {
+    warn(scope, 'CALENDAR_CLIENT_INVITE_MODE', 'Client attendee invites are not set to google_attendee.');
+  }
+
+  if (!results.some((result) => result.scope === scope && result.status === 'FAIL' && result.check.includes('GOOGLE_CALENDAR'))) {
+    pass(scope, 'GOOGLE_CALENDAR', 'Google Workspace calendar sync variables are present.');
+  }
+};
+
+const validateFrontend = (scope, env, apiKey) => {
+  const apiBase = get(env, 'VITE_API_BASE_URL');
+
+  if (!apiBase) {
+    fail(scope, 'VITE_API_BASE_URL', 'VITE_API_BASE_URL is required.');
+  } else if (!isRelativeApi(apiBase) && !isHttps(apiBase)) {
+    fail(scope, 'VITE_API_BASE_URL', 'VITE_API_BASE_URL must be relative or https://.');
+  } else {
+    pass(scope, 'VITE_API_BASE_URL', `${apiKey} API base is production-safe.`);
+  }
+
+  if (scope === 'frontend' && has(env, 'VITE_PUBLIC_SITE_URL') && !isHttps(get(env, 'VITE_PUBLIC_SITE_URL'))) {
+    fail(scope, 'VITE_PUBLIC_SITE_URL', 'VITE_PUBLIC_SITE_URL must use https://.');
+  }
+};
+
+for (const [scope, file] of Object.entries(files)) {
+  validateRequiredFile(scope, file);
+}
+
+if (files.backend.exists) {
+  validateCoreApi('backend', files.backend.values, 'PUBLIC_WEB_ORIGIN');
+  validateSentry('backend', files.backend.values);
+  validateEmail('backend', files.backend.values);
+  validateSms('backend', files.backend.values);
+  validatePayments('backend', files.backend.values);
+  validateStorage('backend', files.backend.values);
+  validateScan('backend', files.backend.values);
+}
+
+if (files.admin_backend.exists) {
+  validateCoreApi('admin_backend', files.admin_backend.values, 'PUBLIC_ADMIN_WEB_ORIGIN');
+  validateSentry('admin_backend', files.admin_backend.values);
+  validateEmail('admin_backend', files.admin_backend.values);
+  validateSms('admin_backend', files.admin_backend.values);
+  validateStorage('admin_backend', files.admin_backend.values);
+  validateScan('admin_backend', files.admin_backend.values);
+  validateCalendar('admin_backend', files.admin_backend.values);
+
+  if (get(files.admin_backend.values, 'ADMIN_BOOTSTRAP_ENABLED') === 'true') {
+    warn('admin_backend', 'ADMIN_BOOTSTRAP_ENABLED', 'Disable admin bootstrap after the first production admin is created.');
   }
 }
 
-if (adminBackendEnv) {
-  if (adminBackendEnv.get('APP_ENV') !== 'production') {
-    pushResult('error', 'admin_backend', 'APP_ENV must be production.');
-  }
-
-  if (!isHttpsOrigin(adminBackendEnv.get('PUBLIC_ADMIN_WEB_ORIGIN'))) {
-    pushResult('error', 'admin_backend', 'PUBLIC_ADMIN_WEB_ORIGIN must use https://.');
-  }
-
-  if ((adminBackendEnv.get('AUTH_SESSION_SECRET') || '').length < 32) {
-    pushResult('error', 'admin_backend', 'AUTH_SESSION_SECRET must be at least 32 characters.');
-  }
-
-  const mysqlHost = adminBackendEnv.get('MYSQL_HOST');
-  if (mysqlHost === '127.0.0.1' || mysqlHost === 'localhost') {
-    pushResult('warn', 'admin_backend', 'MYSQL_HOST is still pointing at a localhost-style value.');
-  }
+if (files.frontend.exists) {
+  validateFrontend('frontend', files.frontend.values, 'client');
+  validateSentry('frontend', files.frontend.values, 'VITE_SENTRY_DSN');
 }
 
-if (frontendEnv) {
-  if (!isHttpsOrigin(frontendEnv.get('VITE_PUBLIC_SITE_URL'))) {
-    pushResult('error', 'frontend', 'VITE_PUBLIC_SITE_URL must use https://.');
-  }
-
-  if (!isRelativeApiBase(frontendEnv.get('VITE_API_BASE_URL'))) {
-    pushResult('warn', 'frontend', 'VITE_API_BASE_URL should stay /api for same-origin proxying.');
-  }
+if (files.admin_frontend.exists) {
+  validateFrontend('admin_frontend', files.admin_frontend.values, 'admin');
+  validateSentry('admin_frontend', files.admin_frontend.values, 'VITE_SENTRY_DSN');
 }
 
-if (adminFrontendEnv) {
-  if (!isRelativeApiBase(adminFrontendEnv.get('VITE_API_BASE_URL'))) {
-    pushResult(
-      'warn',
-      'admin_frontend',
-      'VITE_API_BASE_URL should stay /api for same-origin proxying.'
-    );
-  }
+if (files.backend.exists && files.frontend.exists) {
+  validateClientGoogleAuth('backend/frontend', files.backend.values, files.frontend.values);
 }
 
-const clientOrigin = backendEnv?.get('PUBLIC_WEB_ORIGIN');
-const adminOrigin = adminBackendEnv?.get('PUBLIC_ADMIN_WEB_ORIGIN');
-
-if (clientOrigin && adminOrigin && clientOrigin === adminOrigin) {
-  pushResult('error', 'origins', 'Client and admin origins must be different.');
+const order = { FAIL: 0, WARN: 1, PASS: 2 };
+for (const result of results.sort((left, right) => order[left.status] - order[right.status] || left.scope.localeCompare(right.scope))) {
+  console.log(`${result.status} [${result.scope}] ${result.check}: ${result.message}`);
 }
 
-const backendSessionCookie = backendEnv?.get('SESSION_COOKIE_NAME');
-const adminSessionCookie = adminBackendEnv?.get('SESSION_COOKIE_NAME');
-if (backendSessionCookie && adminSessionCookie && backendSessionCookie === adminSessionCookie) {
-  pushResult('error', 'cookies', 'Client and admin session cookie names must be distinct.');
-}
+const failCount = results.filter((result) => result.status === 'FAIL').length;
+const warnCount = results.filter((result) => result.status === 'WARN').length;
+const passCount = results.filter((result) => result.status === 'PASS').length;
 
-for (const result of results) {
-  const marker =
-    result.status === 'error' ? 'ERROR' : result.status === 'warn' ? 'WARN ' : 'PASS ';
-  console.log(`${marker} [${result.scope}] ${result.message}`);
-}
+console.log(`\nProduction env validation summary: ${passCount} passed, ${warnCount} warnings, ${failCount} failures.`);
 
-if (results.length === 0) {
-  console.log('PASS  production env validation found no issues.');
-}
-
-if (hasError) {
+if (failCount > 0) {
   process.exitCode = 1;
 }

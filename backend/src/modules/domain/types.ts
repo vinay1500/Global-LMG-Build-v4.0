@@ -262,6 +262,16 @@ export interface InvoiceSummary {
 }
 
 export interface InvoiceDetail extends InvoiceSummary {
+  business: {
+    address: string | null;
+    email: string | null;
+    gstin: string | null;
+    name: string | null;
+    paymentInstructions: string | null;
+    phone: string | null;
+    state: string | null;
+    website: string | null;
+  };
   billingSnapshot: {
     addressLine1: string;
     addressLine2: string | null;
@@ -278,8 +288,25 @@ export interface InvoiceDetail extends InvoiceSummary {
   documents: LinkedEntityReference[];
   installments: InvoiceInstallmentSummary[];
   lines: InvoiceLineSummary[];
+  paymentOptions: {
+    allowsPartial: boolean;
+    amountDue: number;
+    currencyCode: string;
+    minimumPaymentAmount: number;
+    offlineEnabled: boolean;
+    onlineEnabled: boolean;
+    suggestedPaymentAmount: number;
+  };
   subtotalAmount: number;
   taxAmount: number;
+  template: {
+    body: string | null;
+    footer: string | null;
+    id: string | null;
+    subject: string | null;
+    terms: string | null;
+    version: number | null;
+  };
 }
 
 export interface PaymentSummary {

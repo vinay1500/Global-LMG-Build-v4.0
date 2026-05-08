@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   X, 
@@ -17,22 +17,28 @@ import {
   ChevronRight
 } from 'lucide-react';
 import {
-  REQUEST_WIZARD_SERVICES,
-  LEGAL_DOMAINS, 
-  TIME_SLOTS,
-  calculateFee,
+  DEFAULT_REQUEST_PRICING_CONFIG,
   type ConsultationMode,
+  type RequestWizardConsultationMode,
+  type RequestWizardPricingConfig,
+  type RequestWizardService,
+  type RequestWizardUrgencyOption,
   type UrgencyLevel,
   type RequestData
 } from '../data/requestWizardData';
+import { dashboardApi } from '../lib/api/dashboard';
+import { formatCurrencyAmount } from '../utils/currency';
+import { getCountryCurrency, getCountryTimeZone } from '../utils/geoAddressData';
 
 interface NewRequestWizardProps {
   isOpen: boolean;
   onClose: () => void;
+  onOpenSettings?: () => void;
   onSubmit: (data: RequestData) => Promise<void> | void;
   userName?: string;
   userEmail?: string;
   userMobile?: string;
+  billingCountryCode?: string | null;
 }
 
 export type { RequestData };
@@ -47,27 +53,205 @@ const serviceIcons: Record<string, React.ElementType> = {
   'Monitor': Monitor
 };
 
+const consultationModeIcons: Record<string, React.ElementType> = {
+  phone: Phone,
+  video: Video,
+  'in-person': UserCheck,
+};
+
+const toMoney = (amount: number) => Math.round((amount + Number.EPSILON) * 100) / 100;
+
+const formatMoney = (amount: number, currencyCode: string) => {
+  return formatCurrencyAmount(amount, currencyCode);
+};
+
+type LocalCurrencyEstimate = {
+  currencyCode: string;
+  rate: number;
+};
+
+const buildUsdRateUrls = () => [
+  'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.min.json',
+  'https://latest.currency-api.pages.dev/v1/currencies/usd.min.json',
+];
+
+const fetchUsdRate = async (quoteCurrencyCode: string): Promise<LocalCurrencyEstimate | null> => {
+  const quoteCurrency = quoteCurrencyCode.trim().toLowerCase();
+
+  for (const url of buildUsdRateUrls()) {
+    try {
+      const response = await fetch(url, { headers: { accept: 'application/json' } });
+      if (!response.ok) {
+        continue;
+      }
+
+      const payload = (await response.json()) as { usd?: Record<string, unknown> };
+      const rate = Number(payload.usd?.[quoteCurrency]);
+      if (Number.isFinite(rate) && rate > 0) {
+        return {
+          currencyCode: quoteCurrencyCode.trim().toUpperCase(),
+          rate,
+        };
+      }
+    } catch {
+      // Local currency estimates are optional and must never block request creation.
+    }
+  }
+
+  return null;
+};
+
+const TIME_WINDOW_DURATION_MINUTES = 45;
+const TIME_WINDOW_INTERVAL_MINUTES = 30;
+
+const padClock = (value: number) => String(value).padStart(2, '0');
+
+const formatClockLabel = (totalMinutes: number) => {
+  const normalizedMinutes = ((totalMinutes % 1440) + 1440) % 1440;
+  const hour24 = Math.floor(normalizedMinutes / 60);
+  const minute = normalizedMinutes % 60;
+  const period = hour24 >= 12 ? 'PM' : 'AM';
+  const hour12 = hour24 % 12 || 12;
+  return `${padClock(hour12)}:${padClock(minute)} ${period}`;
+};
+
+const REQUEST_TIME_WINDOWS = Array.from({ length: 24 * (60 / TIME_WINDOW_INTERVAL_MINUTES) }, (_, index) => {
+  const startMinutes = index * TIME_WINDOW_INTERVAL_MINUTES;
+  const endMinutes = startMinutes + TIME_WINDOW_DURATION_MINUTES;
+  const startClock = `${padClock(Math.floor(startMinutes / 60))}:${padClock(startMinutes % 60)}`;
+  const normalizedEndMinutes = endMinutes % 1440;
+  const endClock = `${padClock(Math.floor(normalizedEndMinutes / 60))}:${padClock(normalizedEndMinutes % 60)}`;
+
+  return {
+    endMinutes,
+    label: `${formatClockLabel(startMinutes)} - ${formatClockLabel(endMinutes)}`,
+    startMinutes,
+    value: `${startClock}-${endClock}`,
+  };
+});
+
+const getBrowserTimeZone = () => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+};
+
+const getTimeZoneOffsetMs = (date: Date, timeZone: string) => {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    day: '2-digit',
+    hour: '2-digit',
+    hour12: false,
+    minute: '2-digit',
+    month: '2-digit',
+    second: '2-digit',
+    timeZone,
+    year: 'numeric',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const hour = Number(values.hour === '24' ? '00' : values.hour);
+  const asUtc = Date.UTC(
+    Number(values.year),
+    Number(values.month) - 1,
+    Number(values.day),
+    hour,
+    Number(values.minute),
+    Number(values.second)
+  );
+
+  return asUtc - date.getTime();
+};
+
+const zonedClockToUtcIso = (dateValue: string, clockValue: string, timeZone: string, dayOffset = 0) => {
+  const [year, month, day] = dateValue.split('-').map((part) => Number(part));
+  const [hour, minute] = clockValue.split(':').map((part) => Number(part));
+  const targetLocalAsUtc = Date.UTC(year, month - 1, day + dayOffset, hour, minute, 0);
+  let utc = new Date(targetLocalAsUtc);
+
+  for (let index = 0; index < 2; index += 1) {
+    utc = new Date(targetLocalAsUtc - getTimeZoneOffsetMs(utc, timeZone));
+  }
+
+  return utc.toISOString();
+};
+
+const buildPreferredWindowSnapshot = (preferredDate: string, preferredTime: string, timeZone: string) => {
+  if (!preferredDate || !preferredTime.includes('-')) {
+    return {
+      preferredEndAtUtc: undefined,
+      preferredStartAtUtc: undefined,
+      preferredTimezone: timeZone,
+    };
+  }
+
+  const [startClock, endClock] = preferredTime.split('-').map((part) => part.trim());
+  const selectedWindow = REQUEST_TIME_WINDOWS.find((window) => window.value === preferredTime);
+  const endsNextDay = selectedWindow ? selectedWindow.endMinutes >= 1440 : endClock <= startClock;
+
+  return {
+    preferredEndAtUtc: zonedClockToUtcIso(preferredDate, endClock, timeZone, endsNextDay ? 1 : 0),
+    preferredStartAtUtc: zonedClockToUtcIso(preferredDate, startClock, timeZone),
+    preferredTimezone: timeZone,
+  };
+};
+
+const normalizePricingConfig = (config: RequestWizardPricingConfig): RequestWizardPricingConfig => ({
+  ...DEFAULT_REQUEST_PRICING_CONFIG,
+  ...config,
+  consultationModes:
+    (config.consultationModes || []).length > 0
+      ? config.consultationModes
+      : DEFAULT_REQUEST_PRICING_CONFIG.consultationModes,
+  services: (config.services || []).length > 0 ? config.services : DEFAULT_REQUEST_PRICING_CONFIG.services,
+  legalDomains:
+    (config.legalDomains || []).length > 0
+      ? config.legalDomains
+      : DEFAULT_REQUEST_PRICING_CONFIG.legalDomains,
+  urgencyOptions:
+    (config.urgencyOptions || []).length > 0
+      ? config.urgencyOptions.map((urgency) => ({
+          ...urgency,
+          allowedConsultationModes:
+            urgency.allowedConsultationModes && urgency.allowedConsultationModes.length > 0
+              ? urgency.allowedConsultationModes
+              : ['phone', 'video', 'in-person'],
+          maxResponseHours:
+            urgency.maxResponseHours === undefined ? urgency.responseWindowHours : urgency.maxResponseHours,
+          minResponseHours: urgency.minResponseHours === undefined ? null : urgency.minResponseHours,
+          timingLabel: urgency.timingLabel || '',
+        }))
+      : DEFAULT_REQUEST_PRICING_CONFIG.urgencyOptions,
+});
+
 export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
   isOpen,
   onClose,
+  onOpenSettings,
   onSubmit,
   userName = '',
   userEmail = '',
-  userMobile = ''
+  userMobile = '',
+  billingCountryCode = null
 }) => {
+  const clientTimeZone = useMemo(
+    () => getCountryTimeZone(billingCountryCode) || getBrowserTimeZone(),
+    [billingCountryCode]
+  );
   const createInitialFormData = (): RequestData => ({
     fullName: userName,
     email: userEmail,
     mobile: userMobile,
-    whatsappNumber: userMobile,
-    whatsappSame: true,
     services: [],
     legalDomain: '',
     caseDetails: '',
     documents: [],
     consultationMode: 'video',
     preferredDate: '',
+    preferredEndAtUtc: undefined,
+    preferredStartAtUtc: undefined,
     preferredTime: '',
+    preferredTimezone: clientTimeZone,
     urgency: 'standard',
     pastLegalAction: false
   });
@@ -75,8 +259,149 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
   const [formData, setFormData] = useState<RequestData>(createInitialFormData);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [pricingConfig, setPricingConfig] = useState<RequestWizardPricingConfig>(
+    DEFAULT_REQUEST_PRICING_CONFIG
+  );
+  const [isLoadingConfig, setIsLoadingConfig] = useState(false);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [localCurrencyEstimate, setLocalCurrencyEstimate] = useState<LocalCurrencyEstimate | null>(null);
 
   const totalSteps = 7;
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    let didCancel = false;
+    setIsLoadingConfig(true);
+    setConfigError(null);
+
+    dashboardApi
+      .getRequestPricingConfig()
+      .then((config) => {
+        if (didCancel) {
+          return;
+        }
+
+        const nextConfig = normalizePricingConfig(config);
+        setPricingConfig(nextConfig);
+        setFormData((current) => ({
+          ...current,
+          consultationMode: nextConfig.consultationModes.some((mode) => mode.id === current.consultationMode)
+            ? current.consultationMode
+            : nextConfig.consultationModes[0]?.id || 'video',
+          services: current.services.filter((serviceId) =>
+            nextConfig.services.some((service) => service.id === serviceId)
+          ),
+          legalDomain: nextConfig.legalDomains.some((domain) => domain.id === current.legalDomain)
+            ? current.legalDomain
+            : '',
+          urgency: nextConfig.urgencyOptions.some((urgency) => urgency.id === current.urgency)
+            ? current.urgency
+            : nextConfig.urgencyOptions[0]?.id || 'standard',
+        }));
+      })
+      .catch((error) => {
+        if (didCancel) {
+          return;
+        }
+        setConfigError(
+          error instanceof Error
+            ? error.message
+            : 'Unable to load current pricing configuration. Please try again.'
+        );
+        setPricingConfig({
+          ...DEFAULT_REQUEST_PRICING_CONFIG,
+          consultationModes: [],
+          services: [],
+          urgencyOptions: [],
+        });
+      })
+      .finally(() => {
+        if (!didCancel) {
+          setIsLoadingConfig(false);
+        }
+      });
+
+    return () => {
+      didCancel = true;
+    };
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    setFormData((current) => ({
+      ...current,
+      ...buildPreferredWindowSnapshot(current.preferredDate, current.preferredTime, clientTimeZone),
+    }));
+  }, [clientTimeZone, isOpen]);
+
+  const localCurrencyCode = useMemo(() => {
+    const currency = getCountryCurrency(pricingConfig.countryPricing.countryCode || billingCountryCode);
+    return currency && currency !== 'USD' ? currency : null;
+  }, [billingCountryCode, pricingConfig.countryPricing.countryCode]);
+
+  useEffect(() => {
+    if (!isOpen || !localCurrencyCode) {
+      setLocalCurrencyEstimate(null);
+      return;
+    }
+
+    let didCancel = false;
+
+    fetchUsdRate(localCurrencyCode).then((estimate) => {
+      if (!didCancel) {
+        setLocalCurrencyEstimate(estimate);
+      }
+    });
+
+    return () => {
+      didCancel = true;
+    };
+  }, [isOpen, localCurrencyCode]);
+
+  const services = pricingConfig.services;
+  const legalDomains = pricingConfig.legalDomains;
+  const consultationModes = pricingConfig.consultationModes;
+  const urgencyOptions = pricingConfig.urgencyOptions;
+  const selectedServices = useMemo(
+    () => services.filter((service) => formData.services.includes(service.id)),
+    [formData.services, services]
+  );
+  const selectedServiceNames = selectedServices.map((service) => service.name);
+  const selectedServicesLabel =
+    selectedServiceNames.length > 0 ? selectedServiceNames.join(', ') : 'No services selected';
+  const selectedConsultationMode = consultationModes.find(
+    (mode) => mode.id === formData.consultationMode
+  );
+  const availableUrgencyOptions = useMemo(() => {
+    if (!selectedConsultationMode) {
+      return urgencyOptions;
+    }
+    return urgencyOptions.filter(
+      (urgency) =>
+        urgency.allowedConsultationModes.length === 0 ||
+        urgency.allowedConsultationModes.includes(selectedConsultationMode.id)
+    );
+  }, [selectedConsultationMode, urgencyOptions]);
+  const availableUrgencyIds = availableUrgencyOptions.map((urgency) => urgency.id).join('|');
+
+  useEffect(() => {
+    if (!isOpen || availableUrgencyOptions.length === 0) {
+      return;
+    }
+
+    if (!availableUrgencyOptions.some((urgency) => urgency.id === formData.urgency)) {
+      setFormData((current) => ({
+        ...current,
+        urgency: availableUrgencyOptions[0]?.id || 'standard',
+      }));
+    }
+  }, [availableUrgencyIds, availableUrgencyOptions, formData.urgency, isOpen]);
 
   const handleNext = () => {
     if (currentStep < totalSteps) {
@@ -108,6 +433,22 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
     }
   };
 
+  const updatePreferredDate = (preferredDate: string) => {
+    setFormData((current) => ({
+      ...current,
+      preferredDate,
+      ...buildPreferredWindowSnapshot(preferredDate, current.preferredTime, clientTimeZone),
+    }));
+  };
+
+  const updatePreferredTime = (preferredTime: string) => {
+    setFormData((current) => ({
+      ...current,
+      preferredTime,
+      ...buildPreferredWindowSnapshot(current.preferredDate, preferredTime, clientTimeZone),
+    }));
+  };
+
   const handleSubmit = async () => {
     if (isSubmitting) {
       return;
@@ -118,7 +459,10 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
     let didClose = false;
 
     try {
-      await onSubmit(formData);
+      await onSubmit({
+        ...formData,
+        ...buildPreferredWindowSnapshot(formData.preferredDate, formData.preferredTime, clientTimeZone),
+      });
       setCurrentStep(1);
       setFormData(createInitialFormData());
       didClose = true;
@@ -136,9 +480,29 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
     }
   };
 
-  const fee = calculateFee(formData.services.length);
-  const urgencySurcharge = formData.urgency === 'within-6hrs' ? 500 : formData.urgency === 'within-2hrs' ? 1000 : 0;
-  const totalFee = fee + urgencySurcharge;
+  const formatPriceDisplay = (amount: number) => {
+    const dollarAmount = formatMoney(amount, 'USD');
+    const matchingEstimate =
+      localCurrencyEstimate && localCurrencyEstimate.currencyCode === localCurrencyCode
+        ? localCurrencyEstimate
+        : null;
+
+    if (!matchingEstimate) {
+      return dollarAmount;
+    }
+
+    const localAmount = formatMoney(toMoney(amount * matchingEstimate.rate), matchingEstimate.currencyCode);
+    return `${dollarAmount} (approx ${localAmount})`;
+  };
+  const serviceFee = toMoney(selectedServices.reduce((sum, service) => sum + service.baseFee, 0));
+  const consultationFee = toMoney(selectedConsultationMode?.fee || 0);
+  const selectedUrgency = availableUrgencyOptions.find((urgency) => urgency.id === formData.urgency);
+  const urgencySurcharge = selectedUrgency
+    ? selectedUrgency.surchargeType === 'percent'
+      ? toMoney(serviceFee * (selectedUrgency.surcharge / 100))
+      : toMoney(selectedUrgency.surcharge)
+    : 0;
+  const totalFee = toMoney(serviceFee + consultationFee + urgencySurcharge);
 
   if (!isOpen) return null;
 
@@ -196,6 +560,21 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
                   transition={{ duration: 0.3 }}
                 />
               </div>
+              {isLoadingConfig ? (
+                <p className="mt-3 text-xs font-medium text-blue-600">Loading current services and pricing...</p>
+              ) : null}
+              {!isLoadingConfig && !configError ? (
+                <p className="mt-3 text-xs font-medium text-gray-500">
+                  {localCurrencyEstimate
+                    ? 'You will be billed in dollars. Local estimates in brackets are approximate.'
+                    : 'Prices are shown in dollars.'}
+                </p>
+              ) : null}
+              {configError ? (
+                <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">
+                  {configError}
+                </p>
+              ) : null}
             </div>
           </div>
 
@@ -213,83 +592,47 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
                 {currentStep === 1 && (
                   <div>
                     <h3 className="text-2xl font-bold mb-2">Confirm Your Details</h3>
-                    <p className="text-gray-500 mb-8">Please verify your contact information</p>
+                    <p className="text-gray-500 mb-8">
+                      These details come from Account Settings and will be saved with this request.
+                    </p>
                     
                     <div className="bg-gray-50 rounded-2xl p-6 md:p-8 space-y-6">
                       <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">
                           Full Name
                         </label>
-                        <input
-                          type="text"
-                          value={formData.fullName}
-                          onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
-                          className="w-full text-lg font-semibold bg-transparent border-none outline-none"
-                          placeholder="Enter your full name"
-                        />
+                        <p className="text-lg font-semibold text-gray-900">{formData.fullName || 'Not added'}</p>
                       </div>
 
                       <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">
                           Email
                         </label>
-                        <input
-                          type="email"
-                          value={formData.email}
-                          onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                          className="w-full text-lg font-semibold bg-transparent border-none outline-none"
-                          placeholder="your.email@example.com"
-                        />
+                        <p className="text-lg font-semibold text-gray-900">{formData.email || 'Not added'}</p>
                       </div>
 
                       <div>
                         <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">
                           Mobile
                         </label>
-                        <input
-                          type="tel"
-                          value={formData.mobile}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              mobile: e.target.value,
-                              whatsappNumber: formData.whatsappSame ? e.target.value : formData.whatsappNumber,
-                            })
-                          }
-                          className="w-full text-lg font-semibold bg-transparent border-none outline-none"
-                          placeholder="+Country code XXXXXXXX"
-                        />
+                        <p className="text-lg font-semibold text-gray-900">{formData.mobile || 'Not added'}</p>
                       </div>
 
-                      <label className="flex items-center gap-3 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={formData.whatsappSame}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              whatsappNumber: e.target.checked ? formData.mobile : formData.whatsappNumber,
-                              whatsappSame: e.target.checked,
-                            })
-                          }
-                          className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-2 focus:ring-blue-500"
-                        />
-                        <span className="text-sm font-medium">WhatsApp number is same as mobile</span>
-                      </label>
-                      {!formData.whatsappSame && (
-                        <div>
-                          <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">
-                            WhatsApp Number
-                          </label>
-                          <input
-                            type="tel"
-                            value={formData.whatsappNumber}
-                            onChange={(e) => setFormData({ ...formData, whatsappNumber: e.target.value })}
-                            className="w-full text-lg font-semibold bg-transparent border-none outline-none"
-                            placeholder="+Country code XXXXXXXX"
-                          />
-                        </div>
-                      )}
+                      <div className="border-t border-gray-200 pt-6">
+                        <h4 className="text-sm font-bold text-gray-900">Need to change these details?</h4>
+                        <p className="mt-1 text-sm text-gray-500">
+                          Update your name, email, phone, and billing address in Account Settings before creating a new request.
+                        </p>
+                        {onOpenSettings ? (
+                          <button
+                            type="button"
+                            onClick={onOpenSettings}
+                            className="mt-3 rounded-full border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-white"
+                          >
+                            Open Account Settings
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -301,8 +644,8 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
                     <p className="text-gray-500 mb-8">Choose one or multiple services you need</p>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {REQUEST_WIZARD_SERVICES.map((service) => {
-                        const IconComponent = serviceIcons[service.icon];
+                      {services.map((service: RequestWizardService) => {
+                        const IconComponent = serviceIcons[service.icon] || Briefcase;
                         const isSelected = formData.services.includes(service.id);
                         
                         return (
@@ -323,6 +666,9 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
                             </div>
                             <h4 className="font-bold mb-1">{service.name}</h4>
                             <p className="text-sm text-gray-500">{service.description}</p>
+                            <p className="mt-3 text-xs font-bold text-gray-700">
+                              Starts at {formatPriceDisplay(service.baseFee)}
+                            </p>
                             {isSelected && (
                               <div className="mt-4 flex items-center gap-2 text-blue-600 text-sm font-bold">
                                 <CheckCircle size={16} />
@@ -338,7 +684,7 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
                       <div className="mt-6 p-4 bg-blue-50 rounded-xl border border-blue-100">
                         <p className="text-sm font-bold text-blue-900">
                           {formData.services.length} service{formData.services.length > 1 ? 's' : ''} selected • 
-                          Base fee: ₹{calculateFee(formData.services.length).toLocaleString()}
+                          Base fee: {formatPriceDisplay(serviceFee)}
                         </p>
                       </div>
                     )}
@@ -352,7 +698,7 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
                     <p className="text-gray-500 mb-8">Which category does your case fall under?</p>
                     
                     <div className="space-y-3">
-                      {LEGAL_DOMAINS.map((domain) => (
+                      {legalDomains.map((domain) => (
                         <button
                           key={domain.id}
                           type="button"
@@ -434,29 +780,37 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
                     <h3 className="text-2xl font-bold mb-8">Preferred Consultation Mode</h3>
                     
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      {[
-                        { id: 'phone' as ConsultationMode, label: 'Phone Call', icon: Phone },
-                        { id: 'video' as ConsultationMode, label: 'Video Call', icon: Video },
-                        { id: 'in-person' as ConsultationMode, label: 'In-Person', icon: UserCheck }
-                      ].map((mode) => {
+                      {consultationModes.map((mode: RequestWizardConsultationMode) => {
+                        const ModeIcon = consultationModeIcons[mode.id] || UserCheck;
                         const isSelected = formData.consultationMode === mode.id;
                         return (
                           <button
                             key={mode.id}
                             type="button"
-                            onClick={() => setFormData({ ...formData, consultationMode: mode.id })}
+                            onClick={() => setFormData({ ...formData, consultationMode: mode.id as ConsultationMode })}
                             className={`p-8 rounded-2xl border-2 transition-all ${
                               isSelected
                                 ? 'border-blue-600 bg-blue-50 shadow-lg shadow-blue-100'
                                 : 'border-gray-200 hover:border-gray-300'
                             }`}
                           >
-                            <mode.icon size={48} className={`mx-auto mb-4 ${isSelected ? 'text-blue-600' : 'text-gray-400'}`} />
+                            <ModeIcon size={48} className={`mx-auto mb-4 ${isSelected ? 'text-blue-600' : 'text-gray-400'}`} />
                             <p className="font-bold">{mode.label}</p>
+                            {mode.description ? <p className="mt-2 text-xs text-gray-500">{mode.description}</p> : null}
+                            {mode.fee > 0 ? (
+                              <p className="mt-3 text-xs font-bold text-gray-700">
+                                +{formatPriceDisplay(mode.fee)}
+                              </p>
+                            ) : null}
                           </button>
                         );
                       })}
                     </div>
+                    {selectedConsultationMode?.isInPerson && selectedConsultationMode.transportDisclaimer ? (
+                      <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-800">
+                        {selectedConsultationMode.transportDisclaimer}
+                      </div>
+                    ) : null}
                   </div>
                 )}
 
@@ -474,7 +828,7 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
                           <input
                             type="date"
                             value={formData.preferredDate}
-                            onChange={(e) => setFormData({ ...formData, preferredDate: e.target.value })}
+                            onChange={(e) => updatePreferredDate(e.target.value)}
                             className="w-full p-4 border-2 border-gray-200 rounded-xl outline-none focus:border-blue-600 transition-colors"
                           />
                         </div>
@@ -485,16 +839,19 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
                           </label>
                           <select
                             value={formData.preferredTime}
-                            onChange={(e) => setFormData({ ...formData, preferredTime: e.target.value })}
+                            onChange={(e) => updatePreferredTime(e.target.value)}
                             className="w-full p-4 border-2 border-gray-200 rounded-xl outline-none focus:border-blue-600 transition-colors"
                           >
                             <option value="">Select Time</option>
-                            {TIME_SLOTS.map((slot) => (
-                              <option key={slot} value={slot}>
-                                {slot}
+                            {REQUEST_TIME_WINDOWS.map((slot) => (
+                              <option key={slot.value} value={slot.value}>
+                                {slot.label}
                               </option>
                             ))}
                           </select>
+                          <p className="mt-2 text-xs text-gray-500">
+                            Times are shown in your billing country timezone. Admin scheduling receives the converted time.
+                          </p>
                         </div>
                       </div>
 
@@ -503,17 +860,17 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
                           Urgency Level
                         </label>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                          {[
-                            { id: 'standard' as UrgencyLevel, label: 'Standard (24-48 hrs)', surcharge: 0 },
-                            { id: 'within-6hrs' as UrgencyLevel, label: 'Immediate (Within 6 hrs)', surcharge: 500 },
-                            { id: 'within-2hrs' as UrgencyLevel, label: 'Immediate (Within 2 hrs)', surcharge: 1000 }
-                          ].map((urgency) => {
+                          {availableUrgencyOptions.map((urgency: RequestWizardUrgencyOption) => {
                             const isSelected = formData.urgency === urgency.id;
+                            const surchargeAmount =
+                              urgency.surchargeType === 'percent'
+                                ? toMoney(serviceFee * (urgency.surcharge / 100))
+                                : urgency.surcharge;
                             return (
                               <button
                                 key={urgency.id}
                                 type="button"
-                                onClick={() => setFormData({ ...formData, urgency: urgency.id })}
+                                onClick={() => setFormData({ ...formData, urgency: urgency.id as UrgencyLevel })}
                                 className={`p-4 rounded-xl border-2 transition-all text-center ${
                                   isSelected
                                     ? 'border-blue-600 bg-blue-50'
@@ -521,13 +878,30 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
                                 }`}
                               >
                                 <p className="font-semibold text-sm mb-1">{urgency.label}</p>
-                                {urgency.surcharge > 0 && (
-                                  <p className="text-xs text-gray-500">+₹{urgency.surcharge}</p>
+                                {urgency.timingLabel ? (
+                                  <p className="mb-1 text-[11px] font-medium text-gray-500">{urgency.timingLabel}</p>
+                                ) : null}
+                                {surchargeAmount > 0 && (
+                                  <p className="text-xs text-gray-500">
+                                    +{formatPriceDisplay(surchargeAmount)}
+                                    {urgency.surchargeType === 'percent' ? ` (${urgency.surcharge}%)` : ''}
+                                  </p>
                                 )}
                               </button>
                             );
                           })}
                         </div>
+                        {selectedConsultationMode?.isInPerson ? (
+                          <p className="mt-3 text-xs font-medium text-amber-700">
+                            Only urgency options enabled for in-person consultations are shown. Transportation/travel costs
+                            are extra and borne by the client. Final amount depends on city/country.
+                          </p>
+                        ) : null}
+                        {availableUrgencyOptions.length === 0 ? (
+                          <p className="mt-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-xs font-medium text-red-700">
+                            No urgency option is currently available for this consultation mode.
+                          </p>
+                        ) : null}
                       </div>
 
                       <div>
@@ -574,31 +948,39 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
                       <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
                         <CheckCircle size={40} className="text-green-600" />
                       </div>
-                      <h3 className="text-2xl font-bold mb-2">Ready to Submit</h3>
+                      <h3 className="text-2xl font-bold mb-2">Your request is ready for submission.</h3>
                       <p className="text-gray-500">
-                        Your request for{' '}
-                        <strong>
-                          {REQUEST_WIZARD_SERVICES.find((service) => service.id === formData.services[0])
-                            ?.name}
-                        </strong>{' '}
-                        is ready. Submit it now to create a tracked request inside your dashboard.
+                        Review your selected services and estimated fees before submitting.
+                      </p>
+                      <p className="mt-3 text-sm text-gray-700">
+                        <span className="font-semibold">Selected services:</span> {selectedServicesLabel}
                       </p>
                     </div>
 
                     <div className="bg-gray-50 rounded-2xl p-6 space-y-4 mb-8">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <span className="text-gray-600">Selected Services</span>
+                          <p className="mt-1 text-sm font-medium text-gray-800">{selectedServicesLabel}</p>
+                        </div>
+                        <span className="shrink-0 text-xl font-bold">{formatPriceDisplay(serviceFee)}</span>
+                      </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Estimated Consultation Fee</span>
-                        <span className="text-xl font-bold">₹ {fee.toLocaleString()}</span>
+                        <span className="text-gray-600">Consultation Mode</span>
+                        <span className="text-xl font-bold">{formatPriceDisplay(consultationFee)}</span>
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="text-gray-600">Urgency Surcharge</span>
-                        <span className="text-xl font-bold">₹ {urgencySurcharge.toLocaleString()}</span>
+                        <span className="text-xl font-bold">{formatPriceDisplay(urgencySurcharge)}</span>
                       </div>
                       <div className="border-t border-gray-200 pt-4">
                         <div className="flex justify-between items-center">
                           <span className="font-bold text-lg">Total</span>
-                          <span className="text-2xl font-bold">₹ {totalFee.toLocaleString()}</span>
+                          <span className="text-2xl font-bold">{formatPriceDisplay(totalFee)}</span>
                         </div>
+                        <p className="mt-2 text-xs text-gray-500">
+                          Final fees may vary if scope, urgency, travel, or third-party costs change.
+                        </p>
                       </div>
                     </div>
                   </div>
@@ -628,12 +1010,17 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
                 onClick={handleNext}
                 disabled={
                   isSubmitting ||
+                  isLoadingConfig ||
+                  Boolean(configError) ||
                   (currentStep === 1 && (!formData.fullName || !formData.email || !formData.mobile)) ||
-                  (currentStep === 1 && !formData.whatsappSame && !formData.whatsappNumber) ||
                   (currentStep === 2 && formData.services.length === 0) ||
                   (currentStep === 3 && !formData.legalDomain) ||
                   (currentStep === 4 && !formData.caseDetails) ||
-                  (currentStep === 6 && (!formData.preferredDate || !formData.preferredTime))
+                  (currentStep === 6 &&
+                    (!formData.preferredDate ||
+                      !formData.preferredTime ||
+                      !formData.urgency ||
+                      availableUrgencyOptions.length === 0))
                 }
                 className="px-8 py-3 bg-gray-900 text-white rounded-full font-bold hover:bg-black transition-colors disabled:opacity-30 disabled:cursor-not-allowed flex items-center gap-2"
               >
@@ -642,7 +1029,7 @@ export const NewRequestWizard: React.FC<NewRequestWizardProps> = ({
             ) : (
               <button
                 onClick={handleSubmit}
-                disabled={isSubmitting}
+                disabled={isSubmitting || isLoadingConfig || Boolean(configError)}
                 className="px-8 py-3 bg-green-600 text-white rounded-full font-bold hover:bg-green-700 transition-colors disabled:cursor-not-allowed disabled:opacity-60 flex items-center gap-2"
               >
                 {isSubmitting ? 'Submitting...' : 'Submit Request'} <CheckCircle size={18} />

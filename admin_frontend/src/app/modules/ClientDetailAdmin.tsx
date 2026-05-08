@@ -4,10 +4,17 @@ import {
   FileText, Folder, CreditCard, Shield, Activity as ActivityIcon,
   CheckCircle, AlertCircle, Edit2, User, Globe, MessageSquare, Briefcase, Plus, ChevronRight, Video, History, Download
 } from 'lucide-react';
-import { 
-  formatCurrency, formatDate, formatDateTime,
-  type PlatformUser, type Matter, type Invoice, type Payment, type PlatformDocument, type PlatformEvent,
-  type MessageThread, type AuditEntry, type SystemNotification
+import { formatCurrency, formatDate, formatDateTime } from '../data/formatters';
+import type {
+  AuditEntry,
+  Invoice,
+  Matter,
+  MessageThread,
+  Payment,
+  PlatformDocument,
+  PlatformEvent,
+  PlatformUser,
+  SystemNotification,
 } from '../data/seedData';
 import { StatusBadge, UrgencyDot } from '../components/dashboard/StatusBadge';
 import { EmptyState } from './EmptyState';

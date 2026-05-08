@@ -2,7 +2,7 @@ import React from 'react';
 import { Mail, Phone, MapPin, Globe } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { CLIENT_INTAKE_HREF } from '../config/launchLinks';
-import { BRAND_WORDMARK, CONTACT_EMAIL, CONTACT_PHONE } from '../config/brand';
+import { FOOTER_CONTENT } from '../content/site/common';
 import { EXPERTISE_CATALOG } from '../data/expertiseCatalog';
 
 export const Footer = () => {
@@ -18,39 +18,39 @@ export const Footer = () => {
               className="text-2xl font-bold tracking-tighter"
               style={{ fontFamily: "'Playfair Display', serif" }}
             >
-              {BRAND_WORDMARK}
+              {FOOTER_CONTENT.brand}
             </h2>
             <div className="space-y-4">
               <a
-                href={`mailto:${CONTACT_EMAIL}`}
+                href={`mailto:${FOOTER_CONTENT.contact.email}`}
                 className="flex items-center gap-3 text-gray-400 hover:text-white transition-colors group"
               >
                 <Mail size={18} className="group-hover:scale-110 transition-transform" />
-                <span className="text-sm">{CONTACT_EMAIL}</span>
+                <span className="text-sm">{FOOTER_CONTENT.contact.email}</span>
               </a>
               <a
-                href="tel:+15550001234"
+                href={FOOTER_CONTENT.contact.phoneHref}
                 className="flex items-center gap-3 text-gray-400 hover:text-white transition-colors group"
               >
                 <Phone size={18} className="group-hover:scale-110 transition-transform" />
-                <span className="text-sm">{CONTACT_PHONE}</span>
+                <span className="text-sm">{FOOTER_CONTENT.contact.phone}</span>
               </a>
               <div className="flex items-start gap-3 text-gray-400">
                 <MapPin size={18} className="mt-1 group-hover:scale-110 transition-transform" />
                 <span className="text-sm leading-relaxed">
-                  125 Global Financial Center
-                  <br />
-                  London, EC2V 6BT
-                  <br />
-                  United Kingdom
+                  {FOOTER_CONTENT.address.map((line, index) => (
+                    <React.Fragment key={line}>
+                      {line}
+                      {index < FOOTER_CONTENT.address.length - 1 ? <br /> : null}
+                    </React.Fragment>
+                  ))}
                 </span>
               </div>
             </div>
 
             <div className="pt-4">
               <p className="text-xs font-bold uppercase tracking-widest text-gray-500">
-                Official social profile links will be added after the final brand directory is
-                approved.
+                {FOOTER_CONTENT.socialNote}
               </p>
             </div>
           </div>
@@ -59,7 +59,7 @@ export const Footer = () => {
           <div className="lg:col-span-2 grid grid-cols-2 gap-8">
             <div>
               <h4 className="text-xs font-bold uppercase tracking-widest text-gray-500 mb-6">
-                Expertise
+                {FOOTER_CONTENT.expertiseHeading}
               </h4>
               <ul className="space-y-4 text-sm text-gray-400">
                 {EXPERTISE_CATALOG.slice(0, 5).map((item) => (
@@ -75,39 +75,18 @@ export const Footer = () => {
             </div>
             <div>
               <h4 className="text-xs font-bold uppercase tracking-widest text-gray-500 mb-6">
-                Resources
+                {FOOTER_CONTENT.resourcesHeading}
               </h4>
               <ul className="space-y-4 text-sm text-gray-400">
-                <li
-                  onClick={() => navigate('/insights')}
-                  className="hover:text-white cursor-pointer transition-colors"
-                >
-                  Legal Insights
-                </li>
-                <li
-                  onClick={() => navigate('/market-reports')}
-                  className="hover:text-white cursor-pointer transition-colors"
-                >
-                  Market Reports
-                </li>
-                <li
-                  onClick={() => navigate('/careers')}
-                  className="hover:text-white cursor-pointer transition-colors"
-                >
-                  Careers
-                </li>
-                <li
-                  onClick={() => navigate('/newsroom')}
-                  className="hover:text-white cursor-pointer transition-colors"
-                >
-                  Newsroom
-                </li>
-                <li
-                  onClick={() => navigate('/pro-bono')}
-                  className="hover:text-white cursor-pointer transition-colors"
-                >
-                  Pro Bono
-                </li>
+                {FOOTER_CONTENT.resources.map((link) => (
+                  <li
+                    key={link.path}
+                    onClick={() => navigate(link.path)}
+                    className="hover:text-white cursor-pointer transition-colors"
+                  >
+                    {link.label}
+                  </li>
+                ))}
               </ul>
             </div>
           </div>
@@ -115,7 +94,7 @@ export const Footer = () => {
           {/* The coverage card reinforces the global-delivery message without needing a full map asset. */}
           <div className="relative h-full min-h-[300px] lg:min-h-0 group">
             <h4 className="text-xs font-bold uppercase tracking-widest text-gray-500 mb-6">
-              Global Coverage
+              {FOOTER_CONTENT.coverage.heading}
             </h4>
             <div className="relative w-full aspect-square bg-white/5 rounded-3xl overflow-hidden border border-white/10 group-hover:border-white/20 transition-all">
               <div className="absolute inset-0 p-8 flex items-center justify-center opacity-40 group-hover:opacity-60 transition-opacity">
@@ -123,9 +102,11 @@ export const Footer = () => {
               </div>
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
               <div className="absolute bottom-6 left-6 right-6">
-                <p className="text-xs font-bold uppercase tracking-widest mb-1">Our Network</p>
+                <p className="text-xs font-bold uppercase tracking-widest mb-1">
+                  {FOOTER_CONTENT.coverage.kicker}
+                </p>
                 <p className="text-[10px] text-gray-400">
-                  Presence in 40+ countries across 5 continents.
+                  {FOOTER_CONTENT.coverage.text}
                 </p>
                 
                 
@@ -136,7 +117,7 @@ export const Footer = () => {
                   referrerPolicy="no-referrer"
                   className="inline-block mt-4 text-[10px] font-bold uppercase tracking-[0.2em] border-b border-white pb-1 hover:text-blue-400 transition-colors"
                 >
-                  Request Coverage Details
+                  {FOOTER_CONTENT.coverage.ctaLabel}
                 </a>
               </div>
               <div className="absolute top-1/4 left-1/3 w-2 h-2 bg-blue-500 rounded-full shadow-[0_0_10px_rgba(59,130,246,1)]" />
@@ -149,29 +130,18 @@ export const Footer = () => {
 
         <div className="pt-12 border-t border-white/10 flex flex-col md:flex-row justify-between items-center gap-6 text-[10px] font-bold uppercase tracking-widest text-gray-500">
           <div className="flex gap-8">
-            <button
-              type="button"
-              onClick={() => navigate('/legal-disclaimer')}
-              className="hover:text-white cursor-pointer transition-colors"
-            >
-              Legal Disclaimer
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/privacy')}
-              className="hover:text-white cursor-pointer transition-colors"
-            >
-              Privacy Policy
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/cookies')}
-              className="hover:text-white cursor-pointer transition-colors"
-            >
-              Cookies
-            </button>
+            {FOOTER_CONTENT.legalLinks.map((link) => (
+              <button
+                key={link.path}
+                type="button"
+                onClick={() => navigate(link.path)}
+                className="hover:text-white cursor-pointer transition-colors"
+              >
+                {link.label}
+              </button>
+            ))}
           </div>
-          <p>© 2026 {BRAND_WORDMARK}. ALL RIGHTS RESERVED.</p>
+          <p>{FOOTER_CONTENT.copyright}</p>
         </div>
       </div>
     </footer>

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router';
 import { ImageWithFallback } from './shared/ImageWithFallback';
-import { selfHostedUnsplashImage } from '../utils/assets';
+import { HOME_INSIGHTS_CONTENT } from '../content/site/home';
 
 interface InsightCardProps {
   category: string;
@@ -38,33 +38,15 @@ export const InsightCard = ({ category, title, date, image }: InsightCardProps) 
 };
 
 export const Insights = () => {
-  const insights = [
-    {
-      category: 'Market Report',
-      title: 'Global M&A Trends: A Shift Towards Energy Transition',
-      date: 'Feb 10, 2026',
-      image: selfHostedUnsplashImage('photo-1739502759976-1849f579549d'),
-    },
-    {
-      category: 'Analysis',
-      title: 'The Future of Digital Assets in European Markets',
-      date: 'Feb 08, 2026',
-      image: selfHostedUnsplashImage('photo-1718873030311-665e717830f3'),
-    },
-    {
-      category: 'Briefing',
-      title: 'Cross-border Regulatory Compliance in the AI Era',
-      date: 'Feb 05, 2026',
-      image: selfHostedUnsplashImage('photo-1620712943543-bcc4628c7215'),
-    },
-  ];
-
   return (
     <section className="py-24 bg-white">
       <div className="max-w-7xl mx-auto px-6">
-        <SectionHeader title="Insights" linkText="View all insights" />
+        <SectionHeader
+          title={HOME_INSIGHTS_CONTENT.headerTitle}
+          linkText={HOME_INSIGHTS_CONTENT.headerLinkText}
+        />
         <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
-          {insights.map((insight, index) => (
+          {HOME_INSIGHTS_CONTENT.cards.map((insight, index) => (
             <InsightCard key={index} {...insight} />
           ))}
         </div>

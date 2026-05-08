@@ -1,6 +1,7 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router';
 import type { PlatformUser } from '../../data/seedData';
+import { PaginationControls } from '../../components/shared/PaginationControls';
 import { WorkspaceState } from '../../components/shared/WorkspaceState';
 import { useAsyncResource } from '../../hooks/useAsyncResource';
 import { adminApi } from '../../lib/api/admin';
@@ -9,9 +10,11 @@ import { MatterDeskAdmin } from '../../modules/MatterDeskAdmin';
 export const MattersPage = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [offset, setOffset] = useState(0);
+  const limit = 50;
   const { data, errorMessage, isLoading, refresh } = useAsyncResource(
-    () => adminApi.listMatters(),
-    []
+    () => adminApi.listMatters({ limit, offset }),
+    [limit, offset]
   );
   const clients = useMemo<PlatformUser[]>(
     () => {
@@ -56,7 +59,7 @@ export const MattersPage = () => {
   if (isLoading && !data) {
     return (
       <WorkspaceState
-        description="Fetching live matters from the new admin backend."
+        description="Loading active matters and assignment details."
         title="Loading Matter Desk"
       />
     );
@@ -74,20 +77,28 @@ export const MattersPage = () => {
   }
 
   return (
-    <MatterDeskAdmin
-      clients={clients}
-      createOptions={data?.createOptions}
-      createRequested={searchParams.get('action') === 'new'}
-      matters={data?.matters || []}
-      onCreateMatter={async (payload) => {
-        const response = await adminApi.createMatter(payload);
-        await refresh().catch(() => undefined);
-        navigate(`/matters/${response.matter.id}`);
-        return response;
-      }}
-      onCreateRequestHandled={() => setSearchParams({})}
-      onViewMatter={(matter) => navigate(`/matters/${matter.id}`)}
-      preselectedClientId={searchParams.get('clientId') || undefined}
-    />
+    <>
+      <MatterDeskAdmin
+        clients={clients}
+        createOptions={data?.createOptions}
+        createRequested={searchParams.get('action') === 'new'}
+        matters={data?.matters || []}
+        onCreateMatter={async (payload) => {
+          const response = await adminApi.createMatter(payload);
+          setOffset(0);
+          await refresh().catch(() => undefined);
+          navigate(`/matters/${response.matter.id}`);
+          return response;
+        }}
+        onCreateRequestHandled={() => setSearchParams({})}
+        onViewMatter={(matter) => navigate(`/matters/${matter.id}`)}
+        preselectedClientId={searchParams.get('clientId') || undefined}
+      />
+      <PaginationControls
+        isLoading={isLoading}
+        onOffsetChange={setOffset}
+        pagination={data?.pagination}
+      />
+    </>
   );
 };

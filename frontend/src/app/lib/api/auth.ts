@@ -17,6 +17,17 @@ export const authApi = {
     postJson<AuthActionResponse>(API_ENDPOINTS.auth.signIn(), payload),
   signUp: (payload: {
     acceptTerms: boolean;
+    address: {
+      city: string;
+      country: string;
+      line1: string;
+      line2?: string;
+      postalCode: string;
+      sourceCode?: 'google' | 'ip_prefill' | 'manual';
+      state: string;
+      googlePlaceId?: string | null;
+      validationStatusCode?: 'manual' | 'unverified' | 'verified';
+    };
     country: string;
     email: string;
     fullName: string;

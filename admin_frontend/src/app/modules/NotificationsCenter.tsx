@@ -4,7 +4,8 @@ import {
   Folder, CreditCard, FileText, MessageSquare, Briefcase, Info, RefreshCcw, 
   AlertCircle, Loader2, RotateCcw, X, Users
 } from 'lucide-react';
-import { NOTIFICATIONS, SystemNotification, formatDate } from '../data/seedData';
+import { formatDate } from '../data/formatters';
+import type { SystemNotification } from '../data/seedData';
 import type { ReminderWorkspaceResponse } from '../lib/api/contracts';
 import { EmptyState } from './EmptyState';
 
@@ -27,7 +28,7 @@ export const NotificationsCenter: React.FC<{
   actionError,
   actionStatus,
   isProcessingReminders = false,
-  notifications = NOTIFICATIONS,
+  notifications = [],
   onDismiss,
   onMarkAllRead,
   onMarkAsRead,
@@ -359,12 +360,11 @@ const ReminderQueuePanel = ({
             <Clock className="h-4 w-4 text-amber-600" />
             <h2 className="text-sm font-semibold text-gray-900">Reminder Queue</h2>
             <span className="rounded-full border border-amber-100 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
-              local/in-app mode
+              portal processing
             </span>
           </div>
           <p className="mt-1 text-xs text-gray-500">
-            Email: {workspace.providerMode.email}. SMS: {workspace.providerMode.sms}. External sends are
-            not claimed here unless a real provider is implemented.
+            Email and SMS delivery are marked sent only after the delivery service confirms success.
           </p>
         </div>
 
@@ -438,7 +438,7 @@ const ReminderQueuePanel = ({
         </div>
       ) : dueReminders.length > 0 ? (
         <p className="mt-4 text-xs text-gray-500">
-          {dueReminders.length} due or processing reminder(s) are ready for local/in-app processing.
+          {dueReminders.length} due or processing reminder(s) are ready for portal processing.
         </p>
       ) : (
         <p className="mt-4 text-xs text-gray-500">No failed reminder jobs are waiting for retry.</p>

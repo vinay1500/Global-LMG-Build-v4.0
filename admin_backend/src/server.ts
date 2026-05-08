@@ -1,6 +1,7 @@
 import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { closeMysqlPool } from './lib/mysql.js';
+import { logEvent } from './lib/observability.js';
 import { ensurePhase5SchemaReadiness } from './lib/schemaReadiness.js';
 
 const start = async () => {
@@ -8,7 +9,7 @@ const start = async () => {
 
   const app = createApp();
   const server = app.listen(env.PORT, () => {
-    console.log(`global-lmg-admin-api listening on ${env.PORT}`);
+    logEvent('info', 'server.started', { port: env.PORT });
   });
 
   const shutdown = async () => {
@@ -36,6 +37,9 @@ const start = async () => {
 };
 
 void start().catch((error) => {
-  console.error(error instanceof Error ? error.message : 'Failed to start admin backend.');
+  logEvent('error', 'server.start_failed', {
+    errorMessage: error instanceof Error ? error.message : 'Failed to start admin backend.',
+    errorStack: env.APP_ENV === 'production' ? undefined : error instanceof Error ? error.stack : undefined,
+  });
   void closeMysqlPool().finally(() => process.exit(1));
 });

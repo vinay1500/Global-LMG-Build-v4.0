@@ -5,7 +5,6 @@ export interface NotificationPreferences {
   invoiceReminders: boolean;
   productAnnouncements: boolean;
   smsAlerts: boolean;
-  whatsappAlerts: boolean;
 }
 
 export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
@@ -15,5 +14,4 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
   invoiceReminders: true,
   productAnnouncements: false,
   smsAlerts: true,
-  whatsappAlerts: false,
 };

@@ -2,11 +2,27 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build:all": "npm --prefix backend run build && npm --prefix admin_backend run build && npm --prefix frontend run build && npm --prefix admin_frontend run build",
+    "check:all": "npm --prefix backend run typecheck && npm --prefix admin_backend run typecheck && npm --prefix frontend run typecheck && npm --prefix admin_frontend run typecheck && npm test && npm run test:e2e && npm run build:all",
+    "fx:refresh": "npm --prefix backend run fx:refresh",
+    "smoke:auth-security": "node scripts/auth-security-smoke.mjs",
+    "smoke:admin-password-reset": "npm --prefix admin_backend run smoke:password-reset",
     "smoke:beta": "node scripts/beta-smoke.mjs",
-    "smoke:deployment": "node scripts/deployment-smoke.mjs"
+    "setup:beta-smoke-client": "node scripts/setup-beta-smoke-client.mjs",
+    "smoke:deployment": "node scripts/deployment-smoke.mjs",
+    "smoke:idempotency": "npm --prefix admin_backend run smoke:idempotency",
+    "smoke:clamav": "node scripts/clamav-live-scan.mjs",
+    "smoke:provider-webhooks": "npm --prefix admin_backend run smoke:webhook-signatures",
+    "smoke:rate-limit": "npm --prefix backend run smoke:rate-limit",
+    "smoke:sentry": "npm --prefix backend run smoke:sentry && npm --prefix admin_backend run smoke:sentry",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "validate:production-env": "node scripts/validate-production-env.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",
-    "playwright": "^1.59.1"
+    "pdf-lib": "^1.17.1",
+    "playwright": "^1.59.1",
+    "vitest": "^4.1.5"
   }
 }

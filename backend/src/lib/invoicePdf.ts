@@ -1,13 +1,37 @@
-import PDFDocument from 'pdfkit';
+import type { RowDataPacket } from 'mysql2/promise';
+import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
+import { formatCurrencyAmount } from './currencyFormat.js';
+import { getMysqlPool } from './mysql.js';
+import { selectOne, withConnection } from './mysqlUtils.js';
 import type { InvoiceDetail } from '../modules/domain/types.js';
 
-const formatCurrency = (amount: number, currencyCode: string) =>
-  new Intl.NumberFormat('en-IN', {
-    currency: currencyCode || 'INR',
-    maximumFractionDigits: 2,
-    minimumFractionDigits: 2,
-    style: 'currency',
-  }).format(amount);
+type InvoicePdfTemplateRow = RowDataPacket & {
+  bottomMargin: number | null;
+  leftMargin: number | null;
+  name: string | null;
+  pdfContent: Buffer | null;
+  rightMargin: number | null;
+  topMargin: number | null;
+};
+
+type PdfCanvas = {
+  boldFont: PDFFont;
+  font: PDFFont;
+  page: PDFPage;
+  width: number;
+  x: number;
+  y: number;
+};
+
+const DEFAULT_MARGINS = {
+  bottom: 72,
+  left: 54,
+  right: 54,
+  top: 120,
+};
+
+const formatMoney = (amount: number, currencyCode: string) =>
+  formatCurrencyAmount(amount, currencyCode);
 
 const formatDate = (value: string) =>
   new Intl.DateTimeFormat('en-IN', {
@@ -16,205 +40,247 @@ const formatDate = (value: string) =>
     year: 'numeric',
   }).format(new Date(value));
 
-const ensureSpace = (document: PDFKit.PDFDocument, y: number, requiredHeight: number) => {
-  const bottomLimit = document.page.height - document.page.margins.bottom;
+const safeText = (value: unknown) =>
+  String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
 
-  if (y + requiredHeight <= bottomLimit) {
-    return y;
+const wrapText = (text: string, font: PDFFont, size: number, maxWidth: number) => {
+  const paragraphs = String(text || '')
+    .split(/\n+/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+  const lines: string[] = [];
+
+  for (const paragraph of paragraphs.length ? paragraphs : ['']) {
+    const words = paragraph.split(/\s+/).filter(Boolean);
+    let line = '';
+
+    for (const word of words) {
+      const candidate = line ? `${line} ${word}` : word;
+      if (font.widthOfTextAtSize(candidate, size) <= maxWidth || !line) {
+        line = candidate;
+      } else {
+        lines.push(line);
+        line = word;
+      }
+    }
+
+    if (line) {
+      lines.push(line);
+    }
   }
 
-  document.addPage();
-  return document.page.margins.top;
+  return lines.length ? lines : [''];
 };
 
-const drawLabelValue = (
-  document: PDFKit.PDFDocument,
-  y: number,
-  label: string,
-  value: string
+const drawWrapped = (
+  canvas: PdfCanvas,
+  text: string,
+  options: { color?: ReturnType<typeof rgb>; font?: PDFFont; lineGap?: number; maxLines?: number; size?: number } = {}
 ) => {
-  document
-    .font('Helvetica')
-    .fontSize(10)
-    .fillColor('#6b7280')
-    .text(label, 50, y, { width: 150 });
-  document
-    .font('Helvetica-Bold')
-    .fontSize(10)
-    .fillColor('#111827')
-    .text(value, 210, y, { width: 320 });
+  const size = options.size ?? 9;
+  const font = options.font ?? canvas.font;
+  const color = options.color ?? rgb(0.17, 0.21, 0.28);
+  const lineHeight = size + (options.lineGap ?? 4);
+  const lines = wrapText(text, font, size, canvas.width);
+  const visibleLines = options.maxLines ? lines.slice(0, options.maxLines) : lines;
 
-  return document.y + 4;
+  for (const line of visibleLines) {
+    canvas.page.drawText(line, {
+      color,
+      font,
+      size,
+      x: canvas.x,
+      y: canvas.y,
+    });
+    canvas.y -= lineHeight;
+  }
+
+  return canvas.y;
+};
+
+const drawLabelValue = (canvas: PdfCanvas, label: string, value: string) => {
+  const labelWidth = Math.min(150, canvas.width * 0.34);
+  canvas.page.drawText(label, {
+    color: rgb(0.42, 0.45, 0.5),
+    font: canvas.font,
+    size: 8.5,
+    x: canvas.x,
+    y: canvas.y,
+  });
+  canvas.page.drawText(value, {
+    color: rgb(0.07, 0.09, 0.15),
+    font: canvas.boldFont,
+    size: 8.5,
+    x: canvas.x + labelWidth,
+    y: canvas.y,
+  });
+  canvas.y -= 14;
+};
+
+const loadInvoicePdfTemplate = async (invoiceId: string) =>
+  withConnection(getMysqlPool(), async (connection) =>
+    selectOne<InvoicePdfTemplateRow>(
+      connection,
+      `SELECT
+         COALESCE(snap.pdf_content, active.pdf_content) AS pdfContent,
+         COALESCE(i.pdf_template_name_snapshot, snap.name, active.name) AS name,
+         COALESCE(i.pdf_content_top_margin_snapshot, snap.content_top_margin, active.content_top_margin) AS topMargin,
+         COALESCE(i.pdf_content_left_margin_snapshot, snap.content_left_margin, active.content_left_margin) AS leftMargin,
+         COALESCE(i.pdf_content_right_margin_snapshot, snap.content_right_margin, active.content_right_margin) AS rightMargin,
+         COALESCE(i.pdf_content_bottom_margin_snapshot, snap.content_bottom_margin, active.content_bottom_margin) AS bottomMargin
+       FROM invoices i
+       LEFT JOIN invoice_pdf_templates snap
+         ON snap.public_id = i.pdf_template_public_id_snapshot
+       LEFT JOIN invoice_pdf_templates active
+         ON active.is_active = 1
+        AND active.archived_at IS NULL
+       WHERE i.public_id = ?
+       LIMIT 1`,
+      [invoiceId]
+    )
+  );
+
+export const renderInvoicePdfFromTemplate = async (
+  invoice: InvoiceDetail,
+  template?: Partial<InvoicePdfTemplateRow> | null
+) => {
+  const pdfDoc = template?.pdfContent
+    ? await PDFDocument.load(template.pdfContent)
+    : await PDFDocument.create();
+
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const page = pdfDoc.getPageCount() > 0 ? pdfDoc.getPage(0) : pdfDoc.addPage([595.28, 841.89]);
+  const { height, width } = page.getSize();
+  const margins = {
+    bottom: Number(template?.bottomMargin ?? DEFAULT_MARGINS.bottom),
+    left: Number(template?.leftMargin ?? DEFAULT_MARGINS.left),
+    right: Number(template?.rightMargin ?? DEFAULT_MARGINS.right),
+    top: Number(template?.topMargin ?? DEFAULT_MARGINS.top),
+  };
+  const canvas: PdfCanvas = {
+    boldFont,
+    font,
+    page,
+    width: Math.max(180, width - margins.left - margins.right),
+    x: margins.left,
+    y: height - margins.top,
+  };
+
+  if (!template?.pdfContent) {
+    page.drawText(invoice.business.name || 'Global LMG', {
+      color: rgb(0.07, 0.09, 0.15),
+      font: boldFont,
+      size: 22,
+      x: margins.left,
+      y: height - 64,
+    });
+    page.drawText('Invoice', {
+      color: rgb(0.42, 0.45, 0.5),
+      font,
+      size: 11,
+      x: margins.left,
+      y: height - 82,
+    });
+  }
+
+  drawWrapped(canvas, invoice.template.subject || `Invoice ${invoice.invoiceNumber}`, {
+    font: boldFont,
+    size: 15,
+  });
+  canvas.y -= 8;
+  drawLabelValue(canvas, 'Invoice number', invoice.invoiceNumber);
+  drawLabelValue(canvas, 'Issued', formatDate(invoice.issueDate));
+  drawLabelValue(canvas, 'Due', formatDate(invoice.dueDate));
+  drawLabelValue(canvas, 'Status', invoice.statusCode);
+  canvas.y -= 6;
+
+  drawWrapped(canvas, 'Bill To', { font: boldFont, size: 10 });
+  drawWrapped(
+    canvas,
+    [
+      invoice.billingSnapshot?.billingName,
+      invoice.billingSnapshot?.addressLine1,
+      invoice.billingSnapshot?.addressLine2,
+      [
+        invoice.billingSnapshot?.city,
+        invoice.billingSnapshot?.state,
+        invoice.billingSnapshot?.postalCode,
+        invoice.billingSnapshot?.countryCode,
+      ]
+        .filter(Boolean)
+        .join(', '),
+      invoice.billingSnapshot?.billingEmail,
+      invoice.billingSnapshot?.billingPhone,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    { size: 8.5 }
+  );
+  canvas.y -= 6;
+
+  if (invoice.template.body) {
+    drawWrapped(canvas, invoice.template.body, { maxLines: 6, size: 8.5 });
+    canvas.y -= 6;
+  }
+
+  const tableTop = canvas.y;
+  page.drawLine({
+    color: rgb(0.82, 0.84, 0.88),
+    end: { x: canvas.x + canvas.width, y: tableTop + 5 },
+    start: { x: canvas.x, y: tableTop + 5 },
+    thickness: 0.75,
+  });
+  page.drawText('Description', { color: rgb(0.32, 0.35, 0.4), font: boldFont, size: 8.5, x: canvas.x, y: canvas.y });
+  page.drawText('Qty', { color: rgb(0.32, 0.35, 0.4), font: boldFont, size: 8.5, x: canvas.x + canvas.width - 165, y: canvas.y });
+  page.drawText('Rate', { color: rgb(0.32, 0.35, 0.4), font: boldFont, size: 8.5, x: canvas.x + canvas.width - 118, y: canvas.y });
+  page.drawText('Amount', { color: rgb(0.32, 0.35, 0.4), font: boldFont, size: 8.5, x: canvas.x + canvas.width - 54, y: canvas.y });
+  canvas.y -= 15;
+
+  for (const line of invoice.lines) {
+    const startY = canvas.y;
+    const descLines = wrapText(line.description, font, 8.5, canvas.width - 180).slice(0, 2);
+    for (const [index, descLine] of descLines.entries()) {
+      page.drawText(descLine, { color: rgb(0.07, 0.09, 0.15), font, size: 8.5, x: canvas.x, y: canvas.y - index * 11 });
+    }
+    page.drawText(Number(line.quantity).toFixed(2), { color: rgb(0.07, 0.09, 0.15), font, size: 8.5, x: canvas.x + canvas.width - 165, y: startY });
+    page.drawText(formatMoney(line.unitPrice, invoice.currencyCode), { color: rgb(0.07, 0.09, 0.15), font, size: 8.5, x: canvas.x + canvas.width - 118, y: startY });
+    page.drawText(formatMoney(line.lineTotal, invoice.currencyCode), { color: rgb(0.07, 0.09, 0.15), font, size: 8.5, x: canvas.x + canvas.width - 54, y: startY });
+    canvas.y -= Math.max(18, descLines.length * 11 + 8);
+  }
+
+  canvas.y -= 8;
+  const totalsX = canvas.x + Math.max(0, canvas.width - 220);
+  const drawTotal = (label: string, value: string, bold = false) => {
+    page.drawText(label, { color: rgb(0.32, 0.35, 0.4), font: bold ? boldFont : font, size: bold ? 10 : 8.5, x: totalsX, y: canvas.y });
+    page.drawText(value, { color: rgb(0.07, 0.09, 0.15), font: bold ? boldFont : font, size: bold ? 10 : 8.5, x: totalsX + 110, y: canvas.y });
+    canvas.y -= bold ? 17 : 14;
+  };
+  drawTotal('Subtotal', formatMoney(invoice.subtotalAmount, invoice.currencyCode));
+  drawTotal('Tax', formatMoney(invoice.taxAmount, invoice.currencyCode));
+  drawTotal('Paid', formatMoney(invoice.amountPaid, invoice.currencyCode));
+  drawTotal('Amount due', formatMoney(invoice.amountDue, invoice.currencyCode), true);
+  canvas.y -= 8;
+
+  if (invoice.business.paymentInstructions) {
+    drawWrapped(canvas, 'Payment Instructions', { font: boldFont, size: 9.5 });
+    drawWrapped(canvas, invoice.business.paymentInstructions, { maxLines: 4, size: 8.2 });
+  }
+
+  if (invoice.template.terms || invoice.template.footer) {
+    canvas.y = Math.max(margins.bottom + 50, canvas.y - 4);
+    drawWrapped(canvas, [invoice.template.terms, invoice.template.footer].filter(Boolean).join('\n'), {
+      maxLines: 5,
+      size: 7.8,
+    });
+  }
+
+  return Buffer.from(await pdfDoc.save());
 };
 
 export const renderInvoicePdf = async (invoice: InvoiceDetail) => {
-  const document = new PDFDocument({
-    margin: 50,
-    size: 'A4',
-  });
-  const chunks: Buffer[] = [];
-
-  const bufferPromise = new Promise<Buffer>((resolve, reject) => {
-    document.on('data', (chunk) => {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    });
-    document.on('end', () => resolve(Buffer.concat(chunks)));
-    document.on('error', reject);
-  });
-
-  let y = 50;
-
-  document
-    .font('Helvetica-Bold')
-    .fontSize(24)
-    .fillColor('#111827')
-    .text('Global LMG Invoice', 50, y);
-
-  y = document.y + 6;
-  document
-    .font('Helvetica')
-    .fontSize(11)
-    .fillColor('#4b5563')
-    .text(`Invoice ${invoice.invoiceNumber}`, 50, y);
-  document.text(`Status: ${invoice.statusCode}`, 50, document.y + 2);
-  document.text(`Issued: ${formatDate(invoice.issueDate)}   Due: ${formatDate(invoice.dueDate)}`, 50, document.y + 2);
-
-  y = document.y + 18;
-  document
-    .moveTo(50, y)
-    .lineTo(545, y)
-    .strokeColor('#e5e7eb')
-    .stroke();
-
-  y += 18;
-  y = drawLabelValue(document, y, 'Invoice Number', invoice.invoiceNumber);
-  y = drawLabelValue(document, y, 'Currency', invoice.currencyCode);
-  y = drawLabelValue(document, y, 'Amount Paid', formatCurrency(invoice.amountPaid, invoice.currencyCode));
-  y = drawLabelValue(document, y, 'Amount Due', formatCurrency(invoice.amountDue, invoice.currencyCode));
-
-  if (invoice.billingSnapshot) {
-    y += 14;
-    y = ensureSpace(document, y, 90);
-    document
-      .font('Helvetica-Bold')
-      .fontSize(12)
-      .fillColor('#111827')
-      .text('Bill To', 50, y);
-    y = document.y + 8;
-
-    const billToLines = [
-      invoice.billingSnapshot.billingName,
-      invoice.billingSnapshot.billingEmail,
-      invoice.billingSnapshot.billingPhone,
-      invoice.billingSnapshot.addressLine1,
-      invoice.billingSnapshot.addressLine2,
-      `${invoice.billingSnapshot.city}, ${invoice.billingSnapshot.state} ${invoice.billingSnapshot.postalCode}`,
-      invoice.billingSnapshot.countryCode,
-      invoice.billingSnapshot.gstin ? `GSTIN: ${invoice.billingSnapshot.gstin}` : null,
-    ].filter(Boolean) as string[];
-
-    for (const line of billToLines) {
-      document
-        .font('Helvetica')
-        .fontSize(10)
-        .fillColor('#374151')
-        .text(line, 50, y);
-      y = document.y + 2;
-    }
-  }
-
-  y += 14;
-  y = ensureSpace(document, y, 120);
-  document
-    .font('Helvetica-Bold')
-    .fontSize(12)
-    .fillColor('#111827')
-    .text('Invoice Items', 50, y);
-  y = document.y + 10;
-
-  document
-    .font('Helvetica-Bold')
-    .fontSize(10)
-    .fillColor('#6b7280')
-    .text('Description', 50, y, { width: 250 })
-    .text('Qty', 320, y, { width: 45, align: 'right' })
-    .text('Rate', 380, y, { width: 75, align: 'right' })
-    .text('Amount', 470, y, { width: 75, align: 'right' });
-  y = document.y + 8;
-
-  for (const line of invoice.lines) {
-    y = ensureSpace(document, y, 42);
-    document
-      .font('Helvetica')
-      .fontSize(10)
-      .fillColor('#111827')
-      .text(line.description, 50, y, { width: 250 })
-      .text(String(line.quantity), 320, y, { width: 45, align: 'right' })
-      .text(formatCurrency(line.unitPrice, invoice.currencyCode), 380, y, { width: 75, align: 'right' })
-      .text(formatCurrency(line.lineTotal, invoice.currencyCode), 470, y, { width: 75, align: 'right' });
-
-    y = Math.max(document.y, y + 14);
-
-    if (line.taxes.length > 0) {
-      document
-        .font('Helvetica')
-        .fontSize(8)
-        .fillColor('#6b7280')
-        .text(
-          line.taxes.map((tax) => `${tax.name} (${tax.percent.toFixed(2)}%)`).join(' · '),
-          50,
-          y + 2,
-          { width: 320 }
-        );
-      y = document.y + 6;
-    } else {
-      y += 8;
-    }
-  }
-
-  y += 8;
-  y = ensureSpace(document, y, 90);
-  document
-    .moveTo(330, y)
-    .lineTo(545, y)
-    .strokeColor('#e5e7eb')
-    .stroke();
-  y += 10;
-  y = drawLabelValue(document, y, 'Subtotal', formatCurrency(invoice.subtotalAmount, invoice.currencyCode));
-  y = drawLabelValue(document, y, 'Discount', formatCurrency(invoice.discountAmount, invoice.currencyCode));
-  y = drawLabelValue(document, y, 'Tax', formatCurrency(invoice.taxAmount, invoice.currencyCode));
-  y = drawLabelValue(document, y, 'Total', formatCurrency(invoice.totalAmount, invoice.currencyCode));
-
-  if (invoice.installments.length > 0) {
-    y += 18;
-    y = ensureSpace(document, y, 70);
-    document
-      .font('Helvetica-Bold')
-      .fontSize(12)
-      .fillColor('#111827')
-      .text('Installments', 50, y);
-    y = document.y + 8;
-
-    for (const installment of invoice.installments) {
-      y = ensureSpace(document, y, 30);
-      document
-        .font('Helvetica')
-        .fontSize(10)
-        .fillColor('#374151')
-        .text(
-          `Installment ${installment.installmentNo} · Due ${formatDate(installment.dueDate)} · ${installment.statusCode}`,
-          50,
-          y,
-          { width: 360 }
-        )
-        .text(formatCurrency(installment.amountDue, invoice.currencyCode), 430, y, {
-          align: 'right',
-          width: 115,
-        });
-      y = document.y + 6;
-    }
-  }
-
-  document.end();
-  return bufferPromise;
+  const template = await loadInvoicePdfTemplate(invoice.id);
+  return renderInvoicePdfFromTemplate(invoice, template);
 };

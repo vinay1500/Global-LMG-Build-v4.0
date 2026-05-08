@@ -1,7 +1,7 @@
 const LOCAL_UNSPLASH_IMAGE_PREFIX = '/images/unsplash';
 
 const UNSPLASH_ASSET_OVERRIDES: Record<string, string> = {
-  // Some historical Unsplash placeholders now return 404s. We remap those ids to
+  // Some historical Unsplash references now return 404s. We remap those ids to
   // existing local stock assets so the site stays fully self-hosted at runtime.
   'photo-1620712943543-bcc4628c7215': 'photo-1551288049-bebda4e38f71',
   'photo-1718873030311-665e717830f3': 'photo-1611974789855-9c2a0a7236a3',

@@ -54,6 +54,9 @@ export const PUBLIC_SITE_URL = getAbsoluteUrl(
 export const API_BASE_URL = getApiBaseUrl(import.meta.env.VITE_API_BASE_URL);
 export const PORTAL_MODE = getPortalMode(import.meta.env.VITE_PORTAL_MODE);
 export const GOOGLE_CLIENT_ID = getOptionalString(import.meta.env.VITE_GOOGLE_CLIENT_ID);
+export const GOOGLE_MAPS_API_KEY = getOptionalString(import.meta.env.VITE_GOOGLE_MAPS_API_KEY);
+export const ADDRESS_AUTOCOMPLETE_MODE =
+  import.meta.env.VITE_ADDRESS_AUTOCOMPLETE_MODE === 'google' ? 'google' : 'disabled';
 export const RUNTIME_GOOGLE_FORM_URL = getAbsoluteUrl(
   import.meta.env.VITE_TEMP_GOOGLE_FORM_URL,
   DEFAULT_GOOGLE_FORM_URL

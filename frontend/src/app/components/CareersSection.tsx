@@ -3,8 +3,7 @@ import { ArrowRight, GraduationCap, Briefcase, Users } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useNavigate } from 'react-router';
 import { CLIENT_INTAKE_HREF } from '../config/launchLinks';
-import { BRAND_NAME } from '../config/brand';
-import { CAREER_CATEGORIES } from '../data/careers';
+import { CAREER_CATEGORIES, CAREERS_HOME_SECTION } from '../content/site/careers';
 
  
 const CAREER_ICON_MAP = {
@@ -26,12 +25,10 @@ export const CareersSection = () => {
             className="text-5xl md:text-6xl mb-6 cursor-pointer hover:text-blue-600 transition-colors"
             style={{ fontFamily: "'Playfair Display', serif" }}
           >
-            Careers at {BRAND_NAME}
+            {CAREERS_HOME_SECTION.title}
           </h2>
           <p className="text-xl text-gray-500 font-light leading-relaxed">
-            We are always looking for exceptional talent to join our global network. Whether you are
-            a student, a seasoned advocate, or a professional in legal operations, discover your
-            next move with us.
+            {CAREERS_HOME_SECTION.intro}
           </p>
         </div>
 
@@ -79,11 +76,10 @@ export const CareersSection = () => {
               className="text-3xl font-medium mb-4"
               style={{ fontFamily: "'Playfair Display', serif" }}
             >
-              Ready to redefine the future of law?
+              {CAREERS_HOME_SECTION.ctaTitle}
             </h4>
             <p className="text-gray-400 max-w-xl">
-              Our recruitment team is active across all regions. Reach out if you have questions
-              about our culture or the application process.
+              {CAREERS_HOME_SECTION.ctaBody}
             </p>
           </div>
           
@@ -95,7 +91,7 @@ export const CareersSection = () => {
             referrerPolicy="no-referrer"
             className="relative z-10 px-10 py-5 bg-white text-black font-bold uppercase tracking-widest text-xs hover:bg-gray-100 transition-colors whitespace-nowrap"
           >
-            Contact Recruitment
+            {CAREERS_HOME_SECTION.ctaButtonLabel}
           </a>
           {/* Decorative element */}
           <div className="absolute top-0 right-0 w-64 h-64 bg-blue-600/20 blur-[100px] -mr-32 -mt-32" />

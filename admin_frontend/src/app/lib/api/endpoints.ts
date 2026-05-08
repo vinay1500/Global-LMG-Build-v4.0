@@ -14,6 +14,8 @@ export const API_ENDPOINTS = {
     auth: {
       me: () => joinApiPath('/v1/admin/auth/me'),
       password: () => joinApiPath('/v1/admin/auth/password'),
+      passwordResetConfirm: () => joinApiPath('/v1/admin/auth/password-reset/confirm'),
+      passwordResetRequest: () => joinApiPath('/v1/admin/auth/password-reset/request'),
       preferences: () => joinApiPath('/v1/admin/auth/preferences'),
       session: () => joinApiPath('/v1/admin/auth/session'),
       signIn: () => joinApiPath('/v1/admin/auth/sign-in'),
@@ -21,11 +23,16 @@ export const API_ENDPOINTS = {
     },
     billingWorkspace: () => joinApiPath('/v1/admin/billing/workspace'),
     createInvoice: () => joinApiPath('/v1/admin/billing/invoices'),
+    invoiceDownload: (invoiceId: string) =>
+      joinApiPath(`/v1/admin/billing/invoices/${encodeURIComponent(invoiceId)}/download`),
     createEvent: () => joinApiPath('/v1/admin/events'),
     createClient: () => joinApiPath('/v1/admin/clients'),
     createMatter: () => joinApiPath('/v1/admin/matters'),
     cancelEvent: (eventId: string) => joinApiPath(`/v1/admin/events/${eventId}/cancel`),
+    eventCalendarSyncRetry: (eventId: string) =>
+      joinApiPath(`/v1/admin/events/${eventId}/calendar-sync/retry`),
     createMatterAssignment: (matterId: string) => joinApiPath(`/v1/admin/matters/${matterId}/assignments`),
+    replaceMatterAssignments: (matterId: string) => joinApiPath(`/v1/admin/matters/${matterId}/assignments`),
     createMatterNote: (matterId: string) => joinApiPath(`/v1/admin/matters/${matterId}/notes`),
     createRefund: () => joinApiPath('/v1/admin/billing/refunds'),
     recordPayment: () => joinApiPath('/v1/admin/billing/payments'),
@@ -37,6 +44,7 @@ export const API_ENDPOINTS = {
     documentDetail: (documentId: string) => joinApiPath(`/v1/admin/documents/${documentId}`),
     documentDownload: (documentId: string) => joinApiPath(`/v1/admin/documents/${documentId}/download`),
     documentPreview: (documentId: string) => joinApiPath(`/v1/admin/documents/${documentId}/preview`),
+    documentScan: (documentId: string) => joinApiPath(`/v1/admin/documents/${documentId}/scan`),
     documentVersionUpload: (documentId: string) =>
       joinApiPath(`/v1/admin/documents/${documentId}/versions`),
     events: () => joinApiPath('/v1/admin/events'),
@@ -97,6 +105,11 @@ export const API_ENDPOINTS = {
       ),
     search: () => joinApiPath('/v1/admin/search'),
     invoiceSettings: () => joinApiPath('/v1/admin/settings/invoice'),
+    invoicePdfTemplates: () => joinApiPath('/v1/admin/settings/invoice/pdf-templates'),
+    invoicePdfTemplate: (templateId: string) =>
+      joinApiPath(`/v1/admin/settings/invoice/pdf-templates/${encodeURIComponent(templateId)}`),
+    invoicePdfTemplateArchive: (templateId: string) =>
+      joinApiPath(`/v1/admin/settings/invoice/pdf-templates/${encodeURIComponent(templateId)}/archive`),
     serviceCatalog: () => joinApiPath('/v1/admin/settings/service-catalog'),
     serviceCatalogServices: () => joinApiPath('/v1/admin/settings/service-catalog/services'),
     serviceCatalogService: (serviceId: string) =>
@@ -129,6 +142,12 @@ export const API_ENDPOINTS = {
       joinApiPath(`/v1/admin/settings/pricing-rules/country-pricing/${countryPricingId}`),
     pricingRuleCountryPricingArchive: (countryPricingId: string) =>
       joinApiPath(`/v1/admin/settings/pricing-rules/country-pricing/${countryPricingId}/archive`),
+    pricingRulePriceOverrides: () =>
+      joinApiPath('/v1/admin/settings/pricing-rules/price-overrides'),
+    pricingRulePriceOverride: (overrideId: string) =>
+      joinApiPath(`/v1/admin/settings/pricing-rules/price-overrides/${overrideId}`),
+    pricingRulePriceOverrideArchive: (overrideId: string) =>
+      joinApiPath(`/v1/admin/settings/pricing-rules/price-overrides/${overrideId}/archive`),
     settingsTemplates: () => joinApiPath('/v1/admin/settings/templates'),
     settingsTemplate: (templateId: string) => joinApiPath(`/v1/admin/settings/templates/${templateId}`),
     settingsTemplateArchive: (templateId: string) =>

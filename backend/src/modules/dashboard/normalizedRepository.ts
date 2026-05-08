@@ -4,9 +4,19 @@ import { addDaysUtc, fromMysqlDateTime, nowUtc, toMysqlDateTime } from '../../li
 import { createPublicId } from '../../lib/ids.js';
 import { badRequest, conflict, forbidden, notFound } from '../../lib/httpErrors.js';
 import { selectAll, selectOne, withConnection, withTransaction } from '../../lib/mysqlUtils.js';
+import { getRequestContext } from '../../lib/observability.js';
+import { env } from '../../config/env.js';
 import { ensurePlatformReady } from '../platform/bootstrap.js';
 import { domainEventService } from '../domainEvents/service.js';
 import { allocateBusinessNumber } from '../platform/sequences.js';
+import {
+  convertBaseAmount,
+  exactOverrideAmount,
+  normalizeCurrencyCode,
+  summarizeFxSnapshots,
+  type PricingFxSnapshot,
+} from '../pricing/fx.js';
+import { renderAndStoreInvoiceTemplateSnapshot } from '../domain/invoiceTemplateRendering.js';
 import { buildStages, createEmptyDashboardSnapshot } from './helpers.js';
 import type {
   ChatMessage,
@@ -27,32 +37,81 @@ import type {
 
 const AUTOMATIC_REQUEST_ACKNOWLEDGEMENT =
   'We have received your request. A case manager will confirm the next step shortly.';
+const REFERENCE_CACHE_TTL_MS = 5 * 60_000;
+const ACTIVE_PRICING_CURRENCY_CODE = 'USD';
 
 interface ClientContextRow extends RowDataPacket {
   account_public_id: string;
+  address_city: string | null;
+  address_country_code: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  address_postal_code: string | null;
+  address_state: string | null;
   client_account_id: number;
   country_code: string | null;
+  display_name: string;
   email: string;
   last_login_at: string | Date | null;
+  mobile_number: string | null;
   owner_name: string | null;
   phone: string | null;
   region: string | null;
   user_public_id: string;
 }
 
+type RequestPricingReferenceRows = {
+  consultationRows: ConsultationModePricingRow[];
+  legalDomainRows: Array<RowDataPacket & { code: string; description: string | null; name: string }>;
+  serviceRows: RequestServicePricingRow[];
+  urgencyRows: UrgencyPricingRow[];
+};
+
+let requestPricingReferenceCache:
+  | { expiresAt: number; value: RequestPricingReferenceRows }
+  | null = null;
+
 interface ClientContext {
   clientAccountId: number;
   countryCode: string;
   currentClient: PlatformUser;
+  primaryAddress: {
+    city: string | null;
+    countryCode: string | null;
+    line1: string | null;
+    line2: string | null;
+    postalCode: string | null;
+    state: string | null;
+  };
+  primaryAddressCountryCode: string;
 }
 
-interface CountryPricingRow extends RowDataPacket {
+type PricingCountrySource = 'default' | 'ip_geolocation' | 'phone' | 'request' | 'saved_address';
+
+interface PricingCountryResolution {
+  countryCode: string;
+  confidence: 'fallback' | 'high' | 'medium';
+  source: PricingCountrySource;
+}
+
+export interface CountryPricingRow extends RowDataPacket {
   country_code: string;
   country_name: string;
   currency_code: string;
   id: number;
   price_multiplier: string | number;
   public_id: string;
+}
+
+export type PriceOverrideSubjectType = 'consultation_mode' | 'service' | 'urgency';
+
+export interface CountryPriceOverrideRow extends RowDataPacket {
+  country_code: string;
+  country_name: string;
+  currency_code: string;
+  price_amount: string | number;
+  subject_code: string;
+  subject_type_code: PriceOverrideSubjectType;
 }
 
 interface RequestServicePricingRow extends RowDataPacket {
@@ -64,7 +123,7 @@ interface RequestServicePricingRow extends RowDataPacket {
   service_code: string;
 }
 
-interface ConsultationModePricingRow extends RowDataPacket {
+export interface ConsultationModePricingRow extends RowDataPacket {
   code: string;
   description_text: string | null;
   is_active: number;
@@ -73,12 +132,18 @@ interface ConsultationModePricingRow extends RowDataPacket {
   transport_disclaimer_text: string | null;
 }
 
-interface UrgencyPricingRow extends RowDataPacket {
+export interface UrgencyPricingRow extends RowDataPacket {
+  allow_in_person: number | null;
+  allow_phone: number | null;
+  allow_video: number | null;
   id: number;
   label: string;
+  max_response_hours: number | null;
+  min_response_hours: number | null;
   response_window_hours: number | null;
   surcharge_type_code: string;
   surcharge_value: string | number;
+  timing_label: string | null;
   urgency_code: string;
 }
 
@@ -117,7 +182,10 @@ const shouldSuppressInAppNotification = (
 
 const normalizeCountryCode = (value: string | null | undefined) => {
   const normalized = String(value || '').trim().toUpperCase();
-  if (!normalized || normalized === 'INDIA') {
+  if (!normalized) {
+    return '';
+  }
+  if (normalized === 'INDIA') {
     return 'IN';
   }
   if (normalized === 'USA' || normalized === 'UNITED STATES') {
@@ -129,11 +197,128 @@ const normalizeCountryCode = (value: string | null | undefined) => {
   return normalized.slice(0, 8);
 };
 
-const toMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+const inferCountryCodeFromPhone = (phone: string | null | undefined) => {
+  const normalized = String(phone || '').replace(/[^\d+]/g, '');
+  if (normalized.startsWith('+91') || normalized.startsWith('0091')) {
+    return 'IN';
+  }
+  if (normalized.startsWith('+61') || normalized.startsWith('0061')) {
+    return 'AU';
+  }
+  if (normalized.startsWith('+1') || normalized.startsWith('001')) {
+    return 'US';
+  }
+  return '';
+};
+
+export const toMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+
+export const priceOverrideKey = (subjectType: PriceOverrideSubjectType, subjectCode: string) =>
+  `${subjectType}:${subjectCode.trim().toLowerCase()}`;
+
+export const buildPriceOverrideMap = (rows: CountryPriceOverrideRow[]) => {
+  const map = new Map<string, CountryPriceOverrideRow>();
+  for (const row of rows) {
+    map.set(priceOverrideKey(row.subject_type_code, row.subject_code), row);
+  }
+  return map;
+};
+
+export const resolveFlatPrice = (
+  overrides: Map<string, CountryPriceOverrideRow>,
+  subjectType: PriceOverrideSubjectType,
+  subjectCode: string,
+  defaultAmount: number,
+  multiplier: number
+) => {
+  const override = overrides.get(priceOverrideKey(subjectType, subjectCode));
+  if (override) {
+    return toMoney(toAmount(override.price_amount));
+  }
+  return toMoney(defaultAmount * multiplier);
+};
+
+const pricingRuleSourceCode = (snapshot: PricingFxSnapshot) => {
+  if (snapshot.source === 'exact_country_override') {
+    return 'exact-country-override';
+  }
+  if (snapshot.source === 'exchange_rate') {
+    return 'fx-conversion';
+  }
+  return 'base-currency';
+};
+
+export const resolvePricingCurrency = (_countryPricing: CountryPricingRow, _overrideRows: CountryPriceOverrideRow[]) =>
+  ACTIVE_PRICING_CURRENCY_CODE;
+
+const getDefaultPricingCountry = () => normalizeCountryCode(env.DEFAULT_PRICING_COUNTRY) || 'US';
+
+const getIpGeolocationCountryCode = () => {
+  if (env.IP_GEOLOCATION_MODE === 'cloudflare') {
+    return normalizeCountryCode(getRequestContext()?.ipCountryCode);
+  }
+
+  return '';
+};
+
+export const isUrgencyAllowedForConsultationMode = (urgency: UrgencyPricingRow, modeCode: string) => {
+  if (modeCode === 'phone') {
+    return urgency.allow_phone !== 0;
+  }
+  if (modeCode === 'in-person') {
+    return urgency.allow_in_person === 1;
+  }
+  return urgency.allow_video !== 0;
+};
+
+export const allowedConsultationModesForUrgency = (
+  urgency: UrgencyPricingRow,
+  consultationRows: ConsultationModePricingRow[]
+) =>
+  consultationRows
+    .filter((mode) => isUrgencyAllowedForConsultationMode(urgency, mode.code))
+    .map((mode) => mode.code);
+
+export const formatUrgencyTiming = (urgency: UrgencyPricingRow) => {
+  if (urgency.timing_label?.trim()) {
+    return urgency.timing_label.trim();
+  }
+  const minHours = urgency.min_response_hours === null ? null : Number(urgency.min_response_hours);
+  const maxHours = urgency.max_response_hours === null ? null : Number(urgency.max_response_hours);
+  if (minHours !== null && maxHours !== null) {
+    return minHours === maxHours ? `${maxHours}h` : `${minHours}-${maxHours}h`;
+  }
+  if (maxHours !== null) {
+    return `Within ${maxHours}h`;
+  }
+  return '';
+};
+
+export const calculateRequestPricingTotal = (input: {
+  consultationFee: number;
+  serviceLineAmounts: number[];
+  urgencyHasExactOverride: boolean;
+  urgencySurchargeType: string;
+  urgencySurchargeValue: number;
+}) => {
+  const serviceTotal = toMoney(input.serviceLineAmounts.reduce((sum, amount) => sum + amount, 0));
+  const urgencyFee =
+    input.urgencySurchargeType === 'percent' && !input.urgencyHasExactOverride
+      ? toMoney((serviceTotal * input.urgencySurchargeValue) / 100)
+      : toMoney(input.urgencySurchargeValue);
+
+  return {
+    consultationFee: toMoney(input.consultationFee),
+    serviceTotal,
+    total: toMoney(serviceTotal + input.consultationFee + urgencyFee),
+    urgencyFee,
+  };
+};
 
 interface MatterRow extends RowDataPacket {
   consultation_mode_code: string;
   created_at: string | Date;
+  currency_code: string | null;
   current_stage_code: string;
   current_stage_label: string;
   due_total_amount: string | number;
@@ -151,12 +336,15 @@ interface MatterRow extends RowDataPacket {
 }
 
 interface MatterAssignmentRow extends RowDataPacket {
+  assignee_public_id: string;
   assigned_name: string;
   assignment_role_code: string;
+  assignment_type: 'external_counsel' | 'field_partner' | 'internal_staff';
   fee_agreed_amount: string | number | null;
   fee_due_amount: string | number | null;
   fee_paid_amount: string | number | null;
   matter_id: number;
+  visible_to_client: number;
 }
 
 interface MatterServiceRow extends RowDataPacket {
@@ -173,6 +361,7 @@ interface MatterUpdateRow extends RowDataPacket {
 interface PackageRow extends RowDataPacket {
   created_at: string | Date;
   created_by: string;
+  currency_code: string | null;
   display_order: number;
   description: string | null;
   is_recommended: number;
@@ -217,6 +406,7 @@ interface InvoiceRow extends RowDataPacket {
   amount_paid: string | number;
   amount_refunded: string | number;
   client_name: string;
+  currency_code: string;
   due_date: string;
   discount_amount: string | number;
   id: number;
@@ -303,14 +493,20 @@ interface PaymentRow extends RowDataPacket {
 
 interface EventRow extends RowDataPacket {
   action_cta: string;
+  calendar_sync_error_text: string | null;
+  calendar_sync_status_code: string | null;
+  calendar_synced_at: string | Date | null;
+  calendar_owner_email: string | null;
   client_name: string;
   client_visible_flag: number;
   duration_minutes: number;
   event_type_code: string;
+  google_attendee_status_code: string | null;
   join_url: string | null;
   location_text: string | null;
   matter_public_id: string | null;
   matter_title: string | null;
+  meet_conference_id: string | null;
   mode_code: string;
   notes: string | null;
   public_id: string;
@@ -330,6 +526,7 @@ interface DocumentRow extends RowDataPacket {
   matter_title: string | null;
   original_file_name: string;
   review_state: string;
+  virus_status: string;
   uploaded_at: string | Date;
   uploader_name: string | null;
   version_id: number;
@@ -431,7 +628,7 @@ interface AuditRow extends RowDataPacket {
   summary_old_value: string | null;
 }
 
-const toAmount = (value: string | number | null | undefined) => Number(value || 0);
+export const toAmount = (value: string | number | null | undefined) => Number(value || 0);
 
 const toDateOnly = (value: string | Date | null | undefined) => {
   const iso = fromMysqlDateTime(value);
@@ -526,12 +723,20 @@ export class NormalizedDashboardRepository {
          u.public_id AS user_public_id,
          ca.id AS client_account_id,
          ca.public_id AS account_public_id,
+         u.display_name,
          u.email,
          u.phone,
+         cac.mobile_number,
          u.last_login_at,
          COALESCE(owner.display_name, 'Client Intake Desk') AS owner_name,
-         COALESCE(addr.city, addr.country_code, 'India') AS region,
-         COALESCE(addr.country_code, 'India') AS country_code
+         COALESCE(addr.city, addr.country_code, 'Default') AS region,
+         addr.line1 AS address_line1,
+         addr.line2 AS address_line2,
+         addr.city AS address_city,
+         addr.state AS address_state,
+         addr.postal_code AS address_postal_code,
+         addr.country_code AS address_country_code,
+         addr.country_code AS country_code
        FROM users u
        INNER JOIN client_account_contacts cac
          ON cac.user_id = u.id
@@ -554,21 +759,33 @@ export class NormalizedDashboardRepository {
       throw notFound('client_context_not_found', 'Client context was not found for the current user.');
     }
 
+    const primaryAddressCountryCode = normalizeCountryCode(row.country_code);
+
     return {
       clientAccountId: row.client_account_id,
-      countryCode: normalizeCountryCode(row.country_code),
+      countryCode: primaryAddressCountryCode || inferCountryCodeFromPhone(row.phone),
       currentClient: {
         avatar: '',
+        countryCode: primaryAddressCountryCode || inferCountryCodeFromPhone(row.phone) || undefined,
         email: row.email,
         id: row.user_public_id,
         joinedAt: nowUtc(),
         lastActiveAt: toIso(row.last_login_at),
         lifecycle: 'client',
-        name: '',
+        name: row.display_name || '',
         owner: row.owner_name || 'Client Intake Desk',
-        phone: row.phone || '',
+        phone: row.mobile_number || row.phone || '',
         region: row.region || row.country_code || 'India',
       } satisfies PlatformUser,
+      primaryAddress: {
+        city: row.address_city,
+        countryCode: row.address_country_code,
+        line1: row.address_line1,
+        line2: row.address_line2,
+        postalCode: row.address_postal_code,
+        state: row.address_state,
+      },
+      primaryAddressCountryCode,
     };
   }
 
@@ -681,11 +898,43 @@ export class NormalizedDashboardRepository {
     } satisfies DashboardSnapshot;
   }
 
+  private resolvePricingCountry(options: {
+    phone?: string | null;
+    requestCountry?: string | null;
+    savedAddressCountry?: string | null;
+  }): PricingCountryResolution {
+    const requestCountryCode = normalizeCountryCode(options.requestCountry);
+    if (requestCountryCode) {
+      return { confidence: 'high', countryCode: requestCountryCode, source: 'request' };
+    }
+
+    const savedCountryCode = normalizeCountryCode(options.savedAddressCountry);
+    if (savedCountryCode) {
+      return { confidence: 'high', countryCode: savedCountryCode, source: 'saved_address' };
+    }
+
+    const ipCountryCode = getIpGeolocationCountryCode();
+    if (ipCountryCode) {
+      return { confidence: 'medium', countryCode: ipCountryCode, source: 'ip_geolocation' };
+    }
+
+    const phoneCountryCode = inferCountryCodeFromPhone(options.phone || '');
+    if (phoneCountryCode) {
+      return { confidence: 'medium', countryCode: phoneCountryCode, source: 'phone' };
+    }
+
+    return {
+      confidence: 'fallback',
+      countryCode: getDefaultPricingCountry(),
+      source: 'default',
+    };
+  }
+
   private async getCountryPricing(
     connection: PoolConnection,
     countryCode: string
   ): Promise<CountryPricingRow> {
-    const normalizedCountry = normalizeCountryCode(countryCode);
+    const normalizedCountry = normalizeCountryCode(countryCode) || getDefaultPricingCountry();
     const row = await selectOne<CountryPricingRow>(
       connection,
       `SELECT id, public_id, country_code, country_name, currency_code, price_multiplier
@@ -717,13 +966,146 @@ export class NormalizedDashboardRepository {
     }
 
     return {
-      country_code: 'IN',
-      country_name: 'India',
-      currency_code: 'INR',
+      country_code: getDefaultPricingCountry(),
+      country_name: getDefaultPricingCountry(),
+      currency_code: ACTIVE_PRICING_CURRENCY_CODE,
       id: 0,
       price_multiplier: 1,
       public_id: 'default',
     } as CountryPricingRow;
+  }
+
+  private async getCountryPriceOverrides(
+    connection: PoolConnection,
+    countryCode: string | null | undefined,
+    currencyCode = ACTIVE_PRICING_CURRENCY_CODE
+  ): Promise<CountryPriceOverrideRow[]> {
+    const normalizedCountry = normalizeCountryCode(countryCode);
+    if (!normalizedCountry) {
+      return [];
+    }
+
+    const normalizedCurrency = normalizeCurrencyCode(currencyCode) || ACTIVE_PRICING_CURRENCY_CODE;
+
+    return selectAll<CountryPriceOverrideRow>(
+      connection,
+      `SELECT
+         subject_type_code,
+         subject_code,
+         country_code,
+         country_name,
+         currency_code,
+         price_amount
+       FROM pricing_country_price_overrides
+       WHERE country_code = ?
+         AND currency_code = ?
+         AND is_active = 1
+         AND archived_at IS NULL`,
+      [normalizedCountry, normalizedCurrency]
+    );
+  }
+
+  private async resolvePricingAmountSnapshot(
+    connection: PoolConnection,
+    options: {
+      defaultAmount: number;
+      overrides: Map<string, CountryPriceOverrideRow>;
+      subjectCode: string;
+      subjectType: PriceOverrideSubjectType;
+      targetCurrencyCode: string;
+    }
+  ) {
+    const override = options.overrides.get(priceOverrideKey(options.subjectType, options.subjectCode));
+    const targetCurrencyCode = normalizeCurrencyCode(options.targetCurrencyCode);
+
+    if (override) {
+      const overrideCurrencyCode = normalizeCurrencyCode(override.currency_code);
+      if (overrideCurrencyCode !== targetCurrencyCode) {
+        throw conflict(
+          'pricing_currency_mismatch',
+          `The ${override.country_code} price override for ${options.subjectCode} is in ${overrideCurrencyCode}, but the country pricing currency is ${targetCurrencyCode}.`
+        );
+      }
+
+      return exactOverrideAmount(toAmount(override.price_amount), targetCurrencyCode);
+    }
+
+    return convertBaseAmount(connection, toAmount(options.defaultAmount), targetCurrencyCode);
+  }
+
+  private async getRequestPricingReferenceRows(connection: PoolConnection): Promise<RequestPricingReferenceRows> {
+    if (requestPricingReferenceCache && requestPricingReferenceCache.expiresAt > Date.now()) {
+      return requestPricingReferenceCache.value;
+    }
+
+    const [serviceRows, legalDomainRows, consultationRows, urgencyRows] = await Promise.all([
+      selectAll<RequestServicePricingRow>(
+        connection,
+        `SELECT
+           service_code,
+           service_name AS name,
+           service_description AS description,
+           base_fee_amount,
+           service_icon_code AS icon,
+           id
+         FROM services
+         WHERE is_active = 1
+         ORDER BY sort_order ASC, service_name ASC`
+      ),
+      selectAll<RowDataPacket & { code: string; description: string | null; name: string }>(
+        connection,
+        `SELECT
+           domain_code AS code,
+           domain_name AS name,
+           NULL AS description
+         FROM legal_domains
+         WHERE is_active = 1
+         ORDER BY sort_order ASC, domain_name ASC`
+      ),
+      selectAll<ConsultationModePricingRow>(
+        connection,
+        `SELECT
+           cm.code,
+           cm.label,
+           cm.description_text,
+           cm.transport_disclaimer_text,
+           cm.is_active,
+           pcmr.surcharge_value
+         FROM consultation_modes cm
+         LEFT JOIN pricing_consultation_mode_rules pcmr
+           ON pcmr.consultation_mode_code = cm.code
+          AND pcmr.is_active = 1
+         WHERE cm.is_active = 1
+         ORDER BY cm.sort_order ASC, cm.label ASC`
+      ),
+      selectAll<UrgencyPricingRow>(
+        connection,
+        `SELECT
+           id,
+           urgency_code,
+           label,
+           timing_label,
+           min_response_hours,
+           max_response_hours,
+           allow_phone,
+           allow_video,
+           allow_in_person,
+           response_window_hours,
+           surcharge_type_code,
+           surcharge_value
+         FROM pricing_urgency_rules
+         WHERE is_active = 1
+         ORDER BY sort_order ASC, label ASC`
+      ),
+    ]);
+    const value = { consultationRows, legalDomainRows, serviceRows, urgencyRows };
+
+    requestPricingReferenceCache = {
+      expiresAt: Date.now() + REFERENCE_CACHE_TTL_MS,
+      value,
+    };
+
+    return value;
   }
 
   public async getRequestPricingConfig(currentClient: PlatformUser): Promise<RequestPricingConfig> {
@@ -731,95 +1113,117 @@ export class NormalizedDashboardRepository {
 
     return withConnection(this.pool, async (connection) => {
       const context = await this.resolveClientContext(connection, currentClient.id);
-      const countryPricing = await this.getCountryPricing(connection, context.countryCode);
-      const multiplier = toAmount(countryPricing.price_multiplier) || 1;
+      const countryResolution = this.resolvePricingCountry({
+        phone: context.currentClient.phone || currentClient.phone,
+        savedAddressCountry: context.primaryAddressCountryCode,
+      });
+      const countryPricing = await this.getCountryPricing(connection, countryResolution.countryCode);
+      const requestedCountryCode = normalizeCountryCode(countryResolution.countryCode);
+      const targetCurrencyCode = ACTIVE_PRICING_CURRENCY_CODE;
+      const priceOverrideRows = await this.getCountryPriceOverrides(connection, countryPricing.country_code, targetCurrencyCode);
+      const priceOverrides = buildPriceOverrideMap(priceOverrideRows);
+      const displayCountryCode = countryPricing.country_code;
+      const displayCountryName = countryPricing.country_name;
+      const isDefaultFallback =
+        countryResolution.source === 'default' ||
+        !requestedCountryCode ||
+        (priceOverrideRows.length === 0 && countryPricing.country_code !== requestedCountryCode);
 
-      const [serviceRows, consultationRows, urgencyRows] = await Promise.all([
-        selectAll<RequestServicePricingRow>(
-          connection,
-          `SELECT
-             service_code,
-             service_name AS name,
-             service_description AS description,
-             base_fee_amount,
-             service_icon_code AS icon,
-             id
-           FROM services
-           WHERE is_active = 1
-           ORDER BY sort_order ASC, service_name ASC`
-        ),
-        selectAll<ConsultationModePricingRow>(
-          connection,
-          `SELECT
-             cm.code,
-             cm.label,
-             cm.description_text,
-             cm.transport_disclaimer_text,
-             cm.is_active,
-             pcmr.surcharge_value
-           FROM consultation_modes cm
-           LEFT JOIN pricing_consultation_mode_rules pcmr
-             ON pcmr.consultation_mode_code = cm.code
-            AND pcmr.is_active = 1
-           WHERE cm.is_active = 1
-           ORDER BY cm.sort_order ASC, cm.label ASC`
-        ),
-        selectAll<UrgencyPricingRow>(
-          connection,
-          `SELECT
-             id,
-             urgency_code,
-             label,
-             response_window_hours,
-             surcharge_type_code,
-             surcharge_value
-           FROM pricing_urgency_rules
-           WHERE is_active = 1
-           ORDER BY sort_order ASC, label ASC`
-        ),
-      ]);
-
-      return {
-        consultationModes: consultationRows.map((row) => ({
+      const { consultationRows, legalDomainRows, serviceRows, urgencyRows } =
+        await this.getRequestPricingReferenceRows(connection);
+      const consultationModes = await Promise.all(
+        consultationRows.map(async (row) => ({
           description: row.description_text || '',
-          fee: toMoney(toAmount(row.surcharge_value) * multiplier),
+          fee: (
+            await this.resolvePricingAmountSnapshot(connection, {
+              defaultAmount: toAmount(row.surcharge_value),
+              overrides: priceOverrides,
+              subjectCode: row.code,
+              subjectType: 'consultation_mode',
+              targetCurrencyCode,
+            })
+          ).amount,
           id: row.code,
           isInPerson: row.code === 'in-person',
           label: row.label,
           transportDisclaimer: row.transport_disclaimer_text || null,
-        })),
-        countryPricing: {
-          countryCode: countryPricing.country_code,
-          countryName: countryPricing.country_name,
-          currencyCode: countryPricing.currency_code,
-          multiplier,
-        },
-        currencyCode: countryPricing.currency_code,
-        services: serviceRows.map((row) => ({
-          baseFee: toMoney(toAmount(row.base_fee_amount) * multiplier),
+        }))
+      );
+      const services = await Promise.all(
+        serviceRows.map(async (row) => ({
+          baseFee: (
+            await this.resolvePricingAmountSnapshot(connection, {
+              defaultAmount: toAmount(row.base_fee_amount),
+              overrides: priceOverrides,
+              subjectCode: row.service_code,
+              subjectType: 'service',
+              targetCurrencyCode,
+            })
+          ).amount,
           description: row.description || '',
           icon: row.icon || 'Briefcase',
           id: row.service_code,
           name: row.name,
-        })),
-        urgencyOptions: urgencyRows.map((row) => {
+        }))
+      );
+      const urgencyOptions = await Promise.all(
+        urgencyRows.map(async (row) => {
           const responseWindowHours =
             row.response_window_hours === null ? null : Number(row.response_window_hours);
+          const hasExactOverride = priceOverrides.has(priceOverrideKey('urgency', row.urgency_code));
+          const flatSurcharge = await this.resolvePricingAmountSnapshot(connection, {
+            defaultAmount: toAmount(row.surcharge_value),
+            overrides: priceOverrides,
+            subjectCode: row.urgency_code,
+            subjectType: 'urgency',
+            targetCurrencyCode,
+          });
 
           return {
+            allowedConsultationModes: allowedConsultationModesForUrgency(row, consultationRows),
             id: row.urgency_code,
             isImmediate:
               responseWindowHours !== null
                 ? responseWindowHours < 24
                 : row.urgency_code !== 'standard',
             label: row.label,
+            maxResponseHours: row.max_response_hours === null ? null : Number(row.max_response_hours),
+            minResponseHours: row.min_response_hours === null ? null : Number(row.min_response_hours),
             responseWindowHours,
+            timingLabel: formatUrgencyTiming(row),
             surcharge:
-              row.surcharge_type_code === 'percent'
+              row.surcharge_type_code === 'percent' && !hasExactOverride
                 ? toAmount(row.surcharge_value)
-                : toMoney(toAmount(row.surcharge_value) * multiplier),
+                : flatSurcharge.amount,
+            surchargeType:
+              row.surcharge_type_code === 'percent' && !hasExactOverride
+                ? 'percent' as const
+                : 'flat' as const,
           };
-        }),
+        })
+      );
+
+      return {
+        consultationModes,
+        countryPricing: {
+          countryCode: displayCountryCode,
+          countryName: displayCountryName,
+          countrySource: countryResolution.source,
+          currencyCode: targetCurrencyCode,
+          isDefaultFallback,
+          multiplier: 1,
+          pricingCountryConfidence: countryResolution.confidence,
+        },
+        currencyCode: targetCurrencyCode,
+        detectedCountryCode: displayCountryCode,
+        detectedCurrency: targetCurrencyCode,
+        legalDomains: legalDomainRows.map((row) => ({
+          description: row.description || '',
+          id: row.code,
+          name: row.name,
+        })),
+        services,
+        urgencyOptions,
       };
     });
   }
@@ -851,7 +1255,19 @@ export class NormalizedDashboardRepository {
       );
       const urgencyRuleRow = await selectOne<UrgencyPricingRow>(
         connection,
-        `SELECT id, urgency_code, label, response_window_hours, surcharge_type_code, surcharge_value
+        `SELECT
+           id,
+           urgency_code,
+           label,
+           timing_label,
+           min_response_hours,
+           max_response_hours,
+           allow_phone,
+           allow_video,
+           allow_in_person,
+           response_window_hours,
+           surcharge_type_code,
+           surcharge_value
          FROM pricing_urgency_rules
          WHERE urgency_code = ?
            AND is_active = 1
@@ -881,14 +1297,10 @@ export class NormalizedDashboardRepository {
         throw conflict('pricing_reference_missing', 'Pricing or legal domain configuration is incomplete.');
       }
 
-      if (
-        request.consultationMode === 'in-person' &&
-        urgencyRuleRow.response_window_hours !== null &&
-        Number(urgencyRuleRow.response_window_hours) < 24
-      ) {
+      if (!isUrgencyAllowedForConsultationMode(urgencyRuleRow, consultationRuleRow.code)) {
         throw conflict(
-          'in_person_urgency_not_available',
-          'In-person consultation is available only for standard 24-48 hour scheduling.'
+          'urgency_mode_not_available',
+          'The selected urgency option is not available for the selected consultation mode.'
         );
       }
 
@@ -909,18 +1321,86 @@ export class NormalizedDashboardRepository {
 
       const servicesByCode = new Map(selectedServiceRows.map((row) => [row.service_code, row]));
       const orderedServiceRows = requestedServiceCodes.map((code) => servicesByCode.get(code)!);
-      const countryPricing = await this.getCountryPricing(connection, context.countryCode);
-      const countryMultiplier = toAmount(countryPricing.price_multiplier) || 1;
-      const serviceLineAmounts = orderedServiceRows.map((service) =>
-        toMoney(toAmount(service.base_fee_amount) * countryMultiplier)
+      const countryResolution = this.resolvePricingCountry({
+        phone: context.currentClient.phone || currentClient.phone,
+        savedAddressCountry: context.primaryAddressCountryCode,
+      });
+      const countryPricing = await this.getCountryPricing(connection, countryResolution.countryCode);
+      const targetCurrencyCode = ACTIVE_PRICING_CURRENCY_CODE;
+      const priceOverrideRows = await this.getCountryPriceOverrides(connection, countryPricing.country_code, targetCurrencyCode);
+      const priceOverrides = buildPriceOverrideMap(priceOverrideRows);
+      const currencyCode = targetCurrencyCode;
+      const quoteCountryCode = countryPricing.country_code;
+      const serviceLineSnapshots = await Promise.all(
+        orderedServiceRows.map((service) =>
+          this.resolvePricingAmountSnapshot(connection, {
+            defaultAmount: toAmount(service.base_fee_amount),
+            overrides: priceOverrides,
+            subjectCode: service.service_code,
+            subjectType: 'service',
+            targetCurrencyCode,
+          })
+        )
       );
-      const scaledAmount = toMoney(serviceLineAmounts.reduce((sum, amount) => sum + amount, 0));
-      const consultationSurcharge = toMoney(toAmount(consultationRuleRow.surcharge_value) * countryMultiplier);
-      const urgencySurcharge =
-        urgencyRuleRow.surcharge_type_code === 'percent'
-          ? toMoney((scaledAmount * toAmount(urgencyRuleRow.surcharge_value)) / 100)
-          : toMoney(toAmount(urgencyRuleRow.surcharge_value) * countryMultiplier);
-      const quotedAmount = toMoney(scaledAmount + consultationSurcharge + urgencySurcharge);
+      const serviceLineAmounts = serviceLineSnapshots.map((snapshot) => snapshot.amount);
+      const consultationSnapshot = await this.resolvePricingAmountSnapshot(connection, {
+        defaultAmount: toAmount(consultationRuleRow.surcharge_value),
+        overrides: priceOverrides,
+        subjectCode: consultationRuleRow.code,
+        subjectType: 'consultation_mode',
+        targetCurrencyCode,
+      });
+      const consultationSurcharge = consultationSnapshot.amount;
+      const urgencyHasExactOverride = priceOverrides.has(priceOverrideKey('urgency', urgencyRuleRow.urgency_code));
+      const urgencyFlatSnapshot = await this.resolvePricingAmountSnapshot(connection, {
+        defaultAmount: toAmount(urgencyRuleRow.surcharge_value),
+        overrides: priceOverrides,
+        subjectCode: urgencyRuleRow.urgency_code,
+        subjectType: 'urgency',
+        targetCurrencyCode,
+      });
+      const exactUrgencySurcharge = urgencyFlatSnapshot.amount;
+      const pricingTotal = calculateRequestPricingTotal({
+        consultationFee: consultationSurcharge,
+        serviceLineAmounts,
+        urgencyHasExactOverride,
+        urgencySurchargeType: urgencyRuleRow.surcharge_type_code,
+        urgencySurchargeValue:
+          urgencyRuleRow.surcharge_type_code === 'percent' && !urgencyHasExactOverride
+            ? toAmount(urgencyRuleRow.surcharge_value)
+            : exactUrgencySurcharge,
+      });
+      const scaledAmount = pricingTotal.serviceTotal;
+      const urgencySurcharge = pricingTotal.urgencyFee;
+      const quotedAmount = pricingTotal.total;
+      const urgencySnapshot: PricingFxSnapshot =
+        urgencyRuleRow.surcharge_type_code === 'percent' && !urgencyHasExactOverride
+          ? {
+              amount: urgencySurcharge,
+              currencyCode,
+              exchangeRate: null,
+              exchangeRateDate: null,
+              exchangeRateProvider: null,
+              originalAmount: null,
+              originalCurrencyCode: null,
+              source: 'base_currency',
+            }
+          : urgencyFlatSnapshot;
+      const quoteFxSummary = summarizeFxSnapshots([
+        ...serviceLineSnapshots,
+        consultationSnapshot,
+        urgencySnapshot,
+      ]);
+      const originalServiceTotal = serviceLineSnapshots.some((snapshot) => snapshot.originalAmount !== null)
+        ? toMoney(serviceLineSnapshots.reduce((sum, snapshot) => sum + (snapshot.originalAmount ?? snapshot.amount), 0))
+        : null;
+      const originalTotal = quoteFxSummary.originalCurrencyCode
+        ? toMoney(
+            (originalServiceTotal ?? scaledAmount) +
+              (consultationSnapshot.originalAmount ?? consultationSurcharge) +
+              (urgencySnapshot.originalAmount ?? urgencySurcharge)
+          )
+        : null;
 
       const requestNumber = await allocateBusinessNumber(connection, 'service_request', 'REQ');
       const matterNumber = await allocateBusinessNumber(connection, 'matter', 'GLMG');
@@ -931,7 +1411,7 @@ export class NormalizedDashboardRepository {
       const documentTimestamp = toMysqlDateTime(nowUtc());
       const title = `${String(legalDomainRow.domain_name)} Request`;
       const summary = request.caseDetails.trim().slice(0, 500);
-      const preferredWindow = this.parsePreferredWindow(request.preferredDate, request.preferredTime);
+      const preferredWindow = this.parsePreferredWindow(request);
       const currentUserId = Number(currentUserRow.id);
       const ownerUserIdRow = await selectOne<RowDataPacket>(
         connection,
@@ -1014,10 +1494,12 @@ export class NormalizedDashboardRepository {
           public_id, request_number, client_account_id, requested_by_user_id, status_code, title,
           issue_summary, detailed_description, legal_domain_id, consultation_mode_code, urgency_rule_id,
           preferred_start_at, preferred_end_at, contact_name_snapshot, contact_email_snapshot,
-          contact_mobile_snapshot, contact_whatsapp_snapshot, whatsapp_same_as_mobile, country_code_snapshot,
-          currency_code, past_legal_action_flag, quote_total_amount,
+          contact_mobile_snapshot, country_code_snapshot,
+          currency_code, request_address_line1_snapshot, request_address_line2_snapshot, request_city_snapshot,
+          request_state_snapshot, request_postal_code_snapshot, request_country_code_snapshot,
+          pricing_country_source_code, past_legal_action_flag, quote_total_amount,
           submitted_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           serviceRequestPublicId,
           requestNumber,
@@ -1032,13 +1514,18 @@ export class NormalizedDashboardRepository {
           Number(urgencyRuleRow.id),
           preferredWindow.start ? toMysqlDateTime(preferredWindow.start) : null,
           preferredWindow.end ? toMysqlDateTime(preferredWindow.end) : null,
-          request.fullName.trim(),
-          request.email.trim().toLowerCase(),
-          request.mobile.trim(),
-          (request.whatsappSame ? request.mobile : request.whatsappNumber || request.mobile).trim(),
-          request.whatsappSame ? 1 : 0,
-          countryPricing.country_code,
-          countryPricing.currency_code,
+          context.currentClient.name.trim(),
+          context.currentClient.email.trim().toLowerCase(),
+          context.currentClient.phone.trim(),
+          quoteCountryCode,
+          currencyCode,
+          context.primaryAddress.line1,
+          context.primaryAddress.line2,
+          context.primaryAddress.city,
+          context.primaryAddress.state,
+          context.primaryAddress.postalCode,
+          normalizeCountryCode(context.primaryAddress.countryCode),
+          countryResolution.source,
           request.pastLegalAction ? 1 : 0,
           quotedAmount,
           createdAt,
@@ -1048,39 +1535,28 @@ export class NormalizedDashboardRepository {
       );
       const serviceRequestId = Number((requestInsert as { insertId: number }).insertId);
 
-      await connection.execute(
-        `UPDATE client_account_contacts
-         SET mobile_number = ?,
-             whatsapp_number = ?,
-             whatsapp_same_as_mobile = ?,
-             updated_at = ?
-         WHERE client_account_id = ?
-           AND user_id = ?
-           AND archived_at IS NULL`,
-        [
-          request.mobile.trim(),
-          (request.whatsappSame ? request.mobile : request.whatsappNumber || request.mobile).trim(),
-          request.whatsappSame ? 1 : 0,
-          createdAt,
-          context.clientAccountId,
-          currentUserId,
-        ]
-      );
-
       for (const [index, serviceRow] of orderedServiceRows.entries()) {
+        const serviceFx = serviceLineSnapshots[index]!;
         await connection.execute(
           `INSERT INTO request_services (
             service_request_id, service_id, service_name_snapshot, sort_order, quoted_base_fee,
-            currency_code, country_pricing_override_id, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            currency_code, country_pricing_override_id, original_currency_code, original_quoted_base_fee,
+            exchange_rate, exchange_rate_date, exchange_rate_provider, pricing_rule_source_code, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             serviceRequestId,
             Number(serviceRow.id),
             serviceRow.name,
             index + 1,
-            serviceLineAmounts[index] || 0,
-            countryPricing.currency_code,
+            serviceFx.amount,
+            currencyCode,
             countryPricing.id || null,
+            serviceFx.originalCurrencyCode,
+            serviceFx.originalAmount,
+            serviceFx.exchangeRate,
+            serviceFx.exchangeRateDate,
+            serviceFx.exchangeRateProvider,
+            pricingRuleSourceCode(serviceFx),
             createdAt,
           ]
         );
@@ -1090,8 +1566,11 @@ export class NormalizedDashboardRepository {
         `INSERT INTO pricing_quotes (
           public_id, service_request_id, version_no, service_count, base_amount, urgency_surcharge_amount,
           consultation_mode_surcharge_amount, discount_amount, tax_amount, total_amount, currency_code,
-          country_code, country_pricing_override_id, is_final, accepted_at, created_by_user_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          original_currency_code, original_base_amount, original_urgency_surcharge_amount,
+          original_consultation_mode_surcharge_amount, original_total_amount, exchange_rate,
+          exchange_rate_date, exchange_rate_provider, fx_snapshot_json, country_code,
+          pricing_country_source_code, country_pricing_override_id, is_final, accepted_at, created_by_user_id, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           createPublicId(),
           serviceRequestId,
@@ -1103,8 +1582,18 @@ export class NormalizedDashboardRepository {
           0,
           0,
           quotedAmount,
-          countryPricing.currency_code,
-          countryPricing.country_code,
+          currencyCode,
+          quoteFxSummary.originalCurrencyCode,
+          originalServiceTotal,
+          urgencySnapshot.originalAmount,
+          consultationSnapshot.originalAmount,
+          originalTotal,
+          quoteFxSummary.exchangeRate,
+          quoteFxSummary.exchangeRateDate,
+          quoteFxSummary.exchangeRateProvider,
+          quoteFxSummary.snapshotJson,
+          quoteCountryCode,
+          countryResolution.source,
           countryPricing.id || null,
           1,
           createdAt,
@@ -1114,29 +1603,61 @@ export class NormalizedDashboardRepository {
       );
       const quoteId = Number((quoteInsert as { insertId: number }).insertId);
 
-      const quoteLines: Array<[string, number | null, string, number, number, number]> = [
-        ...orderedServiceRows.map(
-          (service, index) =>
-            [
-              'service',
-              Number(service.id),
-              service.name,
-              1,
-              serviceLineAmounts[index] || 0,
-              serviceLineAmounts[index] || 0,
-            ] satisfies [string, number | null, string, number, number, number]
-        ),
-        ['urgency', null, `Urgency: ${urgencyRuleRow.label}`, 1, urgencySurcharge, urgencySurcharge],
-        ['consultation', null, `Consultation: ${consultationRuleRow.label}`, 1, consultationSurcharge, consultationSurcharge],
+      const quoteLines = [
+        ...orderedServiceRows.map((service, index) => ({
+          description: service.name,
+          lineAmount: serviceLineSnapshots[index]!.amount,
+          lineTypeCode: 'service',
+          quantity: 1,
+          serviceId: Number(service.id),
+          snapshot: serviceLineSnapshots[index]!,
+          unitAmount: serviceLineSnapshots[index]!.amount,
+        })),
+        {
+          description: `Urgency: ${urgencyRuleRow.label}${formatUrgencyTiming(urgencyRuleRow) ? ` (${formatUrgencyTiming(urgencyRuleRow)})` : ''}`,
+          lineAmount: urgencySurcharge,
+          lineTypeCode: 'urgency',
+          quantity: 1,
+          serviceId: null,
+          snapshot: urgencySnapshot,
+          unitAmount: urgencySurcharge,
+        },
+        {
+          description: `Consultation: ${consultationRuleRow.label}`,
+          lineAmount: consultationSurcharge,
+          lineTypeCode: 'consultation',
+          quantity: 1,
+          serviceId: null,
+          snapshot: consultationSnapshot,
+          unitAmount: consultationSurcharge,
+        },
       ];
 
-      for (const [index, [lineTypeCode, serviceId, description, quantity, unitAmount, lineAmount]] of quoteLines.entries()) {
+      for (const [index, line] of quoteLines.entries()) {
         await connection.execute(
           `INSERT INTO pricing_quote_lines (
             pricing_quote_id, line_type_code, service_id, pricing_rule_source_code, description, quantity,
-            unit_amount, line_amount, sort_order, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [quoteId, lineTypeCode, serviceId, 'rule-engine', description, quantity, unitAmount, lineAmount, index + 1, createdAt]
+            unit_amount, line_amount, original_currency_code, original_unit_amount, original_line_amount,
+            exchange_rate, exchange_rate_date, exchange_rate_provider, sort_order, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            quoteId,
+            line.lineTypeCode,
+            line.serviceId,
+            pricingRuleSourceCode(line.snapshot),
+            line.description,
+            line.quantity,
+            line.unitAmount,
+            line.lineAmount,
+            line.snapshot.originalCurrencyCode,
+            line.snapshot.originalAmount,
+            line.snapshot.originalAmount,
+            line.snapshot.exchangeRate,
+            line.snapshot.exchangeRateDate,
+            line.snapshot.exchangeRateProvider,
+            index + 1,
+            createdAt,
+          ]
         );
       }
 
@@ -1206,7 +1727,7 @@ export class NormalizedDashboardRepository {
           matterId,
           'note',
           'Request Submitted',
-          'Request submitted from the client dashboard. Our intake team is reviewing the details.',
+          'Your request has been submitted. Our intake team is reviewing the details.',
           1,
           ownerUserId,
           createdAt,
@@ -1345,7 +1866,7 @@ export class NormalizedDashboardRepository {
             'upcoming',
             toMysqlDateTime(preferredWindow.start),
             toMysqlDateTime(preferredWindow.end),
-            'Asia/Kolkata',
+            preferredWindow.timeZone || 'UTC',
             request.consultationMode,
             request.consultationMode === 'in-person' ? 'Global LMG office visit to be confirmed' : null,
             request.consultationMode === 'video' ? 'google-meet' : request.consultationMode,
@@ -1414,8 +1935,9 @@ export class NormalizedDashboardRepository {
             `INSERT INTO document_versions (
               public_id, document_id, version_no, storage_driver_code, storage_path, original_file_name,
               mime_type, file_extension, file_size_bytes, checksum_sha256, virus_scan_status_code,
+              scan_provider_code, scan_checked_at, scan_error_text, quarantine_flag,
               uploaded_by_user_id, uploaded_at, is_current, retention_hold_flag
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               createPublicId(),
               documentId,
@@ -1427,7 +1949,11 @@ export class NormalizedDashboardRepository {
               document.name.includes('.') ? document.name.split('.').slice(-1)[0] || 'bin' : 'bin',
               document.size,
               hashDocumentChecksum(document.name, document.size),
-              'pending',
+              'scan_skipped_manual_mode',
+              'disabled',
+              documentTimestamp,
+              'Legacy inline request document metadata; no file content was available for scanning.',
+              0,
               currentUserId,
               documentTimestamp,
               1,
@@ -2039,6 +2565,7 @@ export class NormalizedDashboardRepository {
       summaryOldValue?: string | null;
     }
   ) {
+    const requestContext = getRequestContext();
     await connection.execute(
       `INSERT INTO audit_events (
          public_id,
@@ -2055,7 +2582,7 @@ export class NormalizedDashboardRepository {
          summary_old_value,
          summary_new_value,
          occurred_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         createPublicId(),
         input.actorUserId,
@@ -2065,6 +2592,9 @@ export class NormalizedDashboardRepository {
         input.actionCode,
         input.actionLabel,
         input.sourceModule,
+        requestContext?.requestId ?? null,
+        requestContext?.ipAddress ?? null,
+        requestContext?.userAgent ?? null,
         input.summaryOldValue || null,
         input.summaryNewValue || null,
         toMysqlDateTime(nowUtc()),
@@ -2296,7 +2826,13 @@ export class NormalizedDashboardRepository {
        LIMIT 1`,
       [input.clientAccountId]
     );
-    const tax = await this.calculateInvoiceTax(connection, input.totalAmount, billingSeed?.state || null);
+    const packageFx = await convertBaseAmount(
+      connection,
+      input.totalAmount,
+      ACTIVE_PRICING_CURRENCY_CODE
+    );
+    const invoiceFxSummary = summarizeFxSnapshots([packageFx]);
+    const tax = await this.calculateInvoiceTax(connection, packageFx.amount, billingSeed?.state || null);
     const dueDate = addDaysUtc(tax.dueDateDays).slice(0, 10);
 
     const [invoiceInsert] = await connection.execute(
@@ -2316,6 +2852,14 @@ export class NormalizedDashboardRepository {
          discount_amount,
          tax_amount,
          total_amount,
+         original_currency_code,
+         original_subtotal_amount,
+         original_tax_amount,
+         original_total_amount,
+         exchange_rate,
+         exchange_rate_date,
+         exchange_rate_provider,
+         fx_snapshot_json,
          amount_paid,
          amount_refunded,
          amount_due,
@@ -2323,18 +2867,27 @@ export class NormalizedDashboardRepository {
          created_at,
          updated_at,
          archived_at
-       ) VALUES (?, ?, ?, ?, ?, NULL, 'matter-package', 'sent', 'INR', ?, ?, ?, 0, ?, ?, 0, 0, ?, ?, ?, ?, NULL)`,
+       ) VALUES (?, ?, ?, ?, ?, NULL, 'matter-package', 'sent', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, NULL)`,
       [
         invoicePublicId,
         invoiceNumber,
         input.clientAccountId,
         input.matterId,
         input.matterPackageId,
+        packageFx.currencyCode,
         issueDate,
         dueDate,
         tax.subtotal,
         tax.tax,
         tax.total,
+        packageFx.originalCurrencyCode,
+        packageFx.originalAmount,
+        null,
+        packageFx.originalAmount,
+        invoiceFxSummary.exchangeRate,
+        invoiceFxSummary.exchangeRateDate,
+        invoiceFxSummary.exchangeRateProvider,
+        invoiceFxSummary.snapshotJson,
         tax.total,
         input.actorUserId,
         createdAt,
@@ -2387,9 +2940,17 @@ export class NormalizedDashboardRepository {
          discount_amount,
          taxable_amount,
          line_total,
+         original_currency_code,
+         original_unit_price,
+         original_line_subtotal,
+         original_taxable_amount,
+         original_line_total,
+         exchange_rate,
+         exchange_rate_date,
+         exchange_rate_provider,
          sort_order,
          created_at
-       ) VALUES (?, 'service-package', NULL, NULL, ?, 1, ?, ?, 0, ?, ?, 1, ?)`,
+       ) VALUES (?, 'service-package', NULL, NULL, ?, 1, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
       [
         invoiceId,
         input.packageName,
@@ -2397,6 +2958,14 @@ export class NormalizedDashboardRepository {
         tax.lineSubtotal,
         tax.taxable,
         tax.lineTotal,
+        packageFx.originalCurrencyCode,
+        packageFx.originalAmount,
+        packageFx.originalAmount,
+        packageFx.originalAmount,
+        packageFx.originalAmount,
+        packageFx.exchangeRate,
+        packageFx.exchangeRateDate,
+        packageFx.exchangeRateProvider,
         createdAt,
       ]
     );
@@ -2444,6 +3013,8 @@ export class NormalizedDashboardRepository {
       [invoiceId, dueDate, tax.total, tax.total, createdAt]
     );
 
+    await renderAndStoreInvoiceTemplateSnapshot(connection, invoiceId);
+
     return {
       id: invoiceId,
       invoiceLineId,
@@ -2453,12 +3024,27 @@ export class NormalizedDashboardRepository {
     };
   }
 
-  private parsePreferredWindow(preferredDate: string, preferredTime: string) {
-    const trimmedDate = preferredDate.trim();
-    const trimmedTime = preferredTime.trim();
+  private parsePreferredWindow(request: DashboardRequestInput) {
+    const preferredStartAtUtc = request.preferredStartAtUtc?.trim();
+    const preferredEndAtUtc = request.preferredEndAtUtc?.trim();
+    const timeZone = request.preferredTimezone?.trim() || 'UTC';
+
+    if (preferredStartAtUtc && preferredEndAtUtc) {
+      const start = new Date(preferredStartAtUtc);
+      const end = new Date(preferredEndAtUtc);
+
+      if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || end <= start) {
+        throw badRequest('invalid_preferred_window', 'Select a valid preferred consultation time window.');
+      }
+
+      return { end, start, timeZone };
+    }
+
+    const trimmedDate = request.preferredDate.trim();
+    const trimmedTime = request.preferredTime.trim();
 
     if (!trimmedDate || !trimmedTime || !trimmedTime.includes('-')) {
-      return { end: undefined, start: undefined };
+      return { end: undefined, start: undefined, timeZone };
     }
 
     const [startLabel, endLabel] = trimmedTime.split('-').map((part) => part.trim());
@@ -2483,6 +3069,7 @@ export class NormalizedDashboardRepository {
     return {
       end: parse(endLabel),
       start: parse(startLabel),
+      timeZone,
     };
   }
 
@@ -2505,6 +3092,7 @@ export class NormalizedDashboardRepository {
          m.consultation_mode_code,
          pur.urgency_code,
          ld.domain_name AS legal_domain_name,
+         sr.currency_code,
          m.priority_code,
          m.quoted_total_amount,
          m.paid_total_amount,
@@ -2515,6 +3103,7 @@ export class NormalizedDashboardRepository {
        INNER JOIN matter_stages ms ON ms.code = m.current_stage_code
        INNER JOIN pricing_urgency_rules pur ON pur.id = m.urgency_rule_id
        INNER JOIN legal_domains ld ON ld.id = m.legal_domain_id
+       LEFT JOIN service_requests sr ON sr.id = m.service_request_id
        WHERE m.client_account_id = ? AND m.archived_at IS NULL
        ORDER BY m.last_activity_at DESC`,
       [clientAccountId]
@@ -2531,10 +3120,17 @@ export class NormalizedDashboardRepository {
       `SELECT
          ma.matter_id,
          ma.assignment_role_code,
+         COALESCE(u.public_id, cp.public_id) AS assignee_public_id,
          COALESCE(u.display_name, cp.full_name) AS assigned_name,
+         CASE
+           WHEN u.id IS NOT NULL THEN 'internal_staff'
+           WHEN COALESCE(cp.partner_type_code, 'external_counsel') = 'field_partner' THEN 'field_partner'
+           ELSE 'external_counsel'
+         END AS assignment_type,
          ma.fee_agreed_amount,
          ma.fee_paid_amount,
-         ma.fee_due_amount
+         ma.fee_due_amount,
+         COALESCE(ma.visible_to_client, 1) AS visible_to_client
        FROM matter_assignments ma
        LEFT JOIN users u ON u.id = ma.internal_user_id
        LEFT JOIN counsel_partners cp ON cp.id = ma.counsel_partner_id
@@ -2581,14 +3177,22 @@ export class NormalizedDashboardRepository {
       const matterPackage = packageRows.find((entry) => Number(entry.matter_id) === matter.id);
 
       return {
+        assignments: matterAssignments.map((entry) => ({
+          id: entry.assignee_public_id,
+          name: entry.assigned_name,
+          type: entry.assignment_type,
+          visibleToClient: Boolean(entry.visible_to_client),
+        })),
         assignedCounsel:
           matterAssignments.find((entry) =>
-            ['counsel', 'lead_counsel'].includes(entry.assignment_role_code)
+            entry.assignment_type === 'external_counsel' ||
+            ['counsel', 'lead_counsel', 'external_counsel'].includes(entry.assignment_role_code)
           )?.assigned_name ||
           undefined,
         assignedStaff:
           matterAssignments.find((entry) =>
-            ['billing_owner', 'case_manager', 'internal_owner', 'staff'].includes(entry.assignment_role_code)
+            entry.assignment_type === 'internal_staff' ||
+            ['billing_owner', 'case_manager', 'internal_owner', 'staff', 'internal_staff'].includes(entry.assignment_role_code)
           )?.assigned_name || undefined,
         clientId: currentClient.id,
         clientName: currentClient.name,
@@ -2597,6 +3201,7 @@ export class NormalizedDashboardRepository {
           .map((entry) => entry.body_text),
         consultationMode: matter.consultation_mode_code as Matter['consultationMode'],
         createdAt: toIso(matter.created_at),
+        currencyCode: matter.currency_code || 'USD',
         dueAmount: toAmount(matter.due_total_amount),
         expertiseArea: matter.legal_domain_name,
         id: matter.public_id,
@@ -2635,11 +3240,13 @@ export class NormalizedDashboardRepository {
          mp.superseded_at,
          mp.selected_at,
          mp.created_at,
+         sr.currency_code,
          creator.display_name AS created_by,
          m.public_id AS matter_public_id,
          m.selected_matter_package_id AS matter_selected_package_id
        FROM matter_packages mp
        INNER JOIN matters m ON m.id = mp.matter_id
+       LEFT JOIN service_requests sr ON sr.id = m.service_request_id
        INNER JOIN users creator ON creator.id = mp.created_by_user_id
        WHERE m.client_account_id = ?
          AND mp.archived_at IS NULL
@@ -2670,34 +3277,45 @@ export class NormalizedDashboardRepository {
        ORDER BY mpf.sort_order ASC, mpf.id ASC`
     );
 
-    return packages.map((entry) => ({
-      createdAt: toIso(entry.created_at),
-      createdBy: entry.created_by,
-      description: entry.description || '',
-      displayOrder: Number(entry.display_order || 0),
-      features: features
-        .filter((feature) => feature.public_id === entry.public_id)
-        .map((feature) => feature.feature_text),
-      id: entry.public_id,
-      isRecommended: Boolean(entry.is_recommended),
-      isSelected: Number(entry.matter_selected_package_id || 0) === Number(entry.id),
-      matterId: entry.matter_public_id,
-      name: entry.package_name,
-      price: toAmount(entry.total_price),
-      proposalStatus:
-        entry.superseded_at
-          ? 'superseded'
-          : entry.selected_at
-            ? 'selected'
-            : 'published',
-      proposalVersion: Number(entry.proposal_version_no),
-      publishedAt: entry.published_at ? toIso(entry.published_at) : undefined,
-      selectedAt: entry.selected_at ? toIso(entry.selected_at) : undefined,
-      services: services
-        .filter((service) => service.public_id === entry.public_id)
-        .map((service) => service.service_code),
-      supersededAt: entry.superseded_at ? toIso(entry.superseded_at) : undefined,
-    }));
+    return Promise.all(
+      packages.map(async (entry) => {
+        const packageFx = await convertBaseAmount(
+          connection,
+          toAmount(entry.total_price),
+          ACTIVE_PRICING_CURRENCY_CODE
+        );
+
+        return {
+          createdAt: toIso(entry.created_at),
+          createdBy: entry.created_by,
+          currencyCode: packageFx.currencyCode,
+          description: entry.description || '',
+          displayOrder: Number(entry.display_order || 0),
+          features: features
+            .filter((feature) => feature.public_id === entry.public_id)
+            .map((feature) => feature.feature_text),
+          id: entry.public_id,
+          isRecommended: Boolean(entry.is_recommended),
+          isSelected: Number(entry.matter_selected_package_id || 0) === Number(entry.id),
+          matterId: entry.matter_public_id,
+          name: entry.package_name,
+          price: packageFx.amount,
+          proposalStatus:
+            entry.superseded_at
+              ? 'superseded'
+              : entry.selected_at
+                ? 'selected'
+                : 'published',
+          proposalVersion: Number(entry.proposal_version_no),
+          publishedAt: entry.published_at ? toIso(entry.published_at) : undefined,
+          selectedAt: entry.selected_at ? toIso(entry.selected_at) : undefined,
+          services: services
+            .filter((service) => service.public_id === entry.public_id)
+            .map((service) => service.service_code),
+          supersededAt: entry.superseded_at ? toIso(entry.superseded_at) : undefined,
+        } satisfies MatterPackage;
+      })
+    );
   }
 
   private async fetchInvoices(
@@ -2712,6 +3330,7 @@ export class NormalizedDashboardRepository {
          i.id,
          i.public_id,
          i.status_code,
+         i.currency_code,
          i.issue_date,
          i.due_date,
          i.subtotal_amount,
@@ -2763,6 +3382,7 @@ export class NormalizedDashboardRepository {
       amount: toAmount(invoice.subtotal_amount),
       clientId: clientPublicUserId,
       clientName,
+      currencyCode: invoice.currency_code || 'USD',
       discount: toAmount(invoice.discount_amount),
       dueDate: String(invoice.due_date),
       id: invoice.public_id,
@@ -2853,6 +3473,12 @@ export class NormalizedDashboardRepository {
          e.mode_code,
          e.location_text,
          e.join_url,
+         e.calendar_sync_status_code,
+         e.calendar_sync_error_text,
+         e.calendar_synced_at,
+         e.calendar_owner_email,
+         e.meet_conference_id,
+         e.google_attendee_status_code,
          e.client_visible_flag,
          e.notes,
          m.public_id AS matter_public_id,
@@ -2875,14 +3501,20 @@ export class NormalizedDashboardRepository {
 
     return rows.map((row) => ({
       actionCTA: row.action_cta,
+      calendarSyncError: row.calendar_sync_error_text || undefined,
+      calendarSyncStatus: (row.calendar_sync_status_code || 'local') as PlatformEvent['calendarSyncStatus'],
+      calendarSyncedAt: row.calendar_synced_at ? toIso(row.calendar_synced_at) : undefined,
+      calendarOwnerEmail: row.calendar_owner_email || undefined,
       clientId: clientPublicUserId,
       clientName: row.client_name || clientName,
       date: toDateOnly(row.scheduled_start_at),
       duration: Number(row.duration_minutes || 0),
       id: row.public_id,
+      googleAttendeeStatus: row.google_attendee_status_code || undefined,
       location: row.location_text || undefined,
       matterId: row.matter_public_id || '',
       matterTitle: row.matter_title || row.title,
+      meetConferenceId: row.meet_conference_id || undefined,
       meetLink: row.join_url || undefined,
       mode: row.mode_code as PlatformEvent['mode'],
       notes: row.notes || '',
@@ -2913,6 +3545,7 @@ export class NormalizedDashboardRepository {
          dv.checksum_sha256,
          dv.uploaded_at,
          dv.virus_scan_status_code AS review_state,
+         dv.virus_scan_status_code AS virus_status,
          uploader.display_name AS uploader_name,
          m.public_id AS matter_public_id,
          m.title AS matter_title
@@ -2946,6 +3579,7 @@ export class NormalizedDashboardRepository {
       uploadedAt: toDateOnly(row.uploaded_at),
       uploadedBy: row.uploader_name || clientName,
       visibility: row.visibility_scope_code === 'internal' ? 'internal' : 'client',
+      virusStatus: row.virus_status,
     }));
   }
 

@@ -5,12 +5,15 @@ import { badRequest, notFound } from '../../lib/httpErrors.js';
 import { executeStatement, queryRows, withTransaction } from '../../lib/mysql.js';
 import type { RowDataPacket } from 'mysql2/promise';
 import {
+  buildPaginationMeta,
+  countThreads,
   fetchClientsForList,
   fetchEvents,
   fetchInvoices,
   fetchMatters,
   fetchMessagesByThreadIds,
   fetchThreads,
+  normalizePagination,
 } from '../shared.js';
 import {
   createAuditEvent,
@@ -49,13 +52,19 @@ type ExistingGeneralThreadRow = RowDataPacket & {
   subject: string | null;
 };
 
-export const getWorkspace = async (actor: AdminActor) => {
-  const threads = await fetchThreads({ viewerUserId: actor.userId });
+export const getWorkspace = async (actor: AdminActor, options: { limit?: number; offset?: number } = {}) => {
+  const pagination = normalizePagination(options);
+  const threads = await fetchThreads({
+    limit: pagination.limit,
+    offset: pagination.offset,
+    viewerUserId: actor.userId,
+  });
   const clientsPromise = fetchClientsForList({ limit: 250, offset: 0 });
   const allMattersPromise = fetchMatters({ limit: 250 });
+  const totalPromise = countThreads({});
 
   if (threads.length === 0) {
-    const [clients, matters] = await Promise.all([clientsPromise, allMattersPromise]);
+    const [clients, matters, total] = await Promise.all([clientsPromise, allMattersPromise, totalPromise]);
 
     return {
       clients,
@@ -63,18 +72,20 @@ export const getWorkspace = async (actor: AdminActor) => {
       invoices: [],
       matters,
       messages: [],
+      pagination: buildPaginationMeta(pagination, total),
       threads: [],
     };
   }
 
   const clientIds = Array.from(new Set(threads.map((thread) => thread.clientId).filter(Boolean)));
   const matterIds = Array.from(new Set(threads.map((thread) => thread.matterId).filter(Boolean)));
-  const [clients, allMatters, invoices, events, messages] = await Promise.all([
+  const [clients, allMatters, invoices, events, messages, total] = await Promise.all([
     clientsPromise,
     allMattersPromise,
     fetchInvoices({ clientAccountIds: clientIds }),
     fetchEvents({ clientAccountIds: clientIds }),
     fetchMessagesByThreadIds(threads.map((thread) => thread.id)),
+    totalPromise,
   ]);
 
   return {
@@ -83,6 +94,7 @@ export const getWorkspace = async (actor: AdminActor) => {
     invoices,
     matters: allMatters,
     messages,
+    pagination: buildPaginationMeta(pagination, total),
     threads,
   };
 };

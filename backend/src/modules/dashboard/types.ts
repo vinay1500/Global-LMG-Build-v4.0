@@ -53,6 +53,7 @@ export interface StageItem {
 
 export interface PlatformUser {
   avatar: string;
+  countryCode?: string;
   email: string;
   id: string;
   joinedAt: string;
@@ -89,6 +90,12 @@ export interface Lead {
 }
 
 export interface Matter {
+  assignments?: Array<{
+    id: string;
+    name: string;
+    type: 'external_counsel' | 'field_partner' | 'internal_staff';
+    visibleToClient: boolean;
+  }>;
   assignedCounsel?: string;
   assignedStaff?: string;
   clientId: string;
@@ -96,6 +103,7 @@ export interface Matter {
   clientVisibleNotes: string[];
   consultationMode: ConsultationMode;
   createdAt: string;
+  currencyCode?: string;
   dueAmount: number;
   expertiseArea: string;
   id: string;
@@ -128,6 +136,7 @@ export interface MatterPackage {
   matterId: string;
   name: string;
   price: number;
+  currencyCode?: string;
   proposalStatus: MatterPackageProposalStatus;
   proposalVersion: number;
   publishedAt?: string;
@@ -147,6 +156,7 @@ export interface Invoice {
   amount: number;
   clientId: string;
   clientName: string;
+  currencyCode: string;
   discount: number;
   dueDate: string;
   id: string;
@@ -177,15 +187,20 @@ export interface Payment {
 
 export interface PlatformEvent {
   actionCTA: string;
-  calendarSyncStatus?: 'disabled' | 'failed' | 'local' | 'synced';
+  calendarSyncError?: string;
+  calendarSyncStatus?: 'cancelled' | 'disabled' | 'failed' | 'local' | 'pending' | 'synced';
+  calendarSyncedAt?: string;
+  calendarOwnerEmail?: string;
   clientId: string;
   clientName: string;
+  googleAttendeeStatus?: string;
   date: string;
   duration: number;
   id: string;
   location?: string;
   matterId: string;
   matterTitle: string;
+  meetConferenceId?: string;
   meetLink?: string;
   mode: ConsultationMode | 'court' | 'office';
   notes: string;
@@ -297,17 +312,15 @@ export interface DashboardRequestInput {
   consultationMode: ConsultationMode;
   documentUploadIds: string[];
   documents: DashboardDocumentInput[];
-  email: string;
-  fullName: string;
   legalDomain: string;
-  mobile: string;
-  whatsappNumber?: string;
   pastLegalAction: boolean;
   preferredDate: string;
+  preferredEndAtUtc?: string;
+  preferredStartAtUtc?: string;
   preferredTime: string;
+  preferredTimezone?: string;
   services: string[];
   urgency: UrgencyLevel;
-  whatsappSame: boolean;
 }
 
 export interface RequestPricingConfig {
@@ -322,10 +335,20 @@ export interface RequestPricingConfig {
   countryPricing: {
     countryCode: string;
     countryName: string;
+    countrySource: 'default' | 'ip_geolocation' | 'phone' | 'request' | 'saved_address';
     currencyCode: string;
+    isDefaultFallback: boolean;
     multiplier: number;
+    pricingCountryConfidence: 'fallback' | 'high' | 'medium';
   };
   currencyCode: string;
+  detectedCountryCode: string;
+  detectedCurrency: string;
+  legalDomains: Array<{
+    description: string;
+    id: string;
+    name: string;
+  }>;
   services: Array<{
     baseFee: number;
     description: string;
@@ -334,11 +357,16 @@ export interface RequestPricingConfig {
     name: string;
   }>;
   urgencyOptions: Array<{
+    allowedConsultationModes: string[];
     id: string;
     isImmediate: boolean;
     label: string;
+    maxResponseHours: number | null;
+    minResponseHours: number | null;
     responseWindowHours: number | null;
     surcharge: number;
+    surchargeType: 'flat' | 'percent';
+    timingLabel: string;
   }>;
 }
 

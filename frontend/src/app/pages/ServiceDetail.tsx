@@ -1,6 +1,6 @@
 import React from 'react';
 import { useParams, Link } from 'react-router';
-import { buildServicePath, getServiceByRouteId } from '../data/services';
+import { buildServicePath, getServiceByRouteId, SERVICE_DETAIL_CONTENT } from '../content/site/services';
 import { ArrowLeft, CheckCircle2, ShieldCheck, Clock, Zap } from 'lucide-react';
 import { motion } from 'motion/react';
 import { BRAND_NAME } from '../config/brand';
@@ -17,10 +17,10 @@ export const ServiceDetail = () => {
   if (!serviceInfo) {
     return (
       <NotFoundPage
-        title="Service not found"
-        description="The requested service route could not be matched to a valid service entry."
+        title={SERVICE_DETAIL_CONTENT.notFoundTitle}
+        description={SERVICE_DETAIL_CONTENT.notFoundDescription}
         backToPath="/"
-        backToLabel="Back to Home"
+        backToLabel={SERVICE_DETAIL_CONTENT.notFoundBackLabel}
       />
     );
   }
@@ -28,7 +28,7 @@ export const ServiceDetail = () => {
   const trimmedTitle = serviceInfo.title;
   const seoDescription =
     serviceInfo.summary ||
-    'Providing world-class legal solutions tailored to your specific requirements. Our team ensures precision and strategic clarity in every matter.';
+    SERVICE_DETAIL_CONTENT.defaultDescription;
   const canonicalPath = buildServicePath(trimmedTitle);
 
   return (
@@ -54,7 +54,7 @@ export const ServiceDetail = () => {
           className="inline-flex items-center gap-2 text-sm font-bold uppercase tracking-widest text-gray-400 hover:text-black transition-colors mb-12"
         >
           <ArrowLeft size={16} />
-          Back to Home
+          {SERVICE_DETAIL_CONTENT.backLabel}
         </Link>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-20">
@@ -64,7 +64,7 @@ export const ServiceDetail = () => {
             className="space-y-8"
           >
             <span className="text-[10px] font-bold uppercase tracking-[0.3em] text-blue-600">
-              OUR SERVICES
+              {SERVICE_DETAIL_CONTENT.eyebrow}
             </span>
             <h1
               className="text-5xl md:text-7xl leading-tight"
@@ -73,8 +73,7 @@ export const ServiceDetail = () => {
               {trimmedTitle}
             </h1>
             <p className="text-xl text-gray-500 font-light leading-relaxed">
-              {serviceInfo.summary ||
-                'Providing world-class legal solutions tailored to your specific requirements. Our team of experts ensures precision and strategic clarity in every matter.'}
+              {serviceInfo.summary || SERVICE_DETAIL_CONTENT.defaultDescription}
             </p>
 
             <div className="pt-8 grid grid-cols-2 gap-8">
@@ -82,18 +81,22 @@ export const ServiceDetail = () => {
                 <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-600">
                   <ShieldCheck size={20} />
                 </div>
-                <h4 className="font-bold text-sm uppercase tracking-widest">Compliance</h4>
+                <h4 className="font-bold text-sm uppercase tracking-widest">
+                  {SERVICE_DETAIL_CONTENT.highlights[0].title}
+                </h4>
                 <p className="text-xs text-gray-500">
-                  Full adherence to global legal standards and regulatory frameworks.
+                  {SERVICE_DETAIL_CONTENT.highlights[0].body}
                 </p>
               </div>
               <div className="space-y-3">
                 <div className="w-10 h-10 rounded-full bg-green-50 flex items-center justify-center text-green-600">
                   <Clock size={20} />
                 </div>
-                <h4 className="font-bold text-sm uppercase tracking-widest">Efficiency</h4>
+                <h4 className="font-bold text-sm uppercase tracking-widest">
+                  {SERVICE_DETAIL_CONTENT.highlights[1].title}
+                </h4>
                 <p className="text-xs text-gray-500">
-                  Optimized workflows to deliver high-stakes results within tight timelines.
+                  {SERVICE_DETAIL_CONTENT.highlights[1].body}
                 </p>
               </div>
             </div>
@@ -116,8 +119,8 @@ export const ServiceDetail = () => {
             <div className="absolute -bottom-10 -left-10 bg-black text-white p-10 rounded-3xl max-w-xs shadow-2xl">
               <Zap className="text-blue-400 mb-4" />
               <p className="text-sm font-light leading-relaxed">
-                "Our approach to {trimmedTitle.toLowerCase()} is built on decades of institutional
-                knowledge and cutting-edge legal technology."
+                "{SERVICE_DETAIL_CONTENT.quotePrefix} {trimmedTitle.toLowerCase()}{' '}
+                {SERVICE_DETAIL_CONTENT.quoteSuffix}"
               </p>
               <p className="mt-4 text-[10px] font-bold uppercase tracking-widest text-gray-400">
                 {BRAND_NAME} Advisory Team
@@ -131,18 +134,17 @@ export const ServiceDetail = () => {
             className="text-3xl font-bold mb-12"
             style={{ fontFamily: "'Playfair Display', serif" }}
           >
-            Key Capabilities
+            {SERVICE_DETAIL_CONTENT.capabilitiesTitle}
           </h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="space-y-4">
+            {SERVICE_DETAIL_CONTENT.capabilities.map((capability, index) => (
+              <div key={`${capability.title}-${index}`} className="space-y-4">
                 <div className="flex items-center gap-3">
                   <CheckCircle2 size={18} className="text-blue-600" />
-                  <h3 className="font-bold">Strategic Analysis</h3>
+                  <h3 className="font-bold">{capability.title}</h3>
                 </div>
                 <p className="text-sm text-gray-500 leading-relaxed font-light">
-                  In-depth assessment of the legal landscape to identify risks and opportunities
-                  before they emerge.
+                  {capability.body}
                 </p>
               </div>
             ))}

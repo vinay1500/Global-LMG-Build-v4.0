@@ -1,7 +1,7 @@
 import React from 'react';
 import { LegalDocumentPage } from '../components/legal/LegalDocumentPage';
 import { Seo } from '../components/seo/Seo';
-import { LEGAL_DISCLAIMER_DOCUMENT } from '../data/legalContent';
+import { LEGAL_DISCLAIMER_DOCUMENT } from '../content/site/legal';
 import { buildWebPageJsonLd } from '../seo/jsonLd';
 
 export const LegalDisclaimerPage = () => {

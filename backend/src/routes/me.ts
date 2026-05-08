@@ -3,11 +3,16 @@ import { z } from 'zod';
 import { requireActor, assertPermission } from '../lib/authorization.js';
 import { requireAuthenticatedUser } from '../lib/authSession.js';
 import { requireCsrf } from '../lib/csrf.js';
-import { forbidden } from '../lib/httpErrors.js';
+import { badRequest, forbidden } from '../lib/httpErrors.js';
 import { asyncHandler } from '../lib/httpErrors.js';
+import { getIdempotencyKey, runIdempotentJson } from '../lib/idempotency.js';
 import { renderInvoicePdf } from '../lib/invoicePdf.js';
 import { clientAccountsService } from '../modules/clientAccounts/service.js';
 import { domainService } from '../modules/domain/service.js';
+import {
+  createInvoicePaymentOrder,
+  verifyInvoicePayment,
+} from '../modules/payments/razorpayService.js';
 import { documentStorageService } from '../modules/storage/service.js';
 
 export const meRouter = Router();
@@ -19,12 +24,22 @@ const notificationPreferencesSchema = z.object({
   invoiceReminders: z.boolean(),
   productAnnouncements: z.boolean(),
   smsAlerts: z.boolean(),
-  whatsappAlerts: z.boolean().default(false),
 });
 
-const accountContactSchema = z.object({
-  whatsappNumber: z.string().trim().min(8).max(40),
-  whatsappSameAsMobile: z.boolean(),
+const accountAddressSchema = z.object({
+  line1: z.string().trim().min(3).max(255),
+  line2: z.string().trim().max(255).optional().default(''),
+  city: z.string().trim().min(2).max(100),
+  state: z.string().trim().min(2).max(100),
+  postalCode: z.string().trim().min(3).max(20),
+  country: z.string().trim().min(2).max(80),
+  sourceCode: z.enum(['google', 'ip_prefill', 'manual']).default('manual'),
+  googlePlaceId: z.string().trim().max(255).optional().nullable(),
+  validationStatusCode: z.enum(['manual', 'unverified', 'verified']).default('manual'),
+});
+
+const accountNameSchema = z.object({
+  name: z.string().trim().min(2).max(160),
 });
 
 const changePasswordSchema = z.object({
@@ -48,6 +63,16 @@ const phoneChangeRequestSchema = z.object({
 const phoneChangeConfirmSchema = z.object({
   code: z.string().trim().min(4).max(12),
   phone: z.string().trim().min(8).max(40),
+});
+
+const invoicePaymentOrderSchema = z.object({
+  amount: z.union([z.number(), z.string()]).optional().nullable(),
+});
+
+const invoicePaymentVerifySchema = z.object({
+  razorpay_order_id: z.string().trim().min(6).max(120),
+  razorpay_payment_id: z.string().trim().min(6).max(120),
+  razorpay_signature: z.string().trim().min(32).max(256),
 });
 
 const requireClientActor = async (request: Parameters<typeof requireActor>[0], response: Parameters<typeof requireActor>[1]) => {
@@ -102,14 +127,28 @@ meRouter.get(
 );
 
 meRouter.patch(
-  '/me/account/contact',
+  '/me/account/address',
   asyncHandler(async (request, response) => {
     requireCsrf(request);
     const authenticatedUser = await requireAuthenticatedUser(request, response);
     response.json(
-      await clientAccountsService.updateContactSettings(
+      await clientAccountsService.updatePrimaryAddress(
         authenticatedUser.id,
-        accountContactSchema.parse(request.body)
+        accountAddressSchema.parse(request.body)
+      )
+    );
+  })
+);
+
+meRouter.patch(
+  '/me/account/name',
+  asyncHandler(async (request, response) => {
+    requireCsrf(request);
+    const authenticatedUser = await requireAuthenticatedUser(request, response);
+    response.json(
+      await clientAccountsService.updateDisplayName(
+        authenticatedUser.id,
+        accountNameSchema.parse(request.body)
       )
     );
   })
@@ -245,27 +284,9 @@ meRouter.get(
       }
     );
 
-    await new Promise<void>((resolve, reject) => {
-      response.sendFile(
-        result.absolutePath,
-        {
-          headers: {
-            'Content-Disposition': `attachment; filename="${sanitizeDownloadFilename(
-              result.originalName
-            )}"`,
-            'Content-Type': result.mimeType,
-          },
-        },
-        (error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-
-          resolve();
-        }
-      );
-    });
+    response.setHeader('Content-Disposition', `attachment; filename="${sanitizeDownloadFilename(result.originalName)}"`);
+    response.setHeader('Content-Type', result.mimeType);
+    response.send(result.content);
   })
 );
 
@@ -284,30 +305,12 @@ meRouter.get(
       }
     );
 
-    await new Promise<void>((resolve, reject) => {
-      response.sendFile(
-        result.absolutePath,
-        {
-          headers: {
-            'Cache-Control': 'no-store',
-            'Content-Disposition': `inline; filename="${sanitizeDownloadFilename(
-              result.originalName
-            )}"`,
-            'Content-Security-Policy': 'sandbox',
-            'Content-Type': result.mimeType,
-            'X-Content-Type-Options': 'nosniff',
-          },
-        },
-        (error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-
-          resolve();
-        }
-      );
-    });
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Content-Disposition', `inline; filename="${sanitizeDownloadFilename(result.originalName)}"`);
+    response.setHeader('Content-Security-Policy', 'sandbox');
+    response.setHeader('Content-Type', result.mimeType);
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.send(result.content);
   })
 );
 
@@ -360,6 +363,59 @@ meRouter.get(
     response.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     response.setHeader('Content-Type', 'application/pdf');
     response.send(pdf);
+  })
+);
+
+meRouter.post(
+  '/me/invoices/:invoiceId/payment-order',
+  asyncHandler(async (request, response) => {
+    requireCsrf(request);
+    const actor = await requireClientActor(request, response);
+    assertPermission(actor.permissionCodes, 'invoice.view');
+    assertPermission(actor.permissionCodes, 'payment.view');
+    const idempotencyKey = getIdempotencyKey(request);
+    if (!idempotencyKey) {
+      throw badRequest('idempotency_key_required', 'Idempotency-Key is required to create a payment order.');
+    }
+    const payload = invoicePaymentOrderSchema.parse(request.body);
+    const invoiceId = getRouteParam(request.params.invoiceId);
+    const result = await runIdempotentJson(request, {
+      actorKey: actor.publicId,
+      actorUserId: actor.userId,
+      body: payload,
+      operation: () =>
+        createInvoicePaymentOrder({
+          actorUserId: actor.userId,
+          amount: payload.amount,
+          clientAccountId: actor.clientAccountId!,
+          idempotencyKey,
+          invoicePublicId: invoiceId,
+        }),
+      scope: 'client.invoice.payment_order',
+    });
+
+    response.status(result.statusCode).json(result.body);
+  })
+);
+
+meRouter.post(
+  '/me/invoices/:invoiceId/payment-verify',
+  asyncHandler(async (request, response) => {
+    requireCsrf(request);
+    const actor = await requireClientActor(request, response);
+    assertPermission(actor.permissionCodes, 'invoice.view');
+    assertPermission(actor.permissionCodes, 'payment.view');
+    const payload = invoicePaymentVerifySchema.parse(request.body);
+    response.json(
+      await verifyInvoicePayment({
+        actorUserId: actor.userId,
+        clientAccountId: actor.clientAccountId!,
+        invoicePublicId: getRouteParam(request.params.invoiceId),
+        razorpayOrderId: payload.razorpay_order_id,
+        razorpayPaymentId: payload.razorpay_payment_id,
+        razorpaySignature: payload.razorpay_signature,
+      })
+    );
   })
 );
 

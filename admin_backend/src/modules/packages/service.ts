@@ -11,7 +11,10 @@ import {
   touchMatterActivity,
 } from '../writeSupport.js';
 import { getInvoiceSettings } from '../settings/invoiceSettings.js';
+import { applyInvoicePdfTemplateSnapshot } from '../settings/invoicePdfTemplates.js';
 import { calculateInvoiceTax, insertInvoiceLineTaxes } from '../billing/tax.js';
+import { renderAndStoreInvoiceTemplateSnapshot } from '../billing/invoiceTemplateRendering.js';
+import { convertBaseAmount, summarizeFxSnapshots } from '../pricing/fx.js';
 
 type MatterPackageRow = RowDataPacket & {
   archivedAt: string | null;
@@ -315,6 +318,8 @@ const getMatterServiceCodes = async (
   return rows.map((row) => row.serviceCode);
 };
 
+const resolveBillingCurrency = async (_countryCode: string | null | undefined, _executor: QueryExecutor) => 'USD';
+
 const loadMatterPackageWorkspace = async (
   matterPublicId: string,
   executor?: Parameters<typeof queryRows>[2]
@@ -417,10 +422,13 @@ const createPackageInvoice = async (
   const dueDate = toDateOnly(
     new Date(now.getTime() + invoiceSettings.paymentTermsDays * 24 * 60 * 60 * 1000)
   );
+  const billingCurrency = await resolveBillingCurrency(matter.countryCode, connection);
+  const packageFx = await convertBaseAmount(connection, packageRow.price, billingCurrency);
+  const invoiceFxSummary = summarizeFxSnapshots([packageFx]);
   const tax = await calculateInvoiceTax(
     {
       clientState: matter.state,
-      lineAmount: packageRow.price,
+      lineAmount: packageFx.amount,
     },
     connection
   );
@@ -442,6 +450,14 @@ const createPackageInvoice = async (
        discount_amount,
        tax_amount,
        total_amount,
+       original_currency_code,
+       original_subtotal_amount,
+       original_tax_amount,
+       original_total_amount,
+       exchange_rate,
+       exchange_rate_date,
+       exchange_rate_provider,
+       fx_snapshot_json,
        amount_paid,
        amount_refunded,
        amount_due,
@@ -449,18 +465,27 @@ const createPackageInvoice = async (
        created_at,
        updated_at,
        archived_at
-     ) VALUES (?, ?, ?, ?, ?, NULL, 'matter-package', 'sent', 'INR', ?, ?, ?, 0, ?, ?, 0, 0, ?, ?, ?, ?, NULL)`,
+     ) VALUES (?, ?, ?, ?, ?, NULL, 'matter-package', 'sent', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, NULL)`,
     [
       invoicePublicId,
       invoiceNumber,
       matter.clientAccountId,
       matter.matterId,
       packageRow.dbId,
+      packageFx.currencyCode,
       issueDate,
       dueDate,
       tax.subtotalDecimal,
       tax.taxDecimal,
       tax.totalDecimal,
+      packageFx.originalCurrencyCode,
+      packageFx.originalAmount,
+      null,
+      packageFx.originalAmount,
+      invoiceFxSummary.exchangeRate,
+      invoiceFxSummary.exchangeRateDate,
+      invoiceFxSummary.exchangeRateProvider,
+      invoiceFxSummary.snapshotJson,
       tax.totalDecimal,
       actor.userId,
       createdAt,
@@ -514,9 +539,17 @@ const createPackageInvoice = async (
        discount_amount,
        taxable_amount,
        line_total,
+       original_currency_code,
+       original_unit_price,
+       original_line_subtotal,
+       original_taxable_amount,
+       original_line_total,
+       exchange_rate,
+       exchange_rate_date,
+       exchange_rate_provider,
        sort_order,
        created_at
-     ) VALUES (?, 'service-package', NULL, NULL, ?, 1, ?, ?, 0, ?, ?, 1, ?)`,
+     ) VALUES (?, 'service-package', NULL, NULL, ?, 1, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
     [
       invoiceInsert.insertId,
       packageRow.packageName,
@@ -524,12 +557,23 @@ const createPackageInvoice = async (
       tax.lineSubtotalDecimal,
       tax.taxableDecimal,
       tax.lineTotalDecimal,
+      packageFx.originalCurrencyCode,
+      packageFx.originalAmount,
+      packageFx.originalAmount,
+      packageFx.originalAmount,
+      packageFx.originalAmount,
+      packageFx.exchangeRate,
+      packageFx.exchangeRateDate,
+      packageFx.exchangeRateProvider,
       createdAt,
     ],
     connection
   );
 
   await insertInvoiceLineTaxes(lineInsert.insertId, tax, createdAt, connection);
+
+  const templateSnapshot = await renderAndStoreInvoiceTemplateSnapshot(invoiceInsert.insertId, connection);
+  const pdfTemplateSnapshot = await applyInvoicePdfTemplateSnapshot(invoiceInsert.insertId, connection);
 
   await executeStatement(
     `INSERT INTO invoice_installments (
@@ -546,6 +590,44 @@ const createPackageInvoice = async (
     [invoiceInsert.insertId, dueDate, tax.totalDecimal, tax.totalDecimal, createdAt],
     connection
   );
+
+  await createAuditEvent(
+    {
+      actionCode: 'invoice.template_applied',
+      actionLabel: 'Invoice template snapshot applied',
+      actorRoleCode: actor.roleCodes[0] || 'billing_admin',
+      actorUserId: actor.userId,
+      changes: [
+        { fieldName: 'template_public_id_snapshot', newValue: templateSnapshot.templateId },
+        { fieldName: 'template_version_snapshot', newValue: templateSnapshot.templateVersion },
+      ],
+      entityPk: invoiceInsert.insertId,
+      entityTableName: 'invoices',
+      sourceModule: 'package_workspace',
+      summaryNewValue: `Applied invoice template to ${invoiceNumber}`,
+    },
+    connection
+  );
+
+  if (pdfTemplateSnapshot.templateId) {
+    await createAuditEvent(
+      {
+        actionCode: 'invoice.pdf_template_applied',
+        actionLabel: 'Invoice PDF letterhead snapshot applied',
+        actorRoleCode: actor.roleCodes[0] || 'billing_admin',
+        actorUserId: actor.userId,
+        changes: [
+          { fieldName: 'pdf_template_public_id_snapshot', newValue: pdfTemplateSnapshot.templateId },
+          { fieldName: 'pdf_template_name_snapshot', newValue: pdfTemplateSnapshot.templateName },
+        ],
+        entityPk: invoiceInsert.insertId,
+        entityTableName: 'invoices',
+        sourceModule: 'package_workspace',
+        summaryNewValue: `Applied invoice PDF letterhead to ${invoiceNumber}`,
+      },
+      connection
+    );
+  }
 
   return {
     invoiceDbId: invoiceInsert.insertId,

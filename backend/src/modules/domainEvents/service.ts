@@ -1,7 +1,9 @@
 import type { PoolConnection, RowDataPacket } from 'mysql2/promise';
+import { formatCurrencyAmount } from '../../lib/currencyFormat.js';
 import { nowUtc, toMysqlDateTime } from '../../lib/datetime.js';
 import { createPublicId } from '../../lib/ids.js';
 import { selectAll, selectOne } from '../../lib/mysqlUtils.js';
+import { getRequestContext } from '../../lib/observability.js';
 
 interface RecipientRow extends RowDataPacket {
   user_id: number;
@@ -55,6 +57,7 @@ const insertAuditEvent = async (
   }
 ) => {
   const occurredAt = toMysqlDateTime(nowUtc());
+  const requestContext = getRequestContext();
 
   await connection.execute(
     `INSERT INTO audit_events (
@@ -71,9 +74,9 @@ const insertAuditEvent = async (
       input.actionCode,
       input.actionLabel,
       input.sourceModule,
-      null,
-      null,
-      null,
+      requestContext?.requestId ?? null,
+      requestContext?.ipAddress ?? null,
+      requestContext?.userAgent ?? null,
       input.summaryOldValue || null,
       input.summaryNewValue || null,
       occurredAt,
@@ -156,6 +159,9 @@ const insertNotifications = async (
     );
   }
 };
+
+const formatEventMoney = (amount: number, currencyCode: string | null | undefined) =>
+  formatCurrencyAmount(amount, currencyCode || 'USD');
 
 const getClientContactRecipientUserIds = async (
   connection: PoolConnection,
@@ -372,9 +378,9 @@ export const domainEventService = {
       refundId: number;
     }
   ) {
-    const payment = await selectOne<RowDataPacket>(
+    const payment = await selectOne<RowDataPacket & { client_account_id: number; currency_code: string | null }>(
       connection,
-      'SELECT client_account_id FROM payment_transactions WHERE id = ? LIMIT 1',
+      'SELECT client_account_id, currency_code FROM payment_transactions WHERE id = ? LIMIT 1',
       [input.paymentId]
     );
 
@@ -385,7 +391,7 @@ export const domainEventService = {
       );
 
       await insertNotifications(connection, recipients, {
-        bodyText: `A refund request for INR ${input.amount.toFixed(2)} has been initiated.`,
+        bodyText: `A refund request for ${formatEventMoney(input.amount, payment.currency_code)} has been initiated.`,
         invoiceId: input.invoiceId,
         notificationTypeCode: 'payment_reminder',
         priorityCode: 'normal',

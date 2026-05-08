@@ -7,12 +7,12 @@ import { Footer } from './components/Footer';
 import { ScrollToTop } from './components/ScrollToTop';
 import { AuthModal } from './components/auth/AuthModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { selfHostedUnsplashImage } from './utils/assets';
 import { Seo } from './components/seo/Seo';
 import { buildOrganizationJsonLd, buildWebPageJsonLd, buildWebSiteJsonLd } from './seo/jsonLd';
 import { AuthProvider } from './contexts/AuthContext';
 import { DashboardProvider } from './contexts/DashboardContext';
 import { useAuth } from './contexts/useAuth';
+import { HOME_HERO_CONTENT, HOME_SEO_CONTENT } from './content/site/home';
 
 // Lazy loading keeps the public brochure pages and dashboard chunks out of the initial bundle.
 const CarouselSection = lazy(async () => ({
@@ -77,6 +77,12 @@ const CookiePolicyPage = lazy(async () => ({
 const LegalDisclaimerPage = lazy(async () => ({
   default: (await import('./pages/LegalDisclaimerPage')).LegalDisclaimerPage,
 }));
+const TermsOfServicePage = lazy(async () => ({
+  default: (await import('./pages/TermsOfServicePage')).TermsOfServicePage,
+}));
+const RefundCancellationPolicyPage = lazy(async () => ({
+  default: (await import('./pages/RefundCancellationPolicyPage')).RefundCancellationPolicyPage,
+}));
 
 // Shared loading skeleton for deferred homepage sections.
 const SectionLoadingFallback = () => (
@@ -105,23 +111,22 @@ const RouteLoadingFallback = () => (
 const HomePage = () => (
   <main>
     <Seo
-      title="Global LMG"
-      description="Global LMG delivers cross-border legal coordination, business-focused counsel, and practical insights for modern clients operating across jurisdictions."
+      title={HOME_SEO_CONTENT.title}
+      description={HOME_SEO_CONTENT.description}
       path="/"
-      image={selfHostedUnsplashImage('photo-1758448656987-cfae6bf225e4')}
+      image={HOME_SEO_CONTENT.image}
       structuredData={[
         buildOrganizationJsonLd(),
         buildWebSiteJsonLd(),
         buildWebPageJsonLd({
-          title: 'Global LMG',
-          description:
-            'Global LMG delivers cross-border legal coordination, business-focused counsel, and practical insights for modern clients operating across jurisdictions.',
+          title: HOME_SEO_CONTENT.title,
+          description: HOME_SEO_CONTENT.description,
           path: '/',
         }),
       ]}
     />
     <IntroSection />
-    <Hero image={selfHostedUnsplashImage('photo-1758448656987-cfae6bf225e4')} />
+    <Hero image={HOME_HERO_CONTENT.image} />
     <Suspense fallback={<SectionLoadingFallback />}>
       <CarouselSection />
     </Suspense>
@@ -194,6 +199,8 @@ const AppLayout = () => {
           <Route path="/privacy" element={<PrivacyPolicyPage />} />
           <Route path="/cookies" element={<CookiePolicyPage />} />
           <Route path="/legal-disclaimer" element={<LegalDisclaimerPage />} />
+          <Route path="/terms" element={<TermsOfServicePage />} />
+          <Route path="/refund-cancellation" element={<RefundCancellationPolicyPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Suspense>

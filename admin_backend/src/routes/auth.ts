@@ -6,7 +6,15 @@ import {
   updateAdminPreferences,
   updateAdminProfile,
 } from '../modules/account/service.js';
-import { changePassword, getSession, requireAdminSession, signIn, signOut } from '../modules/auth/service.js';
+import {
+  changePassword,
+  getSession,
+  requestPasswordReset,
+  requireAdminSession,
+  resetPassword,
+  signIn,
+  signOut,
+} from '../modules/auth/service.js';
 
 export const authRouter = Router();
 
@@ -19,6 +27,16 @@ const signInSchema = z.object({
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(1),
   newPassword: z.string().min(12),
+});
+
+const passwordResetRequestSchema = z.object({
+  identifier: z.string().trim().min(3).max(255),
+});
+
+const passwordResetConfirmSchema = z.object({
+  code: z.string().trim().min(4).max(20),
+  newPassword: z.string().min(12),
+  token: z.string().trim().min(10).max(120),
 });
 
 const profileUpdateSchema = z.object({
@@ -95,6 +113,26 @@ authRouter.post(
         response
       )
     );
+  })
+);
+
+authRouter.post(
+  '/auth/password-reset/request',
+  asyncHandler(async (request, response) => {
+    const payload = passwordResetRequestSchema.parse(request.body);
+    response.json(
+      await requestPasswordReset(payload.identifier, {
+        ipAddress: request.ip || request.socket.remoteAddress || 'unknown',
+      })
+    );
+  })
+);
+
+authRouter.post(
+  '/auth/password-reset/confirm',
+  asyncHandler(async (request, response) => {
+    const payload = passwordResetConfirmSchema.parse(request.body);
+    response.json(await resetPassword(payload));
   })
 );
 

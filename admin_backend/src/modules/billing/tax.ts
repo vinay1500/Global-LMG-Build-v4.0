@@ -1,6 +1,7 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { executeStatement, queryRows, type QueryExecutor } from '../../lib/mysql.js';
 import { getInvoiceSettings, type InvoiceSettings } from '../settings/invoiceSettings.js';
+import { calculateInvoiceTaxWithSettings as calculateInvoiceTaxWithSettingsPure } from './taxMath.js';
 
 type TaxRateRow = RowDataPacket & {
   id: number;
@@ -81,14 +82,14 @@ const resolveTaxType = (
   return settings.fallbackTaxType;
 };
 
-export const calculateInvoiceTax = async (
+export const calculateInvoiceTaxWithSettings = (
+  settings: InvoiceSettings,
   input: {
     clientState?: string | null;
     lineAmount: number | string;
   },
-  executor: QueryExecutor
-): Promise<InvoiceTaxComputation> => {
-  const settings = await getInvoiceSettings(executor);
+  taxRateId: number | null = null
+): InvoiceTaxComputation => {
   const lineAmountMinor = toMinorUnits(input.lineAmount);
   const rateBps = settings.gstEnabled && settings.taxMode === 'forward_charge' ? settings.defaultGstRateBps : 0;
 
@@ -124,7 +125,6 @@ export const calculateInvoiceTax = async (
     : divideRound(taxableMinor * rateBps, 10000);
   const totalMinor = settings.pricesIncludeTax ? lineAmountMinor : taxableMinor + taxMinor;
   const taxType = resolveTaxType(settings, input.clientState);
-  const taxRateId = await getTaxRateId(rateBps, executor);
 
   if (taxType === 'none') {
     return {
@@ -183,6 +183,19 @@ export const calculateInvoiceTax = async (
     taxLines,
     totalDecimal: minorToDecimal(totalMinor),
   };
+};
+
+export const calculateInvoiceTax = async (
+  input: {
+    clientState?: string | null;
+    lineAmount: number | string;
+  },
+  executor: QueryExecutor
+): Promise<InvoiceTaxComputation> => {
+  const settings = await getInvoiceSettings(executor);
+  const rateBps = settings.gstEnabled && settings.taxMode === 'forward_charge' ? settings.defaultGstRateBps : 0;
+  const taxRateId = rateBps > 0 ? await getTaxRateId(rateBps, executor) : null;
+  return calculateInvoiceTaxWithSettingsPure(settings, input, taxRateId);
 };
 
 export const insertInvoiceLineTaxes = async (

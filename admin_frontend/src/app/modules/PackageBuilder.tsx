@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Plus, X, Check, Save, Eye } from 'lucide-react';
-import { formatCurrency } from '../data/seedData';
+import { formatCurrency } from '../data/formatters';
 
 export interface PackageTier {
   id: string;
@@ -242,9 +242,9 @@ export const PackageBuilder: React.FC<PackageBuilderProps> = ({
                 </div>
 
                 <div>
-                  <label className="text-xs text-gray-500 uppercase tracking-wider mb-1 block">Pricing (₹)</label>
+                  <label className="text-xs text-gray-500 uppercase tracking-wider mb-1 block">Package price (USD)</label>
                   <div className="relative">
-                    <span className="absolute left-0 top-1/2 -translate-y-1/2 text-gray-500 font-medium">₹</span>
+                    <span className="absolute left-0 top-1/2 -translate-y-1/2 text-gray-500 font-medium">$</span>
                     <input 
                       type="number" 
                       value={pkg.price}

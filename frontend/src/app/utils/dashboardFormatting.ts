@@ -1,6 +1,9 @@
 import { REQUEST_WIZARD_SERVICES } from '../data/requestWizardData';
+import { formatCurrencyAmount } from './currency';
 
-export const formatCurrency = (amount: number) => `₹${amount.toLocaleString('en-IN')}`;
+export const formatCurrency = (amount: number, currencyCode = 'USD') => {
+  return formatCurrencyAmount(amount, currencyCode);
+};
 
 export const formatDate = (dateStr: string) => {
   const date = new Date(dateStr);

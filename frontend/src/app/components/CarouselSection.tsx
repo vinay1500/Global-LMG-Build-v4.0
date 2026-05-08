@@ -1,6 +1,7 @@
 import React from 'react';
 import Slider from 'react-slick';
-import { SERVICE_CATALOG, buildServicePath } from '../data/services';
+import { HOME_CAROUSEL_CONTENT } from '../content/site/home';
+import { SERVICE_CATALOG, buildServicePath } from '../content/site/services';
 import { ArrowRight, Scale, FileCheck, FileEdit, Target, Eye, MapPin, Monitor } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
@@ -63,17 +64,19 @@ export const CarouselSection = () => {
       <div className="max-w-7xl mx-auto px-6 mb-20 flex flex-col md:flex-row md:items-end justify-between gap-8">
         <div>
           <span className="text-[10px] font-bold uppercase tracking-[0.3em] text-blue-600 mb-4 block">
-            OUR CAPABILITIES
+            {HOME_CAROUSEL_CONTENT.eyebrow}
           </span>
           <h2 className="text-5xl md:text-7xl" style={{ fontFamily: "'Playfair Display', serif" }}>
-            Tailored Legal
-            <br />
-            Solutions
+            {HOME_CAROUSEL_CONTENT.titleLines.map((line, index) => (
+              <React.Fragment key={line}>
+                {line}
+                {index < HOME_CAROUSEL_CONTENT.titleLines.length - 1 ? <br /> : null}
+              </React.Fragment>
+            ))}
           </h2>
         </div>
         <p className="text-xl text-gray-500 max-w-sm font-light leading-relaxed">
-          From high-stakes litigation to complex corporate advisory, our multi-disciplinary approach
-          ensures strategic excellence.
+          {HOME_CAROUSEL_CONTENT.body}
         </p>
       </div>
 
@@ -95,11 +98,10 @@ export const CarouselSection = () => {
                   {item.title}
                 </h3>
                 <p className="text-gray-500 text-base leading-relaxed mb-10 line-clamp-4 font-light">
-                  {item.summary ||
-                    'Excellence in specialized legal support and strategic advisory for global financial hubs.'}
+                  {item.summary || HOME_CAROUSEL_CONTENT.defaultServiceSummary}
                 </p>
                 <div className="mt-auto flex items-center gap-3 text-sm font-bold uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-all -translate-x-4 group-hover:translate-x-0">
-                  LEARN MORE
+                  {HOME_CAROUSEL_CONTENT.ctaLabel}
                   <ArrowRight size={16} />
                 </div>
               </div>

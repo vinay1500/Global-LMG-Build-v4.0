@@ -1,5 +1,5 @@
 export type StoredUploadStatus = 'pending' | 'stored' | 'attached' | 'failed';
-export type StorageDriver = 'local';
+export type StorageDriver = 'local' | 's3';
 
 export interface StoredUploadRecord {
   checksumSha256: string;

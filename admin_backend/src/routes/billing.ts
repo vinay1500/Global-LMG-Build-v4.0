@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../lib/httpErrors.js';
+import { runIdempotentJson } from '../lib/idempotency.js';
 import {
   createInvoice,
   createRefund,
@@ -8,6 +9,7 @@ import {
   recordManualPayment,
   sendInvoice,
 } from '../modules/billing/service.js';
+import { renderAdminInvoicePdf } from '../modules/billing/invoicePdf.js';
 import { requireMutationPermission, requireReadPermission } from './shared.js';
 
 export const billingRouter = Router();
@@ -39,7 +41,27 @@ billingRouter.get(
   '/billing/workspace',
   asyncHandler(async (request, response) => {
     await requireReadPermission(request, 'invoice.view');
-    response.json(await getWorkspace());
+    response.json(
+      await getWorkspace({
+        limit: Number(request.query.limit || 50),
+        offset: Number(request.query.offset || 0),
+      })
+    );
+  })
+);
+
+billingRouter.get(
+  '/billing/invoices/:invoiceId/download',
+  asyncHandler(async (request, response) => {
+    await requireReadPermission(request, 'invoice.view');
+    const invoiceId = z.string().trim().min(2).max(64).parse(request.params.invoiceId);
+    const pdf = await renderAdminInvoicePdf(invoiceId);
+    response.setHeader('Content-Type', 'application/pdf');
+    response.setHeader(
+      'Content-Disposition',
+      `inline; filename="global-lmg-invoice-${invoiceId.replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf"`
+    );
+    response.send(pdf);
   })
 );
 
@@ -47,7 +69,16 @@ billingRouter.post(
   '/billing/invoices',
   asyncHandler(async (request, response) => {
     const actor = await requireMutationPermission(request, 'invoice.manage');
-    response.status(201).json(await createInvoice(actor, createInvoiceSchema.parse(request.body)));
+    const payload = createInvoiceSchema.parse(request.body);
+    const result = await runIdempotentJson(request, {
+      actorKey: actor.id,
+      actorUserId: actor.userId,
+      operation: () => createInvoice(actor, payload),
+      scope: 'admin:billing:invoice:create',
+      statusCode: 201,
+    });
+    response.setHeader('Idempotency-Replayed', result.replayed ? 'true' : 'false');
+    response.status(result.statusCode).json(result.body);
   })
 );
 
@@ -55,7 +86,16 @@ billingRouter.post(
   '/billing/invoices/:invoiceId/send',
   asyncHandler(async (request, response) => {
     const actor = await requireMutationPermission(request, 'invoice.manage');
-    response.json(await sendInvoice(actor, z.string().trim().min(2).max(64).parse(request.params.invoiceId)));
+    const invoiceId = z.string().trim().min(2).max(64).parse(request.params.invoiceId);
+    const result = await runIdempotentJson(request, {
+      actorKey: actor.id,
+      actorUserId: actor.userId,
+      body: { invoiceId },
+      operation: () => sendInvoice(actor, invoiceId),
+      scope: 'admin:billing:invoice:send',
+    });
+    response.setHeader('Idempotency-Replayed', result.replayed ? 'true' : 'false');
+    response.status(result.statusCode).json(result.body);
   })
 );
 
@@ -63,7 +103,16 @@ billingRouter.post(
   '/billing/payments',
   asyncHandler(async (request, response) => {
     const actor = await requireMutationPermission(request, 'payment.manage');
-    response.status(201).json(await recordManualPayment(actor, recordPaymentSchema.parse(request.body)));
+    const payload = recordPaymentSchema.parse(request.body);
+    const result = await runIdempotentJson(request, {
+      actorKey: actor.id,
+      actorUserId: actor.userId,
+      operation: () => recordManualPayment(actor, payload),
+      scope: 'admin:billing:payment:record',
+      statusCode: 201,
+    });
+    response.setHeader('Idempotency-Replayed', result.replayed ? 'true' : 'false');
+    response.status(result.statusCode).json(result.body);
   })
 );
 
